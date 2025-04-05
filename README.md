@@ -1,5 +1,7 @@
 # Norn – Secure Time
 
+<img src="Logo/norn-logo.svg" alt="drawing" width="25%"/>
+
 This software library allow you to implement and use the *Network Time Secure* protocol as defined by the IETF together with some vendor extensions for additional use cases.
 
 

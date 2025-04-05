@@ -26,13 +26,6 @@ using org.GraphDefined.Vanaheimr.Illias;
 namespace org.GraphDefined.Vanaheimr.Norn.NTP
 {
 
-    // https://datatracker.ietf.org/doc/html/rfc4330 Simple Network Time Protocol (SNTP) Version 4
-    // https://datatracker.ietf.org/doc/html/rfc5297 Synthetic Initialization Vector (SIV) Authenticated Encryption Using the Advanced Encryption Standard (AES)
-    // https://datatracker.ietf.org/doc/html/rfc5905 Network Time Protocol Version 4: Protocol and Algorithms Specification
-    // https://datatracker.ietf.org/doc/html/rfc7384 Security Requirements of Time Protocols in Packet Switched Networks
-    // https://datatracker.ietf.org/doc/html/rfc7822 Network Time Protocol Version 4 (NTPv4) Extension Fields
-    // https://datatracker.ietf.org/doc/html/rfc8915 Network Time Security for the Network Time Protocol
-
     // Stratum  Meaning
     //   ----------------------------------------------
     //   0        kiss-o'-death message (see below)
