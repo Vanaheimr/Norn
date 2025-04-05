@@ -51,6 +51,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
     /// <param name="ReceiveTimestamp"></param>
     /// <param name="TransmitTimestamp"></param>
     /// <param name="Extensions"></param>
+    /// 
+    /// <param name="Request"></param>
     public class NTPPacket(Byte?                       LI                     = null,
                            Byte?                       VN                     = null,
                            Byte?                       Mode                   = null,
@@ -67,7 +69,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                            IEnumerable<NTPExtension>?  Extensions             = null,
                            Int32?                      KeyId                  = null,
                            Byte[]?                     MessageDigest          = null,
-                           UInt64?                     DestinationTimestamp   = null)
+                           UInt64?                     DestinationTimestamp   = null,
+
+                           NTPPacket?                  Request                = null)
+
     {
 
         #region Properties
@@ -201,6 +206,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         /// It is captured upon arrival and returned in the receive buffer along with the buffer length and data.
         /// </summary>
         public UInt64?                    DestinationTimestamp   { get; } = DestinationTimestamp;
+
+        /// <summary>
+        /// The optional NTP request that led to this response.
+        /// </summary>
+        public NTPPacket?                 Request                { get; } = Request;
 
         #endregion
 
@@ -522,11 +532,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
         #endregion
 
-        #region TryParseResponse(Buffer, out NTPPacket, out ErrorResponse, NTSKey = null, ExptectedUniqueId = null)
+        #region TryParseResponse(Buffer, out NTPPacket, out ErrorResponse, Request = null, NTSKey = null, ExptectedUniqueId = null)
 
         public static Boolean TryParseResponse(Byte[]                               Buffer,
                                                [NotNullWhen(true)]  out NTPPacket?  NTPPacket,
                                                [NotNullWhen(false)] out String?     ErrorResponse,
+                                               NTPPacket?                           Request            = null,
                                                Byte[]?                              NTSKey             = null,
                                                Byte[]?                              ExpectedUniqueId   = null,
                                                Byte[]?                              Nonce              = null)
@@ -655,21 +666,26 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
             NTPPacket = new NTPPacket(
 
-                            LI:                   (Byte) ((Buffer[0] >> 6) & 0x03),
-                            VN:                   (Byte) ((Buffer[0] >> 3) & 0x07),
-                            Mode:                 (Byte)  (Buffer[0]       & 0x07),
-                            Stratum:              Buffer[1],
-                            Poll:                 Buffer[2],
-                            Precision:            (SByte) Buffer[3],
-                            RootDelay:            (UInt32) ((Buffer[4]  << 24) | (Buffer[5]  << 16) | (Buffer[6]  << 8) | Buffer[7]),
-                            RootDispersion:       (UInt32) ((Buffer[8]  << 24) | (Buffer[9]  << 16) | (Buffer[10] << 8) | Buffer[11]),
-                            ReferenceIdentifier:  (UInt32) ((Buffer[12] << 24) | (Buffer[13] << 16) | (Buffer[14] << 8) | Buffer[15]),
-                            ReferenceTimestamp:   ReadUInt64(Buffer, 16),
-                            OriginateTimestamp:   ReadUInt64(Buffer, 24),
-                            ReceiveTimestamp:     ReadUInt64(Buffer, 32),
-                            TransmitTimestamp:    ReadUInt64(Buffer, 40),
+                            LI:                     (Byte) ((Buffer[0] >> 6) & 0x03),
+                            VN:                     (Byte) ((Buffer[0] >> 3) & 0x07),
+                            Mode:                   (Byte)  (Buffer[0]       & 0x07),
+                            Stratum:                Buffer[1],
+                            Poll:                   Buffer[2],
+                            Precision:              (SByte) Buffer[3],
+                            RootDelay:              (UInt32) ((Buffer[4]  << 24) | (Buffer[5]  << 16) | (Buffer[6]  << 8) | Buffer[7]),
+                            RootDispersion:         (UInt32) ((Buffer[8]  << 24) | (Buffer[9]  << 16) | (Buffer[10] << 8) | Buffer[11]),
+                            ReferenceIdentifier:    (UInt32) ((Buffer[12] << 24) | (Buffer[13] << 16) | (Buffer[14] << 8) | Buffer[15]),
+                            ReferenceTimestamp:     ReadUInt64(Buffer, 16),
+                            OriginateTimestamp:     ReadUInt64(Buffer, 24),
+                            ReceiveTimestamp:       ReadUInt64(Buffer, 32),
+                            TransmitTimestamp:      ReadUInt64(Buffer, 40),
 
-                            Extensions:           extensions
+                            Extensions:             extensions,
+                            KeyId:                  null,
+                            MessageDigest:          null,
+                            DestinationTimestamp:   null,
+
+                            Request:                Request
 
                         );
 

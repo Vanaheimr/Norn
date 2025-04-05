@@ -30,7 +30,7 @@ using org.GraphDefined.Vanaheimr.Norn.NTP;
 namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTP
 {
 
-    public class AESTestss
+    public class NTPTests
     {
 
         #region TestCMAC()
