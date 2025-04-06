@@ -27,6 +27,8 @@ using System.Diagnostics.CodeAnalysis;
 using Org.BouncyCastle.Tls;
 
 using org.GraphDefined.Vanaheimr.Illias;
+using org.GraphDefined.Vanaheimr.Hermod.HTTP;
+using org.GraphDefined.Vanaheimr.Hermod;
 
 #endregion
 
@@ -36,7 +38,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
     /// <summary>
     /// The Network Time Security (NTS) client.
     /// </summary>
-    public class NTSClient
+    /// <param name="Host">The hostname or IP address of the NTS server.</param>
+    /// <param name="NTSKE_Port">An optional NTS-KE port (default: 4460).</param>
+    /// <param name="NTP_Port">An optional NTP port (default: 123).</param>
+    /// <param name="RemoteCertificateValidator">An optional remote certificate validator.</param>
+    /// <param name="Timeout">An optional timeout for the NTS-KE/NTS requests.</param>
+    public class NTSClient(String                                                         Host,
+                           UInt16                                                         NTSKE_Port                   = NTSClient.DefaultNTSKE_Port,
+                           UInt16                                                         NTP_Port                     = NTSClient.DefaultNTP_Port,
+                           RemoteTLSServerCertificateValidationHandler<NTSKE_TLSClient>?  RemoteCertificateValidator   = null,
+                           TimeSpan?                                                      Timeout                      = null)
     {
 
         #region Data
@@ -49,31 +60,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
         #region Properties
 
-        public String     Host          { get; }
-        public UInt16     NTSKE_Port    { get; }
-        public UInt16     NTP_Port      { get; }
-        public TimeSpan?  Timeout       { get; set; }
-        public Byte[]     C2S_Key       { get; set; }
-        public Byte[]     S2C_Key       { get; set; }
-
-        #endregion
-
-        #region NTSClient(Host, NTSKE_Port = 4460, NTP_Port = 123, Timeout = null)
-
-        public NTSClient(String     Host,
-                         UInt16     NTSKE_Port   = DefaultNTSKE_Port,
-                         UInt16     NTP_Port     = DefaultNTP_Port,
-                         TimeSpan?  Timeout      = null)
-        {
-
-            this.Host        = Host;
-            this.NTSKE_Port  = NTSKE_Port;
-            this.NTP_Port    = NTP_Port;
-            this.Timeout     = Timeout;
-            this.C2S_Key     = [];
-            this.S2C_Key     = [];
-
-        }
+        public String                                                         Host                          { get; }      = Host;
+        public UInt16                                                         NTSKE_Port                    { get; }      = NTSKE_Port;
+        public UInt16                                                         NTP_Port                      { get; }      = NTP_Port;
+        public TimeSpan?                                                      Timeout                       { get; set; } = Timeout;
+        public Byte[]                                                         C2S_Key                       { get; set; } = [];
+        public Byte[]                                                         S2C_Key                       { get; set; } = [];
+        public RemoteTLSServerCertificateValidationHandler<NTSKE_TLSClient>?  RemoteCertificateValidator    { get; }      = RemoteCertificateValidator;
 
         #endregion
 
@@ -98,7 +91,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                 using var networkStream  = tcpClient.GetStream();
 
                 var tlsClientProtocol    = new TlsClientProtocol(networkStream);
-                var ntsTlsClient         = new NTSKE_TLSClient();
+                var ntsTlsClient         = new NTSKE_TLSClient  (RemoteCertificateValidator);
 
                 tlsClientProtocol.Connect(ntsTlsClient);
 
@@ -113,9 +106,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
                 var readTask             = Task.Run(() => tlsClientProtocol.Stream.Read(buffer, 0, buffer.Length));
                 if (!readTask.Wait(timeout))
-                {
-                    throw new TimeoutException("Read operation timed out.");
-                }
+                    return new NTSKE_Response("Read operation timed out.");
 
                 var bytesRead            = readTask.Result;
                 if (bytesRead > 0)
@@ -133,16 +124,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                 }
                 else
                 {
-                    DebugX.Log($"No response received from {Host}!");
+                    return new NTSKE_Response($"No response received from {Host}!");
                 }
 
             }
             catch (Exception ex)
             {
-                DebugX.Log("Exception: " + ex.Message);
+                return new NTSKE_Response(ex.Message);
             }
 
-            return new NTSKE_Response([], [], []);
+            return new NTSKE_Response("Unknown error!");
 
         }
 
@@ -383,6 +374,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                                                 CancellationToken  CancellationToken   = default)
         {
 
+            if (NTSKEResponse?.ErrorMessage is not null)
+                return new NTPPacket(NTSKEResponse?.ErrorMessage ?? "Unknown error!");
+
+
             // NTP + UniqueId + NTS Cookie + NTS Auth request
             // 230008200000000000000000000000000000000000000000000000000000000000000000000000005001ac7cd6000835
             // 0104 0024 2027e75e68914d89bdd2461d6c18a87914ae432326ae452516f1af36876c37e2
@@ -422,10 +417,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                     var finishedTask  = await Task.WhenAny(receiveTask, timeoutTask);
 
                     if (finishedTask == timeoutTask)
-                    {
-                        DebugX.Log($"No NTP response within {Math.Round(timeout.TotalSeconds, 2)} seconds timeout!");
-                        return null;
-                    }
+                        return new NTPPacket($"No NTP response within {Math.Round(timeout.TotalSeconds, 2)} seconds timeout!");
 
                     var receiveResult = await receiveTask;
 
@@ -446,17 +438,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                     }
 
                     else
-                        DebugX.Log("NTP response error: " + errorResponse);
+                        return new NTPPacket("NTP response error: " + errorResponse);
 
                 }
                 catch (Exception e)
                 {
-                    DebugX.Log("NTP receive exception: " + e.Message);
+                    return new NTPPacket("NTP receive exception: " + e.Message);
                 }
 
             }
-
-            return null;
 
         }
 

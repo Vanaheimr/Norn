@@ -20,8 +20,6 @@
 using System.Security.Cryptography;
 using System.Diagnostics.CodeAnalysis;
 
-using org.GraphDefined.Vanaheimr.Illias;
-
 #endregion
 
 namespace org.GraphDefined.Vanaheimr.Norn.NTP
@@ -207,8 +205,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
             UniqueId ??= new Byte[32];
             RandomNumberGenerator.Fill(UniqueId);
 
-            return new (
-                       ExtensionTypes.UniqueIdentifier,
+            return new UniqueIdentifierExtension(
                        UniqueId
                    );
 
@@ -222,10 +219,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         /// Create a new NTS Cookie extension.
         /// </summary>
         /// <param name="Value">The NTS cookie.</param>
-        public static NTPExtension  NTSCookie(Byte[] Value)
+        public static NTPExtension NTSCookie(Byte[] Value)
 
-            => new (
-                   ExtensionTypes.NTSCookie,
+            => new NTSCookieExtension(
                    Value
                );
 
@@ -237,26 +233,30 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         /// Create a new NTS Cookie Placeholder extension.
         /// </summary>
         /// <param name="Length">The length of the expected NTS cookie.</param>
-        public static NTPExtension  NTSCookiePlaceholder(UInt16 Length)
+        public static NTPExtension NTSCookiePlaceholder(UInt16 Length)
 
-            => new (
-                   ExtensionTypes.NTSCookiePlaceholder,
-                   new Byte[Length]
+            => new NTSCookiePlaceholderExtension(
+                   Length
                );
 
         #endregion
 
-        #region (static) AuthenticatorAndEncrypted(Value)
+        #region (static) AuthenticatorAndEncrypted(Nonce, Ciphertext, EncryptedExtensions = null)
 
         /// <summary>
         /// Create a new Authenticator and Encrypted extension.
         /// </summary>
-        /// <param name="Value">The Authenticator and Encrypted data.</param>
-        public static NTPExtension  AuthenticatorAndEncrypted(Byte[] Value)
+        /// <param name="Nonce">The nonce.</param>
+        /// <param name="Ciphertext">The ciphertext.</param>
+        /// <param name="EncryptedExtensions">Optional encrypted extensions.</param>
+        public static NTPExtension AuthenticatorAndEncrypted(Byte[]                      Nonce,
+                                                             Byte[]                      Ciphertext,
+                                                             IEnumerable<NTPExtension>?  EncryptedExtensions   = null)
 
-            => new (
-                   ExtensionTypes.AuthenticatorAndEncrypted,
-                   Value
+            => new AuthenticatorAndEncryptedExtension(
+                   Nonce,
+                   Ciphertext,
+                   EncryptedExtensions
                );
 
         #endregion

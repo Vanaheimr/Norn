@@ -27,13 +27,39 @@ using org.GraphDefined.Vanaheimr.Illias;
 namespace org.GraphDefined.Vanaheimr.Norn.NTP
 {
 
+    /// <summary>
+    /// A NTP extension containing an authenticator and encrypted extension fields.
+    /// </summary>
     public class AuthenticatorAndEncryptedExtension : NTPExtension
     {
 
+        #region Properties
+
+        /// <summary>
+        /// The nonce.
+        /// </summary>
         public Byte[]                     Nonce                  { get; }
+
+        /// <summary>
+        /// The ciphertext.
+        /// </summary>
         public Byte[]                     Ciphertext             { get; }
+
+        /// <summary>
+        /// Optional encrypted extensions.
+        /// </summary>
         public IEnumerable<NTPExtension>  EncryptedExtensions    { get; }
 
+        #endregion
+
+        #region Constructor(s)
+
+        /// <summary>
+        /// Create a new Authenticator and Encrypted extension.
+        /// </summary>
+        /// <param name="Nonce">The nonce.</param>
+        /// <param name="Ciphertext">The ciphertext.</param>
+        /// <param name="EncryptedExtensions">Optional encrypted extensions.</param>
         public AuthenticatorAndEncryptedExtension(Byte[]                      Nonce,
                                                   Byte[]                      Ciphertext,
                                                   IEnumerable<NTPExtension>?  EncryptedExtensions   = null)
@@ -64,6 +90,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
         }
 
+        #endregion
+
         public static Boolean TryParse(Byte[]                                                        ReceivedValue,
                                        IEnumerable<Byte[]>                                           AssociatedData,
                                        ref List<NTPExtension>                                        AuthenticatedExtensions,
@@ -72,113 +100,126 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                                        [NotNullWhen(false)] out String?                              ErrorResponse)
         {
 
-            ErrorResponse = null;
-            AuthExtension = null;
-
-            if (ReceivedValue is null || ReceivedValue.Length < 4)
-            {
-                ErrorResponse = "NTS Authenticator and Encrypted extension value is null or too short!";
-                return false;
-            }
-
-            var nonceLength                  = (UInt16) ((ReceivedValue[0] << 8) | ReceivedValue[1]);
-            var ciphertextLength             = (UInt16) ((ReceivedValue[2] << 8) | ReceivedValue[3]);
-
-            var paddedNonceLength            = (nonceLength      + 3) & ~3;
-            var paddedCiphertextLength       = (ciphertextLength + 3) & ~3;
-
-            var expectedTotalLength          = 4 + paddedNonceLength + paddedCiphertextLength;
-            if (ReceivedValue.Length != expectedTotalLength)
-            {
-                ErrorResponse = "NTS Authenticator and Encrypted extension value has unexpected length!";
-                return false;
-            }
-
-            var receivedNonce             = new Byte[nonceLength];
-            Buffer.BlockCopy(ReceivedValue, 4, receivedNonce, 0, nonceLength);
-
-            var receivedCiphertext        = new Byte[ciphertextLength];
-            if (ciphertextLength > 0)
-                Buffer.BlockCopy(ReceivedValue, 4 + paddedNonceLength, receivedCiphertext, 0, ciphertextLength);
-
-            // Recompute the AEAD output using AES-SIV.
-            var aesSiv                    = new AES_SIV(Key);
-            var computedOutput            = aesSiv.Decrypt([ AssociatedData.Aggregate() ], receivedNonce, receivedCiphertext);
-            var extensions                = new List<NTPExtension>();
-
-            var offset = 0;
-            while (offset + 4 <= computedOutput.Length)
+            try
             {
 
-                var type   = (ExtensionTypes) ((computedOutput[offset]     << 8) | computedOutput[offset + 1]);
-                var length = (UInt16)         ((computedOutput[offset + 2] << 8) | computedOutput[offset + 3]);
+                ErrorResponse = null;
+                AuthExtension = null;
 
-                if (length < 4)
+                if (ReceivedValue is null || ReceivedValue.Length < 4)
                 {
-                    ErrorResponse = $"Illegal length of extension {length} at offset {offset}!";
+                    ErrorResponse = "NTS Authenticator and Encrypted extension value is null or too short!";
                     return false;
                 }
 
-                if (offset + length > computedOutput.Length)
-                    break;
+                var nonceLength                  = (UInt16) ((ReceivedValue[0] << 8) | ReceivedValue[1]);
+                var ciphertextLength             = (UInt16) ((ReceivedValue[2] << 8) | ReceivedValue[3]);
 
-                var data = new Byte[length - 4];
-                Array.Copy(computedOutput, offset + 4, data, 0, length - 4);
+                var paddedNonceLength            = (nonceLength      + 3) & ~3;
+                var paddedCiphertextLength       = (ciphertextLength + 3) & ~3;
 
-                switch (type)
+                var expectedTotalLength          = 4 + paddedNonceLength + paddedCiphertextLength;
+                if (ReceivedValue.Length != expectedTotalLength)
+                {
+                    ErrorResponse = "NTS Authenticator and Encrypted extension value has unexpected length!";
+                    return false;
+                }
+
+                var receivedNonce             = new Byte[nonceLength];
+                Buffer.BlockCopy(ReceivedValue, 4, receivedNonce, 0, nonceLength);
+
+                var receivedCiphertext        = new Byte[ciphertextLength];
+                if (ciphertextLength > 0)
+                    Buffer.BlockCopy(ReceivedValue, 4 + paddedNonceLength, receivedCiphertext, 0, ciphertextLength);
+
+                // Recompute the AEAD output using AES-SIV.
+                var aesSiv                    = new AES_SIV(Key);
+                var computedOutput            = aesSiv.Decrypt([ AssociatedData.Aggregate() ], receivedNonce, receivedCiphertext);
+                var extensions                = new List<NTPExtension>();
+
+                var offset = 0;
+                while (offset + 4 <= computedOutput.Length)
                 {
 
-                    case ExtensionTypes.UniqueIdentifier:
+                    var type   = (ExtensionTypes) ((computedOutput[offset]     << 8) | computedOutput[offset + 1]);
+                    var length = (UInt16)         ((computedOutput[offset + 2] << 8) | computedOutput[offset + 3]);
+
+                    if (length < 4)
+                    {
+                        ErrorResponse = $"Illegal length of extension {length} at offset {offset}!";
+                        return false;
+                    }
+
+                    if (offset + length > computedOutput.Length)
                         break;
 
-                    case ExtensionTypes.NTSCookie:
-                        extensions.Add(
-                            new NTSCookieExtension(data, Authenticated: true, Encrypted: true)
-                        );
-                        break;
+                    var data = new Byte[length - 4];
+                    Array.Copy(computedOutput, offset + 4, data, 0, length - 4);
 
-                    case ExtensionTypes.NTSCookiePlaceholder:
-                        break;
+                    switch (type)
+                    {
 
-                    case ExtensionTypes.AuthenticatorAndEncrypted:
-                        break;
+                        case ExtensionTypes.UniqueIdentifier:
+                            break;
 
-                    case ExtensionTypes.Debug:
-                        if (DebugExtension.TryParse(data,
-                                                    out var debugExtension,
-                                                    out     ErrorResponse,
-                                                    Authenticated: true,
-                                                    Encrypted:     true))
-                        {
-                            extensions.Add(debugExtension);
-                        }
-                        break;
+                        case ExtensionTypes.NTSCookie:
+                            extensions.Add(
+                                new NTSCookieExtension(data, Authenticated: true, Encrypted: true)
+                            );
+                            break;
 
-                    default:
-                        extensions.Add(
-                            new NTPExtension(
-                                type,
-                                data
-                            )
-                        );
-                        break;
+                        case ExtensionTypes.NTSCookiePlaceholder:
+                            break;
+
+                        case ExtensionTypes.AuthenticatorAndEncrypted:
+                            break;
+
+                        case ExtensionTypes.Debug:
+                            if (DebugExtension.TryParse(data,
+                                                        out var debugExtension,
+                                                        out     ErrorResponse,
+                                                        Authenticated: true,
+                                                        Encrypted:     true))
+                            {
+                                extensions.Add(debugExtension);
+                            }
+                            break;
+
+                        default:
+                            extensions.Add(
+                                new NTPExtension(
+                                    type,
+                                    data
+                                )
+                            );
+                            break;
+
+                    }
+
+                    offset += length;
 
                 }
 
-                offset += length;
+                foreach (var authenticatedExtension in AuthenticatedExtensions)
+                    authenticatedExtension.Authenticated = true;
+
+                AuthExtension = new AuthenticatorAndEncryptedExtension(
+                                    receivedNonce,
+                                    receivedCiphertext,
+                                    extensions
+                                );
+
+                return true;
 
             }
-
-            AuthExtension = new AuthenticatorAndEncryptedExtension(
-                                receivedNonce,
-                                receivedCiphertext,
-                                extensions
-                            );
-
-            return true;
+            catch (Exception e)
+            {
+                ErrorResponse = e.Message;
+                AuthExtension = null;
+                return false;
+            }
 
         }
-
 
         #region Create(NTSKEResponse, AssociatedData, Plainttext = null, Nonce = null)
 

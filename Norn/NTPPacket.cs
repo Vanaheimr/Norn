@@ -53,6 +53,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
     /// <param name="Extensions"></param>
     /// 
     /// <param name="Request"></param>
+    /// <param name="ResponseBytes"></param>
     public class NTPPacket(Byte?                       LI                     = null,
                            Byte?                       VN                     = null,
                            Byte?                       Mode                   = null,
@@ -71,7 +72,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                            Byte[]?                     MessageDigest          = null,
                            UInt64?                     DestinationTimestamp   = null,
 
-                           NTPPacket?                  Request                = null)
+                           NTPPacket?                  Request                = null,
+                           Byte[]?                     ResponseBytes          = null,
+                           String?                     ErrorMessage           = null)
 
     {
 
@@ -212,9 +215,21 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         /// </summary>
         public NTPPacket?                 Request                { get; } = Request;
 
+        /// <summary>
+        /// The optional byte representation of the response.
+        /// </summary>
+        public Byte[]?                    ResponseBytes          { get; } = ResponseBytes;
+
+        /// <summary>
+        /// An optional error message.
+        /// </summary>
+        public String?                    ErrorMessage           { get; } = ErrorMessage;
+
         #endregion
 
         #region Constructor(s)
+
+        #region NTPPacket(NTPRequest, Extensions = null)
 
         public NTPPacket(NTPPacket                   NTPRequest,
                          IEnumerable<NTPExtension>?  Extensions   = null)
@@ -237,6 +252,35 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         {
 
         }
+
+        #endregion
+
+        #region NTPPacket(NTPRequest, Extensions = null)
+
+        public NTPPacket(String ErrorMessage)
+
+            : this(0,
+                   0,
+                   0,
+                   0,
+                   0,
+                   0,
+                   0,
+                   0,
+                   0,
+                   0,
+                   0,
+                   0,
+                   0,
+                   [])
+
+        {
+
+            this.ErrorMessage = ErrorMessage;
+
+        }
+
+        #endregion
 
         #endregion
 
@@ -379,8 +423,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                                               [NotNullWhen(true)]  out NTPPacket?  NTPPacket,
                                               [NotNullWhen(false)] out String?     ErrorResponse,
                                               Byte[]?                              NTSKey             = null,
-                                              Byte[]?                              ExpectedUniqueId   = null,
-                                              Byte[]?                              Nonce              = null)
+                                              Byte[]?                              ExpectedUniqueId   = null)
+                                              //Byte[]?                              Nonce              = null)
         {
 
             #region Initial checks
@@ -539,8 +583,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                                                [NotNullWhen(false)] out String?     ErrorResponse,
                                                NTPPacket?                           Request            = null,
                                                Byte[]?                              NTSKey             = null,
-                                               Byte[]?                              ExpectedUniqueId   = null,
-                                               Byte[]?                              Nonce              = null)
+                                               Byte[]?                              ExpectedUniqueId   = null)
+                                               //Byte[]?                              Nonce              = null)
         {
 
             #region Initial checks
@@ -594,6 +638,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
                     case ExtensionTypes.UniqueIdentifier:
                         var uid = new UniqueIdentifierExtension(data);
+
+                        if (Request?.UniqueIdentifier is not null &&
+                            !uid.Value.SequenceEqual(Request.UniqueIdentifier))
+                        {
+                            ErrorResponse = $"Unexpected UniqueIdentifier '{uid.Value}' != '{Request.UniqueIdentifier}'!";
+                            return false;
+                        }
+
                         if (ExpectedUniqueId is not null &&
                             !uid.Value.SequenceEqual(ExpectedUniqueId))
                         {
@@ -685,7 +737,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                             MessageDigest:          null,
                             DestinationTimestamp:   null,
 
-                            Request:                Request
+                            Request:                Request,
+                            ResponseBytes:          Buffer
 
                         );
 
@@ -770,7 +823,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         /// </summary>
         public override String ToString()
 
-            => $"{TransmitTimestamp}, stratum: {Stratum}";
+            => ErrorMessage is not null
+                   ? ErrorMessage
+                   : $"{TransmitTimestamp}, stratum: {Stratum}";
 
         #endregion
 
