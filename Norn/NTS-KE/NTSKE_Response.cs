@@ -53,7 +53,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         public IEnumerable<Byte[]>        Cookies
 
             => NTSKERecords.
-                   Where (ntsKERecord => ntsKERecord.Type == NTSKERecordTypes.NewCookieForNTPv4).
+                   Where (ntsKERecord => ntsKERecord.Type == NTSKE_RecordTypes.NewCookieForNTPv4).
                    Select(ntsKERecord => ntsKERecord.Body);
 
         #endregion

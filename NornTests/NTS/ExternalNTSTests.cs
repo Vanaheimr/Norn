@@ -21,8 +21,6 @@ using NUnit.Framework;
 
 using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Norn.NTP;
-using System.Security.Cryptography.X509Certificates;
-using System.Security.Cryptography;
 
 #endregion
 

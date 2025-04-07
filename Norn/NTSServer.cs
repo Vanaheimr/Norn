@@ -124,7 +124,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                 cookies.Add(
                     new NTSKE_Record(
                         false,
-                        NTSKERecordTypes.NewCookieForNTPv4,
+                        NTSKE_RecordTypes.NewCookieForNTPv4,
                         cookie
                     )
                 );

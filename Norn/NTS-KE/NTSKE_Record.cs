@@ -24,25 +24,16 @@ using System.Diagnostics.CodeAnalysis;
 namespace org.GraphDefined.Vanaheimr.Norn.NTP
 {
 
-    public enum NTSKERecordTypes : UInt16
-    {
-
-        EndOfMessage                = 0,
-        NTSNextProtocolNegotiation  = 1,
-        Error                       = 2,
-        Warning                     = 3,
-        AEADAlgorithmNegotiation    = 4,
-        NewCookieForNTPv4           = 5,
-        NTPv4ServerNegotiation      = 6,
-        NTPv4PortNegotiation        = 7
-
-        // "Unknown or custom record type!"
-
-    }
-
+    /// <summary>
+    /// Network Time Security Key Establishment (NTS-KE) record extension methods.
+    /// </summary>
     public static class NTSKERecordExtensions
     {
 
+        /// <summary>
+        /// Convert the given NTS-KE records to a byte array.
+        /// </summary>
+        /// <param name="NTSKERecords">An enumeration of NTS-KE records.</param>
         public static Byte[] ToByteArray(this IEnumerable<NTSKE_Record> NTSKERecords)
         {
 
@@ -58,16 +49,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
     }
 
 
-
     /// <summary>
     /// The Network Time Security Key Establishment (NTS-KE) record (RFC 8915).
     /// </summary>
     /// <param name="IsCritical">Whether an unrecognized record must cause an error.</param>
     /// <param name="Type">The type of the record.</param>
     /// <param name="Body">The optional data of the record.</param>
-    public class NTSKE_Record(Boolean           IsCritical,
-                              NTSKERecordTypes  Type,
-                              Byte[]?           Body   = null)
+    public class NTSKE_Record(Boolean            IsCritical,
+                              NTSKE_RecordTypes  Type,
+                              Byte[]?            Body   = null)
     {
 
         #region Data
@@ -86,7 +76,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         /// <summary>
         /// The type of the record.
         /// </summary>
-        public NTSKERecordTypes  Type          { get; } = Type;
+        public NTSKE_RecordTypes  Type          { get; } = Type;
 
         /// <summary>
         /// The type name of the record.
@@ -163,7 +153,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                 // Body:    [BodyLength bytes]
 
                 var critical    =                      (Buffer[offset] & 0x80) != 0;
-                var type        = (NTSKERecordTypes) (((Buffer[offset] & 0x7F) << 8) | Buffer[offset + 1]);
+                var type        = (NTSKE_RecordTypes) (((Buffer[offset] & 0x7F) << 8) | Buffer[offset + 1]);
                 var bodyLength  = (UInt16)            ((Buffer[offset +2 ]     << 8) | Buffer[offset + 3]);
                 offset += 4;
 
@@ -220,15 +210,64 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         #endregion
 
 
+        #region Static methods
 
-        public static NTSKE_Record NTSNextProtocolNegotiation
-            => new (true, NTSKERecordTypes.NTSNextProtocolNegotiation, [0x00, 0x00]);
-
-        public static NTSKE_Record AEADAlgorithm_AES_SIV_CMAC_256
-            => new (true, NTSKERecordTypes.AEADAlgorithmNegotiation,   [0x00, NTSKE_Record.AES_SIV_CMAC_256]);
-
+        /// <summary>
+        /// The end of the message
+        /// </summary>
         public static NTSKE_Record EndOfMessage
-            => new (true, NTSKERecordTypes.EndOfMessage);
+            => new (true, NTSKE_RecordTypes.EndOfMessage);
+
+        /// <summary>
+        /// NTS Next Protocol Negotiation
+        /// </summary>
+        public static NTSKE_Record NTSNextProtocolNegotiation
+            => new (true, NTSKE_RecordTypes.NTSNextProtocolNegotiation,  [0x00, 0x00]);
+
+        /// <summary>
+        /// NTS Error
+        /// </summary>
+        public static NTSKE_Record Error(Byte[] Error)
+            => new(true, NTSKE_RecordTypes.Error,                        Error);
+
+        /// <summary>
+        /// NTS Warning
+        /// </summary>
+        public static NTSKE_Record Warning(Byte[] Warning)
+            => new(true, NTSKE_RecordTypes.Warning,                      Warning);
+
+        /// <summary>
+        /// NTS AEAD Algorithm Negotiation using AES-SIV-CMAC-256
+        /// </summary>
+        public static NTSKE_Record AEADAlgorithm_AES_SIV_CMAC_256
+            => new (true, NTSKE_RecordTypes.AEADAlgorithmNegotiation,    [0x00, NTSKE_Record.AES_SIV_CMAC_256]);
+
+        /// <summary>
+        /// NTS AEAD Algorithm Negotiation
+        /// </summary>
+        public static NTSKE_Record AEADAlgorithmNegotiation(Byte[] Algorithm)
+            => new (true, NTSKE_RecordTypes.AEADAlgorithmNegotiation,    Algorithm);
+
+        /// <summary>
+        /// NTS New Cookie for NTPv4
+        /// </summary>
+        public static NTSKE_Record NewCookieForNTPv4(Byte[] NTSCookie)
+            => new(true, NTSKE_RecordTypes.NewCookieForNTPv4,            NTSCookie);
+
+        /// <summary>
+        /// NTS NTPv4 Server Negotiation
+        /// </summary>
+        public static NTSKE_Record NTPv4ServerNegotiation(Byte[] ServerInformation)
+            => new(true, NTSKE_RecordTypes.NTPv4ServerNegotiation,       ServerInformation);
+
+        /// <summary>
+        /// NTS NTPv4 Port Negotiation
+        /// </summary>
+        public static NTSKE_Record NTPv4PortNegotiation(Byte[] PortInformation)
+            => new(true, NTSKE_RecordTypes.NTPv4PortNegotiation,         PortInformation);
+
+
+        #endregion
 
 
         #region (override) ToString()

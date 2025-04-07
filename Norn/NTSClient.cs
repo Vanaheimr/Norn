@@ -22,7 +22,6 @@ using System.Net.Security;
 using System.Security.Cryptography;
 using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
-using System.Diagnostics.CodeAnalysis;
 
 using Org.BouncyCastle.Tls;
 
@@ -246,49 +245,20 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         #endregion
 
 
-        #region BuildNTSKERequest()
+        #region (private) BuildNTSKERequest()
 
         /// <summary>
         /// Create a new NTS-KE request.
         /// </summary>
         private static Byte[] BuildNTSKERequest()
-        {
-            using (var ms = new MemoryStream())
-            {
 
-                Byte[] nextProtocolNegotiation = [
-                    0x80, 0x01,                          // Record-Type        = 1 (NTS Next Protocol Negotiation)
-                    0x00, 0x02,                          // Body Length        = 2
-                    0x00, 0x00                           // Protocol ID        = 0 (0 for NTPv4)
-                ];
-
-                Byte[] aeadOffer = [
-                    0x80, 0x04,                          // Record-Type        = 4 (AEAD Algorithm Negotiation)
-                    0x00, 0x02,                          // Body Length        = 2
-                    0x00, NTSKE_Record.AES_SIV_CMAC_256  // AEAD Algorithm ID  = 15 (AES-SIV-CMAC-256)
-                ];
-
-                Byte[] eom = [
-                    0x80, 0x00,                          // Record-Type        = 0 (End of Message)
-                    0x00, 0x00                           // Body Length        = 0
-                ];
-
-                ms.Write(nextProtocolNegotiation, 0, nextProtocolNegotiation.Length);
-                ms.Write(aeadOffer,               0, aeadOffer.              Length);
-                ms.Write(eom,                     0, eom.                    Length);
-
-                return ms.ToArray();
-
-            }
-        }
+            => new List<NTSKE_Record>() {
+                       NTSKE_Record.NTSNextProtocolNegotiation,
+                       NTSKE_Record.AEADAlgorithm_AES_SIV_CMAC_256,
+                       NTSKE_Record.EndOfMessage
+                   }.ToByteArray();
 
         #endregion
-
-
-
-
-
-
 
 
 
@@ -325,9 +295,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
             var requestPacket = BuildNTPRequest(NTSKEResponse, uniqueId, Plaintext: null);
             var requestData   = requestPacket.ToByteArray();
-
-
-            //var yyy = NTPPacket.TryParse(requestData, out var ntpRequest, out var errorRequest, NTSKEResponse.C2SKey, uniqueId);
 
             using (var udpClient = new UdpClient())
             {

@@ -62,7 +62,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                            SByte?                      Precision              = null,
                            UInt32?                     RootDelay              = null,
                            UInt32?                     RootDispersion         = null,
-                           UInt32?                     ReferenceIdentifier    = null,
+                           ReferenceIdentifier?        ReferenceIdentifier    = null,
                            UInt64?                     ReferenceTimestamp     = null,
                            UInt64?                     OriginateTimestamp     = null,
                            UInt64?                     ReceiveTimestamp       = null,
@@ -106,7 +106,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         public Byte                       Poll                   { get; } = Poll                ?? 4;
 
         /// <summary>
-        /// Precision (als Zweierkomplement, z. B. -6)
+        /// Precision (as two's complement, e.g. -6)
         /// </summary>
         public SByte                      Precision              { get; } = Precision           ?? -6;
 
@@ -120,27 +120,26 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         /// </summary>
         public UInt32                     RootDispersion         { get; } = RootDispersion      ?? 0;
 
-        // Code       External Reference Source
-        // ------------------------------------------------------------------
-        // LOCL       uncalibrated local clock
-        // CESM       calibrated Cesium clock
-        // RBDM       calibrated Rubidium clock
-        // PPS        calibrated quartz clock or other pulse-per-second
-        //            source
-        // IRIG       Inter-Range Instrumentation Group
-        // ACTS       NIST telephone modem service
-        // USNO       USNO telephone modem service
-        // PTB        PTB (Germany) telephone modem service
-        // TDF        Allouis (France) Radio 164 kHz
-        // DCF        Mainflingen (Germany) Radio 77.5 kHz
-        // MSF        Rugby (UK) Radio 60 kHz
-        // WWV        Ft. Collins (US) Radio 2.5, 5, 10, 15, 20 MHz
-        // WWVB       Boulder (US) Radio 60 kHz
-        // WWVH       Kauai Hawaii (US) Radio 2.5, 5, 10, 15 MHz
-        // CHU        Ottawa (Canada) Radio 3330, 7335, 14670 kHz
-        // LORC       LORAN-C radionavigation system
-        // OMEG       OMEGA radionavigation system
-        // GPS        Global Positioning Service
+        // Code   External Reference Source
+        // -----------------------------------------------------------------
+        // LOCL   uncalibrated local clock
+        // CESM   calibrated Cesium clock
+        // RBDM   calibrated Rubidium clock
+        // PPS    calibrated quartz clock or other pulse-per-second source
+        // IRIG   Inter-Range Instrumentation Group
+        // ACTS   NIST telephone modem service
+        // USNO   USNO telephone modem service
+        // PTB    PTB (Germany) telephone modem service
+        // TDF    Allouis (France) Radio 164 kHz
+        // DCF    Mainflingen (Germany) Radio 77.5 kHz
+        // MSF    Rugby (UK) Radio 60 kHz
+        // WWV    Ft. Collins (US) Radio 2.5, 5, 10, 15, 20 MHz
+        // WWVB   Boulder (US) Radio 60 kHz
+        // WWVH   Kauai Hawaii (US) Radio 2.5, 5, 10, 15 MHz
+        // CHU    Ottawa (Canada) Radio 3330, 7335, 14670 kHz
+        // LORC   LORAN-C radionavigation system
+        // OMEG   OMEGA radionavigation system
+        // GPS    Global Positioning Service
 
         /// <summary>
         /// Reference Identifier (32 Bit)
@@ -148,13 +147,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         /// particular reference source.This field is significant only in
         /// server messages, where for stratum 0 (kiss-o'-death message) and 1
         /// (primary server), the value is a four-character ASCII string, left
-        /// justified and zero padded to 32 bits.For IPv4 secondary servers,
-        /// the value is the 32-bit IPv4 address of the synchronization source.
+        /// justified and zero padded to 32 bits.
+        /// For IPv4 secondary servers, the value is the 32-bit IPv4 address of
+        /// the synchronization source.
         /// For IPv6 and OSI secondary servers, the value is the first 32 bits of
-        /// the MD5 hash of the IPv6 or NSAP address of the synchronization
-        /// source.
+        /// the MD5 hash of the IPv6 or NSAP address of the synchronization source.
         /// </summary>
-        public UInt32                     ReferenceIdentifier    { get; } = ReferenceIdentifier ?? 0;
+        public ReferenceIdentifier        ReferenceIdentifier    { get; } = ReferenceIdentifier ?? NTP.ReferenceIdentifier.Zero;
 
         /// <summary>
         /// Reference Timestamp (64 Bit)
@@ -267,7 +266,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                    0,
                    0,
                    0,
-                   0,
+                   ReferenceIdentifier.Zero,
                    0,
                    0,
                    0,
@@ -303,7 +302,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
             WriteUInt32BigEndian(buffer,  4, RootDelay);
             WriteUInt32BigEndian(buffer,  8, RootDispersion);
-            WriteUInt32BigEndian(buffer, 12, ReferenceIdentifier);
+            WriteUInt32BigEndian(buffer, 12, ReferenceIdentifier.Integer);
             WriteUInt64BigEndian(buffer, 16, ReferenceTimestamp);
             WriteUInt64BigEndian(buffer, 24, OriginateTimestamp);
             WriteUInt64BigEndian(buffer, 32, ReceiveTimestamp);
@@ -417,14 +416,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
         #endregion
 
-        #region TryParseRequest(Buffer, out NTPPacket, out ErrorResponse, NTSKey = null, ExptectedUniqueId = null)
+
+        #region TryParseRequest  (Buffer, out NTPPacket, out ErrorResponse,                 NTSKey = null)
 
         public static Boolean TryParseRequest(Byte[]                               Buffer,
                                               [NotNullWhen(true)]  out NTPPacket?  NTPPacket,
                                               [NotNullWhen(false)] out String?     ErrorResponse,
-                                              Byte[]?                              NTSKey             = null,
-                                              Byte[]?                              ExpectedUniqueId   = null)
-                                              //Byte[]?                              Nonce              = null)
+                                              Byte[]?                              NTSKey             = null)
         {
 
             #region Initial checks
@@ -477,14 +475,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                 {
 
                     case ExtensionTypes.UniqueIdentifier:
-                        var uid = new UniqueIdentifierExtension(data);
-                        if (ExpectedUniqueId is not null &&
-                            !uid.Value.SequenceEqual(ExpectedUniqueId))
-                        {
-                            ErrorResponse = $"Unexpected UniqueIdentifier '{uid.Value}' != '{ExpectedUniqueId}'!";
-                            return false;
-                        }
-                        extensions.Add(uid);
+                        extensions.Add(new UniqueIdentifierExtension(data));
                         break;
 
                     case ExtensionTypes.NTSCookie:
@@ -558,21 +549,21 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
             NTPPacket = new NTPPacket(
 
-                            LI:                   (Byte) ((Buffer[0] >> 6) & 0x03),
-                            VN:                   (Byte) ((Buffer[0] >> 3) & 0x07),
-                            Mode:                 (Byte)  (Buffer[0]       & 0x07),
-                            Stratum:              Buffer[1],
-                            Poll:                 Buffer[2],
-                            Precision:            (SByte) Buffer[3],
-                            RootDelay:            (UInt32) ((Buffer[4]  << 24) | (Buffer[5]  << 16) | (Buffer[6]  << 8) | Buffer[7]),
-                            RootDispersion:       (UInt32) ((Buffer[8]  << 24) | (Buffer[9]  << 16) | (Buffer[10] << 8) | Buffer[11]),
-                            ReferenceIdentifier:  (UInt32) ((Buffer[12] << 24) | (Buffer[13] << 16) | (Buffer[14] << 8) | Buffer[15]),
-                            ReferenceTimestamp:   ReadUInt64(Buffer, 16),
-                            OriginateTimestamp:   ReadUInt64(Buffer, 24),
-                            ReceiveTimestamp:     ReadUInt64(Buffer, 32),
-                            TransmitTimestamp:    ReadUInt64(Buffer, 40),
+                            LI:                    (Byte) ((Buffer[0] >> 6) & 0x03),
+                            VN:                    (Byte) ((Buffer[0] >> 3) & 0x07),
+                            Mode:                  (Byte)  (Buffer[0]       & 0x07),
+                            Stratum:               Buffer[1],
+                            Poll:                  Buffer[2],
+                            Precision:             (SByte) Buffer[3],
+                            RootDelay:             (UInt32) ((Buffer[4]  << 24) | (Buffer[5]  << 16) | (Buffer[6]  << 8) | Buffer[7]),
+                            RootDispersion:        (UInt32) ((Buffer[8]  << 24) | (Buffer[9]  << 16) | (Buffer[10] << 8) | Buffer[11]),
+                            ReferenceIdentifier:   ReferenceIdentifier.From(Buffer[12], Buffer[13], Buffer[14], Buffer[15]),
+                            ReferenceTimestamp:    ReadUInt64(Buffer, 16),
+                            OriginateTimestamp:    ReadUInt64(Buffer, 24),
+                            ReceiveTimestamp:      ReadUInt64(Buffer, 32),
+                            TransmitTimestamp:     ReadUInt64(Buffer, 40),
 
-                            Extensions:           extensions
+                            Extensions:            extensions
 
                         );
 
@@ -584,7 +575,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
         #endregion
 
-        #region TryParseResponse(Buffer, out NTPPacket, out ErrorResponse, Request = null, NTSKey = null, ExptectedUniqueId = null)
+        #region TryParseResponse (Buffer, out NTPPacket, out ErrorResponse, Request = null, NTSKey = null, ExptectedUniqueId = null)
 
         public static Boolean TryParseResponse(Byte[]                               Buffer,
                                                [NotNullWhen(true)]  out NTPPacket?  NTPPacket,
@@ -592,7 +583,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                                                NTPPacket?                           Request            = null,
                                                Byte[]?                              NTSKey             = null,
                                                Byte[]?                              ExpectedUniqueId   = null)
-                                               //Byte[]?                              Nonce              = null)
         {
 
             #region Initial checks
@@ -645,6 +635,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                 {
 
                     case ExtensionTypes.UniqueIdentifier:
+
                         var uid = new UniqueIdentifierExtension(data);
 
                         if (Request?.UniqueIdentifier is not null &&
@@ -660,7 +651,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                             ErrorResponse = $"Unexpected UniqueIdentifier '{uid.Value}' != '{ExpectedUniqueId}'!";
                             return false;
                         }
+
                         extensions.Add(uid);
+
                         break;
 
                     case ExtensionTypes.NTSCookie:
@@ -734,7 +727,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                             Precision:              (SByte) Buffer[3],
                             RootDelay:              (UInt32) ((Buffer[4]  << 24) | (Buffer[5]  << 16) | (Buffer[6]  << 8) | Buffer[7]),
                             RootDispersion:         (UInt32) ((Buffer[8]  << 24) | (Buffer[9]  << 16) | (Buffer[10] << 8) | Buffer[11]),
-                            ReferenceIdentifier:    (UInt32) ((Buffer[12] << 24) | (Buffer[13] << 16) | (Buffer[14] << 8) | Buffer[15]),
+                            ReferenceIdentifier:    ReferenceIdentifier.From(Buffer[12], Buffer[13], Buffer[14], Buffer[15]),
                             ReferenceTimestamp:     ReadUInt64(Buffer, 16),
                             OriginateTimestamp:     ReadUInt64(Buffer, 24),
                             ReceiveTimestamp:       ReadUInt64(Buffer, 32),
@@ -756,43 +749,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
             if (NTPPacket.Stratum == 0)
             {
-
-                var bytes = BitConverter.GetBytes(NTPPacket.ReferenceIdentifier);
-
-                if (BitConverter.IsLittleEndian)
-                    Array.Reverse(bytes);
-
-                var error = System.Text.Encoding.ASCII.GetString(bytes);
-
-                ErrorResponse = error switch {
-
-                    // https://datatracker.ietf.org/doc/html/rfc5905
-                    // 7.4. The Kiss-o'-Death Packet
-                    "ACST" => $"'{error}' The association belongs to a unicast server.",
-                    "AUTH" => $"'{error}' Server authentication failed.",
-                    "AUTO" => $"'{error}' Autokey sequence failed.",
-                    "BCST" => $"'{error}' The association belongs to a broadcast server.",
-                    "CRYP" => $"'{error}' Cryptographic authentication or identification failed.",
-                    "DENY" => $"'{error}' Access denied by remote server.",
-                    "DROP" => $"'{error}' Lost peer in symmetric mode.",
-                    "RSTR" => $"'{error}' Access denied due to local policy.",
-                    "INIT" => $"'{error}' The association has not yet synchronized for the first time.",
-                    "MCST" => $"'{error}' The association belongs to a dynamically discovered server.",
-                    "NKEY" => $"'{error}' No key found.Either the key was never installed or is not trusted.",
-                    "RATE" => $"'{error}' Rate exceeded.The server has temporarily denied access because the client exceeded the rate threshold.",
-                    "RMOT" => $"'{error}' Alteration of association from a remote host running ntpdc.",
-                    "STEP" => $"'{error}' A step change in system time has occurred, but the association has not yet resynchronized.",
-
-                    // https://datatracker.ietf.org/doc/html/rfc8915
-                    // 5.7. Protocol Details
-                    "NTSN" => $"'{error}' NTS Negative Acknowledgment (NAK).",
-
-                     _     => $"'{error}' Unknown error!",
-
-                };
-
+                ErrorResponse = NTPPacket.ReferenceIdentifier.ErrorString ?? "ERR";
                 return false;
-
             }
 
             #endregion
