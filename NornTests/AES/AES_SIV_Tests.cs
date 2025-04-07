@@ -540,7 +540,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTP
             RandomNumberGenerator.Fill(cookie);
             RandomNumberGenerator.Fill(uniqueId);
 
-            var ntsKEResponse  = new NTSKE_Response([ new NTSKE_Record(true, 5, cookie) ], key, key);
+            var ntsKEResponse  = new NTSKE_Response([ new NTSKE_Record(true, NTSKERecordTypes.NewCookieForNTPv4, cookie) ], key, key);
             var plaintext      = new DebugExtension(message1).ToByteArray().Concat(new DebugExtension(message2).ToByteArray()).ToArray();
 
             var requestPacket  = NTSClient.BuildNTPRequest(ntsKEResponse, uniqueId, plaintext);

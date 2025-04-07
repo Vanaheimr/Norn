@@ -488,9 +488,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                         break;
 
                     case ExtensionTypes.NTSCookie:
-                        extensions.Add(
-                            new NTSCookieExtension(data)
-                        );
+
+                        var cookie = new NTSCookieExtension(data);
+                        extensions.Add(cookie);
+
+                        if (NTSKey is null)
+                        {
+                            //ToDo: Decrypt the cookie with the master key!
+                            NTSKey = new Byte[32];                       // 32 should be read from the cookie!
+                            Array.Copy(cookie.Value, 46, NTSKey, 0, 32); // 46 is the offset of the C2S key in the cookie!
+                        }
+
                         break;
 
                     case ExtensionTypes.NTSCookiePlaceholder:

@@ -46,7 +46,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         {
 
             var ntsClient                  = new NTSClient("ptbtime1.ptb.de");
+
             var ntsKEResponse              = ntsClient.GetNTSKERecords();
+
+            Assert.That(ntsKEResponse,                   Is.Not.Null);
+            Assert.That(ntsKEResponse.C2SKey,            Is.Not.Null);
+            Assert.That(ntsKEResponse.C2SKey.Length,     Is.GreaterThan(0));
+            Assert.That(ntsKEResponse.S2CKey,            Is.Not.Null);
+            Assert.That(ntsKEResponse.S2CKey.Length,     Is.GreaterThan(0));
+            Assert.That(ntsKEResponse.Cookies.Count(),   Is.GreaterThan(0));
+
+
             var ntsResponse                = await ntsClient.QueryTime(NTSKEResponse: ntsKEResponse);
 
             Assert.That(ntsResponse,  Is.Not.Null);
@@ -125,10 +135,20 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         {
 
             var ntsClient      = new NTSClient("ptbtime1.ptb.de");
-            var ntsKEResponse  = ntsClient.GetNTSKERecords();
-            var ntsResponse    = await ntsClient.QueryTime(NTSKEResponse: ntsKEResponse);
 
-            Assert.That(ntsResponse,  Is.Not.Null);
+            var ntsKEResponse  = ntsClient.GetNTSKERecords();
+
+            Assert.That(ntsKEResponse,                   Is.Not.Null);
+            Assert.That(ntsKEResponse.C2SKey,            Is.Not.Null);
+            Assert.That(ntsKEResponse.C2SKey.Length,     Is.GreaterThan(0));
+            Assert.That(ntsKEResponse.S2CKey,            Is.Not.Null);
+            Assert.That(ntsKEResponse.S2CKey.Length,     Is.GreaterThan(0));
+            Assert.That(ntsKEResponse.Cookies.Count(),   Is.GreaterThan(0));
+
+
+            var ntsResponse    = await ntsClient.QueryTime(NTSKEResponse: ntsKEResponse);
+            Assert.That(ntsResponse,    Is.Not.Null);
+
             if (ntsResponse is not null)
             {
 
@@ -193,7 +213,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                                              );
 
             var ntsKEResponse              = ntsClient.GetNTSKERecords();
-            Assert.That(ntsKEResponse,   Is.Not.Null);
+
+            Assert.That(ntsKEResponse,                   Is.Not.Null);
+            Assert.That(ntsKEResponse.C2SKey,            Is.Not.Null);
+            Assert.That(ntsKEResponse.C2SKey.Length,     Is.GreaterThan(0));
+            Assert.That(ntsKEResponse.S2CKey,            Is.Not.Null);
+            Assert.That(ntsKEResponse.S2CKey.Length,     Is.GreaterThan(0));
+            Assert.That(ntsKEResponse.Cookies.Count(),   Is.GreaterThan(0));
+
 
             var ntsResponse                = await ntsClient.QueryTime(NTSKEResponse: ntsKEResponse);
             Assert.That(ntsResponse,     Is.Not.Null);

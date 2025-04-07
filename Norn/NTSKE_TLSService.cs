@@ -128,13 +128,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
             // Export 32 bytes for AES-SIV-CMAC-256:
             NTS_C2S_Key = m_context.ExportKeyingMaterial(
                 "EXPORTER-network-time-security",
-                [0x00, 0x00, 0x00, 0x0f, 0x00],
+                [0x00, 0x00, 0x00, NTSKE_Record.AES_SIV_CMAC_256, 0x00],
                 32
             );
 
             NTS_S2C_Key = m_context.ExportKeyingMaterial(
                 "EXPORTER-network-time-security",
-                [0x00, 0x00, 0x00, 0x0f, 0x01],
+                [0x00, 0x00, 0x00, NTSKE_Record.AES_SIV_CMAC_256, 0x01],
                 32
             );
 
