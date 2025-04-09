@@ -27,10 +27,10 @@ using org.GraphDefined.Vanaheimr.Norn.NTP;
 
 #endregion
 
-namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTP
+namespace org.GraphDefined.Vanaheimr.Norn.Tests.Crypto
 {
 
-    public class NTPTests
+    public class CMAC_Tests
     {
 
         #region TestCMAC()
@@ -51,10 +51,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTP
 
         #endregion
 
-        #region TestCMACSubkeyGeneration()
+        #region TestCMACSubkeyGeneration1()
 
         [Test]
-        public void TestCMACSubkeyGeneration()
+        public void TestCMACSubkeyGeneration1()
         {
 
             var key         = "2b7e1516 28aed2a6 abf71588 09cf4f3c".FromHEX();
@@ -62,31 +62,31 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTP
             var expectedK1  = "fbeed618 35713366 7c85e08f 7236a8de".FromHEX();
             var expectedK2  = "f7ddac30 6ae266cc f90bc11e e46d513b".FromHEX();
 
-            // Schritt 1: Berechne AES-128(key, 0)
+            // Step 1: Calculate AES-128(key, 0)
             var computedAesKeyZero = AES_Encrypt(key, new Byte[16]);
-            Assert.That(computedAesKeyZero, Is.EqualTo(aesKeyZero), "AES-128(key, 0) ist falsch.");
+            Assert.That(computedAesKeyZero, Is.EqualTo(aesKeyZero), "AES-128(key, 0) is wrong!");
 
-            // Schritt 2: Generiere K1 und K2
+            // Step 2: Generate K1 and K2
             var K1 = GenerateSubkey(computedAesKeyZero);
             var K2 = GenerateSubkey(K1);
 
-            // Schritt 3: Vergleiche die generierten Subkeys mit den erwarteten Werten
-            Assert.That(K1, Is.EqualTo(expectedK1), "Subkey K1 ist falsch.");
-            Assert.That(K2, Is.EqualTo(expectedK2), "Subkey K2 ist falsch.");
+            // Step 3: Compare the generated subkeys with the expected values
+            Assert.That(K1, Is.EqualTo(expectedK1), "Subkey K1 is wrong!");
+            Assert.That(K2, Is.EqualTo(expectedK2), "Subkey K2 is wrong!");
 
         }
 
         #endregion
 
-        #region TestSubkeyGeneration2()
+        #region TestCMACSubkeyGeneration2()
 
         [Test]
-        public void TestSubkeyGeneration2()
+        public void TestCMACSubkeyGeneration2()
         {
 
             var key           = "2b7e151628aed2a6abf7158809cf4f3c".FromHEX();
 
-            // Berechne L = AES-128(key, 0^128)
+            // Calculate L = AES-128(key, 0^128)
             var zeroBlock     = new Byte[16];
             var engine        = new AesEngine();
             engine.Init(true, new KeyParameter(key));
@@ -96,7 +96,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTP
             var expectedLHex  = "7df76b0c1ab899b33e42f047b91b546f";
             Assert.That(L.ToHexString(), Is.EqualTo(expectedLHex));
 
-            // Berechne K1 = dbl(L) und K2 = dbl(K1)
+            // Calculate K1 = dbl(L) und K2 = dbl(K1)
             var K1            = AES_SIV.DoubleBlock(L);
             var K2            = AES_SIV.DoubleBlock(K1);
 
@@ -110,19 +110,20 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTP
 
         #endregion
 
-        private byte[] AES_Encrypt(byte[] key, byte[] input)
+
+        private Byte[] AES_Encrypt(Byte[] key, Byte[] input)
         {
 
             var cipher = new AesEngine();
             cipher.Init(true, new KeyParameter(key));
 
-            var output = new byte[16];
+            var output = new Byte[16];
             cipher.ProcessBlock(input, 0, output, 0);
             return output;
 
         }
 
-        private byte[] GenerateSubkey(byte[] input)
+        private Byte[] GenerateSubkey(Byte[] input)
         {
 
             // Double block in GF(2^128)
@@ -143,9 +144,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTP
             return output;
 
         }
-
-
-
 
 
     }

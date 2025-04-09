@@ -60,12 +60,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                               Byte[]?            Body   = null)
     {
 
-        #region Data
-
-        public const Byte AES_SIV_CMAC_256 = 0x0f;
-
-        #endregion
-
         #region Properties
 
         /// <summary>
@@ -216,55 +210,54 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         /// The end of the message
         /// </summary>
         public static NTSKE_Record EndOfMessage
-            => new (true, NTSKE_RecordTypes.EndOfMessage);
+            => new (true,       NTSKE_RecordTypes.EndOfMessage);
 
         /// <summary>
         /// NTS Next Protocol Negotiation
         /// </summary>
         public static NTSKE_Record NTSNextProtocolNegotiation
-            => new (true, NTSKE_RecordTypes.NTSNextProtocolNegotiation,  [0x00, 0x00]);
+            => new (true,       NTSKE_RecordTypes.NTSNextProtocolNegotiation,   [0x00, 0x00]);
 
         /// <summary>
         /// NTS Error
         /// </summary>
         public static NTSKE_Record Error(Byte[] Error)
-            => new(true, NTSKE_RecordTypes.Error,                        Error);
+            => new (true,       NTSKE_RecordTypes.Error,                        Error);
 
         /// <summary>
         /// NTS Warning
         /// </summary>
         public static NTSKE_Record Warning(Byte[] Warning)
-            => new(true, NTSKE_RecordTypes.Warning,                      Warning);
-
-        /// <summary>
-        /// NTS AEAD Algorithm Negotiation using AES-SIV-CMAC-256
-        /// </summary>
-        public static NTSKE_Record AEADAlgorithm_AES_SIV_CMAC_256
-            => new (true, NTSKE_RecordTypes.AEADAlgorithmNegotiation,    [0x00, NTSKE_Record.AES_SIV_CMAC_256]);
+            => new (true,       NTSKE_RecordTypes.Warning,                      Warning);
 
         /// <summary>
         /// NTS AEAD Algorithm Negotiation
         /// </summary>
-        public static NTSKE_Record AEADAlgorithmNegotiation(Byte[] Algorithm)
-            => new (true, NTSKE_RecordTypes.AEADAlgorithmNegotiation,    Algorithm);
+        /// <param name="Algorithm">The algorithm to be negotiated.</param>
+        public static NTSKE_Record AEADAlgorithmNegotiation(AEADAlgorithms Algorithm = AEADAlgorithms.AES_SIV_CMAC_256)
+            => new (true,       NTSKE_RecordTypes.AEADAlgorithmNegotiation,     Algorithm.GetBytes());
 
         /// <summary>
         /// NTS New Cookie for NTPv4
         /// </summary>
-        public static NTSKE_Record NewCookieForNTPv4(Byte[] NTSCookie)
-            => new(true, NTSKE_RecordTypes.NewCookieForNTPv4,            NTSCookie);
+        /// <param name="IsCritical">Whether the record is critical.</param>
+        /// <param name="NTSCookie">The new NTS cookie.</param>
+        public static NTSKE_Record NewCookieForNTPv4(Byte[] NTSCookie, Boolean IsCritical = true)
+            => new (IsCritical, NTSKE_RecordTypes.NewCookieForNTPv4,            NTSCookie);
 
         /// <summary>
         /// NTS NTPv4 Server Negotiation
         /// </summary>
+        /// <param name="ServerInformation">The NTP server information.</param>
         public static NTSKE_Record NTPv4ServerNegotiation(Byte[] ServerInformation)
-            => new(true, NTSKE_RecordTypes.NTPv4ServerNegotiation,       ServerInformation);
+            => new(true,        NTSKE_RecordTypes.NTPv4ServerNegotiation,       ServerInformation);
 
         /// <summary>
         /// NTS NTPv4 Port Negotiation
         /// </summary>
+        /// <param name="PortInformation">The NTP port information.</param>
         public static NTSKE_Record NTPv4PortNegotiation(Byte[] PortInformation)
-            => new(true, NTSKE_RecordTypes.NTPv4PortNegotiation,         PortInformation);
+            => new(true,        NTSKE_RecordTypes.NTPv4PortNegotiation,         PortInformation);
 
 
         #endregion

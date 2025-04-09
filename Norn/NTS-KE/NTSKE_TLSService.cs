@@ -91,7 +91,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         /// <param name="SubjectName">The optional X.509 subject name to use for new certificates.</param>
         public NTSKE_TLSService(X509Certificate?         Certificate   = null,
                                 ECPrivateKeyParameters?  PrivateKey    = null,
-                                String?                  SubjectName   = null) : base(new BcTlsCrypto(new SecureRandom()))
+                                String?                  SubjectName   = null)
+
+            : base(
+                  new BcTlsCrypto(
+                      new SecureRandom()
+                  )
+              )
+
         {
 
             if (Certificate is not null &&
@@ -104,14 +111,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
             }
 
-            (this.Certificate,
-             this.PrivateKey) = GenerateSelfSignedServerCertificate(
-                                    SubjectName.IsNotNullOrEmpty()
-                                        ? $"CN={SubjectName}"
-                                        : "CN=ntpKE.example.org"
-                                );
+            (this.Certificate, this.PrivateKey)  = GenerateSelfSignedServerCertificate(
+                                                       SubjectName.IsNotNullOrEmpty()
+                                                           ? $"CN={SubjectName}"
+                                                           : "CN=ntpKE.example.org"
+                                                   );
 
-            this.encodedCertificate = this.Certificate.GetEncoded();
+            this.encodedCertificate              = this.Certificate.GetEncoded();
 
         }
 
@@ -125,16 +131,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
             base.NotifyHandshakeComplete();
 
+            var algorithmBytes = AEADAlgorithms.AES_SIV_CMAC_256.GetBytes();
+
             // Export 32 bytes for AES-SIV-CMAC-256:
             NTS_C2S_Key = m_context.ExportKeyingMaterial(
                 "EXPORTER-network-time-security",
-                [0x00, 0x00, 0x00, NTSKE_Record.AES_SIV_CMAC_256, 0x00],
+                [0x00, 0x00, algorithmBytes[0], algorithmBytes[1], 0x00],
                 32
             );
 
             NTS_S2C_Key = m_context.ExportKeyingMaterial(
                 "EXPORTER-network-time-security",
-                [0x00, 0x00, 0x00, NTSKE_Record.AES_SIV_CMAC_256, 0x01],
+                [0x00, 0x00, algorithmBytes[0], algorithmBytes[1], 0x01],
                 32
             );
 
@@ -204,9 +212,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         /// Generates a TLS server certificate and ECC private key.
         /// </summary>
         /// <param name="SubjectName">The X.509 subject name to use for the new certificate.</param>
+        /// <param name="SubjectAlternativeNames">Optional enumeration of subject alternative DNS names.</param>
         public static (X509Certificate         Certificate,
                        ECPrivateKeyParameters  PrivateKey)
-            GenerateSelfSignedServerCertificate(String SubjectName)
+            GenerateSelfSignedServerCertificate(String                SubjectName,
+                                                IEnumerable<String>?  SubjectAlternativeNames = null)
 
         {
 
@@ -248,6 +258,26 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                 false,
                 new ExtendedKeyUsage([ KeyPurposeID.id_kp_serverAuth ])
             );
+
+            var subjectAlternativeNames = SubjectAlternativeNames?.Select(subjectAlternativeName => new GeneralName(GeneralName.DnsName, subjectAlternativeName)).ToList() ?? [];
+
+            if (subjectAlternativeNames.Count == 0)
+            {
+                subjectAlternativeNames.Add(new GeneralName(GeneralName.DnsName, "ntpKE1.example.org"));
+                subjectAlternativeNames.Add(new GeneralName(GeneralName.DnsName, "ntpKE2.example.org"));
+            }
+
+            //certGenerator.AddExtension(
+            //    X509Extensions.SubjectAlternativeName,
+            //    false,
+            //    new DerSequence(
+            //        subjectAlternativeNames.Cast<Asn1Encodable>().ToArray()
+            //       // new Asn1Encodable[] {
+            //       //     new GeneralName(GeneralName.DnsName, "ntpKE1.example.org"),
+            //       //     new GeneralName(GeneralName.DnsName, "ntpKE2.example.org")
+            //       // }
+            //    )
+            //);
 
             certGenerator.AddExtension(
                 X509Extensions.SubjectAlternativeName,

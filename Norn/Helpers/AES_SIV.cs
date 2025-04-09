@@ -75,7 +75,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         #endregion
 
 
-        #region            Encrypt(AssociatedData, Plaintext)
+        #region Encrypt (AssociatedData, Plaintext)
 
         /// <summary>
         /// Encrypts the given plaintext message considering the associated data using AES Counter Mode (AES-CTR)
@@ -109,7 +109,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
         #endregion
 
-        #region            Decrypt(AssociatedData, Nonce, SyntheticIVAndCiphertext)
+        #region Decrypt (AssociatedData, Nonce, SyntheticIVAndCiphertext)
 
         /// <summary>
         /// Decrypts an encrypted message of the form syntheticIV || ciphertext.
@@ -156,7 +156,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         #endregion
 
 
-        #region (private)        String2InitializationVector (AssociatedData, Plaintext)
+        #region (private) String2InitializationVector (AssociatedData, Nonce, Plaintext)
 
         /// <summary>
         /// Implements the "String to Initialization Vector" (S2V) function according to RFC 5297.
@@ -228,7 +228,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
         #endregion
 
-        #region         (static) CMAC                        (Key, Message)
+
+        #region (static)  CMAC                        (Key, Message)
 
         /// <summary>
         /// Calculate the AES Cipher-based Message Authentication Code (AES-CMAC)
@@ -253,7 +254,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
         #endregion
 
-        #region (static) DoubleBlock                 (Block)
+        #region (static)  DoubleBlock                 (Block)
 
         /// <summary>
         /// Verdoppelt einen 16-Byte Block in GF(2^128) gemäß RFC 5297 (dbl()-Funktion).
@@ -286,7 +287,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
         #endregion
 
-        #region (static) XOR_Blocks                  (BlockA, BlockB)
+        #region (static)  XOR_Blocks                  (BlockA, BlockB)
 
         /// <summary>
         /// XOR two equally long byte arrays.
@@ -311,7 +312,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
         #endregion
 
-        #region (static) Pad                         (Data)
+        #region (static)  Pad                         (Data)
 
         public static Byte[] Pad(Byte[] Data)
         {
@@ -336,7 +337,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
         #endregion
 
-        #region (static) AES_CTR_Encrypt             (Plaintext, InitializationVector, SharedKey)
+        #region (static)  AES_CTR_Encrypt             (Plaintext, InitializationVector, SharedKey)
 
         /// <summary>
         /// Encrypts the given plaintext message using AES Counter Mode (AES-CTR)

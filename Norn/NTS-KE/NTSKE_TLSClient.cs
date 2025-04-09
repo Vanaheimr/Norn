@@ -76,16 +76,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
             NTSKEContext = base.m_context;
 
+            var algorithmBytes = AEADAlgorithms.AES_SIV_CMAC_256.GetBytes();
+
             // Export 32 bytes for AES-SIV-CMAC-256:
             NTS_C2S_Key = NTSKEContext.ExportKeyingMaterial(
                 "EXPORTER-network-time-security",
-                [0x00, 0x00, 0x00, NTSKE_Record.AES_SIV_CMAC_256, 0x00],
+                [0x00, 0x00, algorithmBytes[0], algorithmBytes[1], 0x00],
                 32
             );
 
             NTS_S2C_Key = NTSKEContext.ExportKeyingMaterial(
                 "EXPORTER-network-time-security",
-                [0x00, 0x00, 0x00, NTSKE_Record.AES_SIV_CMAC_256, 0x01],
+                [0x00, 0x00, algorithmBytes[0], algorithmBytes[1], 0x01],
                 32
             );
 

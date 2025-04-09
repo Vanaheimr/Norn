@@ -32,7 +32,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
     /// 5. NTS Extension Fields for NTPv4
     /// 
     /// Network Time Protocol Version 4 (NTPv4) Extension Fields: https://datatracker.ietf.org/doc/html/rfc7822
-    /// 
     /// </summary>
     /// <param name="Type">The extension type.</param>
     /// <param name="Length">The overall length of the extension in octets (including the 4-byte header).</param>

@@ -254,7 +254,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
             => new List<NTSKE_Record>() {
                        NTSKE_Record.NTSNextProtocolNegotiation,
-                       NTSKE_Record.AEADAlgorithm_AES_SIV_CMAC_256,
+                       NTSKE_Record.AEADAlgorithmNegotiation(),
                        NTSKE_Record.EndOfMessage
                    }.ToByteArray();
 
@@ -270,9 +270,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         ///   3) NTS Authenticator & Encrypted extension field (placeholder)
         /// and reads a single response.
         /// </summary>
-        public async Task<NTPPacket?> QueryTime(TimeSpan?          Timeout             = null,
-                                                NTSKE_Response?    NTSKEResponse       = null,
-                                                CancellationToken  CancellationToken   = default)
+        public async Task<NTPPacket?> QueryTime(TimeSpan?          Timeout                 = null,
+                                                NTSKE_Response?    NTSKEResponse           = null,
+                                                Boolean            RequestSignedResponse   = false,
+                                                CancellationToken  CancellationToken       = default)
         {
 
             if (NTSKEResponse?.ErrorMessage is not null)
@@ -293,8 +294,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
             var uniqueId = new Byte[32];
             RandomNumberGenerator.Fill(uniqueId);
 
-            var requestPacket = BuildNTPRequest(NTSKEResponse, uniqueId, Plaintext: null);
-            var requestData   = requestPacket.ToByteArray();
+            var requestPacket  = BuildNTPRequest(
+                                     NTSKEResponse,
+                                     uniqueId,
+                                     Plaintext:              null,
+                                     RequestSignedResponse:  RequestSignedResponse
+                                 );
+
+            var requestData    = requestPacket.ToByteArray();
 
             using (var udpClient = new UdpClient())
             {
@@ -357,9 +364,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         ///   2) NTS Cookie (0204)
         ///   3) NTS Auth & Encrypted (0404) - with placeholder AEAD data
         /// </summary>
-        public static NTPPacket BuildNTPRequest(NTSKE_Response?  NTSKEResponse   = null,
-                                                Byte[]?          UniqueId        = null,
-                                                Byte[]?          Plaintext       = null)
+        public static NTPPacket BuildNTPRequest(NTSKE_Response?  NTSKEResponse           = null,
+                                                Byte[]?          UniqueId                = null,
+                                                Byte[]?          Plaintext               = null,
+                                                Boolean          RequestSignedResponse   = false)
         {
 
             var ntpPacket1  = new NTPPacket(
@@ -373,8 +381,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                 NTSKEResponse.C2SKey.Length > 0)
             {
 
-                var uniqueIdExtension  = NTPExtension.UniqueIdentifier(UniqueId);
-                var cookieExtension    = NTPExtension.NTSCookie(NTSKEResponse.Cookies.First());
+                var uniqueIdExtension               = NTPExtension.UniqueIdentifier(UniqueId);
+                var cookieExtension                 = NTPExtension.NTSCookie(NTSKEResponse.Cookies.First());
+                var requestSignedResponseExtension  = new NTSRequestSignedResponseExtension("Hello World!".ToUTF8Bytes());
 
                 extensions.Add(
                     uniqueIdExtension
@@ -384,15 +393,23 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                     NTPExtension.NTSCookie(NTSKEResponse.Cookies.First())
                 );
 
+                var extensionBytes = new List<Byte[]>() {
+                                         ntpPacket1.       ToByteArray(),
+                                         uniqueIdExtension.ToByteArray(),
+                                         cookieExtension.  ToByteArray()
+                                     };
+
+                if (RequestSignedResponse)
+                {
+                    extensions.    Add(requestSignedResponseExtension);
+                    extensionBytes.Add(requestSignedResponseExtension.ToByteArray());
+                }
+
                 // Basically this extension validates all data (NTP header + extensions) which came before it!
                 extensions.Add(
                     AuthenticatorAndEncryptedExtension.Create(
                         NTSKEResponse,
-                        [
-                            ntpPacket1.       ToByteArray(),
-                            uniqueIdExtension.ToByteArray(),
-                            cookieExtension.  ToByteArray()
-                        ],
+                        extensionBytes,
                         Plaintext
                     )
                 );

@@ -18,97 +18,216 @@
 #region Usings
 
 using System.Net;
-using System.Text;
 using System.Net.Sockets;
+using System.Security.Cryptography;
+using System.Collections.Concurrent;
 
 using Org.BouncyCastle.Tls;
 
 using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Hermod;
-using org.GraphDefined.Vanaheimr.Illias.ConsoleLog;
-using System.Security.Cryptography;
-using System.Collections.Generic;
+using org.GraphDefined.Vanaheimr.Norn.NTP;
 
 #endregion
 
-namespace org.GraphDefined.Vanaheimr.Norn.NTP
+namespace org.GraphDefined.Vanaheimr.Norn.NTS
 {
 
     /// <summary>
     /// A Network Time Secure (NTS) Server.
     /// It will serve a NTS-KeyEstablishment (NTS-KE) TLS Server and a NTP UDP Server.
     /// </summary>
-    /// <param name="TCPPort">The optional TCP port for NTS-KE to listen on (default: 4460).</param>
-    /// <param name="UDPPort">The optional UDP port for NTP to listen on (default: 123).</param>
-    public class NTSServer(IPPort?  TCPPort   = null,
-                           IPPort?  UDPPort   = null)
+    public class NTSServer
     {
 
         #region Data
 
-        private Socket?                   tcpSocket;
-        private Socket?                   udpSocket;
-        private CancellationTokenSource?  cts;
+        private                  Socket?                                      tcpSocket;
+        private                  Socket?                                      udpSocket;
+        private                  CancellationTokenSource?                     cts;
+
+        private readonly         ConcurrentDictionary<UInt64, MasterKey>  masterKeys            = [];
+        private static readonly  Lock                                         currentMasterKeyLock  = new();
+        private                  MasterKey?                               currentMasterKey;
 
         #endregion
 
         #region Properties
 
-        public IPPort  TCPPort       { get; } = TCPPort ?? IPPort.NTSKE;
+        /// <summary>
+        /// The NTP-KE TCP port.
+        /// </summary>
+        public IPPort  TCPPort       { get; } = IPPort.NTSKE;
 
-        public IPPort  UDPPort       { get; } = UDPPort ?? IPPort.NTP;
+        /// <summary>
+        /// The NTP UDP port.
+        /// </summary>
+        public IPPort  UDPPort       { get; } = IPPort.NTP;
 
+        /// <summary>
+        /// The size of the buffer used for receiving NTP packets.
+        /// </summary>
         public UInt32  BufferSize    { get; } = 4096;
 
         #endregion
 
+        #region Constructor(s)
 
-        private IEnumerable<NTSKE_Record> GetCookies(Byte    NumberOfCookies,
-                                                     Byte    AEADAlgorithmId,
-                                                     Byte[]  C2SKey,
-                                                     Byte[]  S2CKey)
+        /// <summary>
+        /// Create a new Network Time Secure (NTS) Server.
+        /// </summary>
+        /// <param name="TCPPort">The optional TCP port for NTS-KE to listen on (default: 4460).</param>
+        /// <param name="UDPPort">The optional UDP port for NTP to listen on (default: 123).</param>
+        public NTSServer(IPPort?  TCPPort   = null,
+                         IPPort?  UDPPort   = null)
         {
+
+            this.TCPPort = TCPPort ?? IPPort.NTSKE;
+            this.UDPPort = UDPPort ?? IPPort.NTP;
+
+            foreach (var masterKeyText in File.ReadAllLines("masterKeys.json"))
+            {
+                if (MasterKey.TryParse(masterKeyText, out var masterKey, out var errorResponse))
+                {
+                    masterKeys.TryAdd(
+                        masterKey.KeyId,
+                        masterKey
+                    );
+                }
+                else
+                {
+                    DebugX.Log($"Invalid master key: {masterKeyText}");
+                }
+            }
+
+        }
+
+
+        #endregion
+
+
+        #region (private) GetCurrentMasterKey()
+
+        private MasterKey GetCurrentMasterKey()
+        {
+
+            // https://datatracker.ietf.org/doc/html/rfc8915#name-suggested-format-for-nts-co
+            // Servers should periodically(e.g., once daily) generate a new pair '(I,K)' and immediately
+            // switch to using these values for all newly-generated cookies. Following each such key
+            // rotation, servers should securely erase any previously generated keys that should now be
+            // expired.
+            // Servers should continue to accept any cookie generated using keys that they have not yet
+            // erased, even if those keys are no longer current. Erasing old keys provides for forward
+            // secrecy, limiting the scope of what old information can be stolen if a master key is
+            // somehow compromised. Holding on to a limited number of old keys allows clients to
+            // seamlessly transition from one generation to the next without having to perform a new
+            // NTS-KE handshake.
+
+            if (currentMasterKey is null)
+            {
+                lock (currentMasterKeyLock)
+                {
+
+                    if (currentMasterKey is null)
+                    {
+                        foreach (var masterKey in masterKeys.Values.OrderByDescending(masterKey => masterKey.NotAfter))
+                        {
+                            if (masterKey.NotBefore <= Timestamp.Now &&
+                                masterKey.NotAfter  >  Timestamp.Now)
+                            {
+                                currentMasterKey = masterKey;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (currentMasterKey is null)
+                    {
+
+                        var newKeyId      = masterKeys.IsEmpty
+                                                ? 1UL
+                                                : masterKeys.Keys.Max() + 1;
+
+                        currentMasterKey  = new MasterKey(
+                                                newKeyId,
+                                                RandomNumberGenerator.GetBytes(32),
+                                                Timestamp.Now,
+                                                Timestamp.Now + TimeSpan.FromDays(1)
+                                            );
+
+                        masterKeys.TryAdd(
+                            currentMasterKey.Value.KeyId,
+                            currentMasterKey.Value
+                        );
+
+                    }
+
+                }
+            }
+
+            return currentMasterKey.Value;
+
+        }
+
+        #endregion
+
+        #region (private) GenerateNTSCookies(MasterKey, NumberOfCookies, C2SKey, S2CKey, AEADAlgorithm = AEADAlgorithms.AES_SIV_CMAC_256)
+
+        private IEnumerable<NTSKE_Record> GenerateNTSCookies(MasterKey       MasterKey,
+                                                             Byte            NumberOfCookies,
+                                                             Byte[]          C2SKey,
+                                                             Byte[]          S2CKey,
+                                                             AEADAlgorithms  AEADAlgorithm   = AEADAlgorithms.AES_SIV_CMAC_256)
+        {
+
+            #region Initial checks
 
             if (NumberOfCookies == 0)
                 return [];
-
             if (C2SKey.Length == 0)
                 throw new ArgumentException("The C2SKey must not be empty!", nameof(C2SKey));
-
             if (S2CKey.Length == 0)
                 throw new ArgumentException("The S2CKey must not be empty!", nameof(S2CKey));
-
             if (C2SKey.Length != S2CKey.Length)
                 throw new ArgumentException("The C2SKey and S2CKey must be of the same length!");
 
-            const Byte OffsetAlgorithmId = 0;
-            const Byte OffsetTimestamp   = 4;
-            const Byte OffsetNonce       = 12;
-            const Byte OffsetKeyLength   = 44;
-            const Byte OffsetC2SKey      = 46;
-            var        OffsetS2CKey      = (Byte) (OffsetC2SKey + C2SKey.Length);
-            var        totalLength       = OffsetS2CKey + S2CKey.Length;
+            #endregion
+
+            #region Data
+
+            const Byte OffsetAlgorithmId  = 0;
+            const Byte OffsetTimestamp    = 4;
+            const Byte OffsetNonce        = 12;
+            const Byte OffsetKeyLength    = 44;
+            const Byte OffsetC2SKey       = 46;
+            var        OffsetS2CKey       = (Byte) (OffsetC2SKey + C2SKey.Length);
+            var        totalLength        = OffsetS2CKey + S2CKey.Length;
+
+            #endregion
 
 
-            // RFC 8915 Section 5.3
-
-            var cookies = new List<NTSKE_Record>();
+            var unixTimestamp  = (UInt64) Timestamp.Now.ToUnixTimestamp();
+            var cookies        = new List<NTSKE_Record>();
 
             for (var i = 0; i < NumberOfCookies; i++)
             {
 
-                var cookie = new Byte[totalLength];
+                // rfc8915 Section 6 https://datatracker.ietf.org/doc/html/rfc8915#name-suggested-format-for-nts-co
+                // gives just some general hints about the cookie format!
+                //
+                // Therefore this is OUR format!
 
-                cookie[OffsetAlgorithmId] = AEADAlgorithmId;
+                var cookie          = new Byte[totalLength];
+                var algorithmBytes  = AEADAlgorithm.GetBytes();
+                cookie[OffsetAlgorithmId  ] = algorithmBytes[0];
+                cookie[OffsetAlgorithmId+1] = algorithmBytes[1];
 
                 // Timestamp (Big-Endian)
-                var unixTimestamp = (UInt64) Timestamp.Now.ToUnixTimestamp();
                 for (var j = 0; j < 8; j++)
                     cookie[OffsetTimestamp + j] = (Byte) (unixTimestamp >> (56 - 8 * j));
 
                 // Nonce (32 bytes)
-                var nonce = new Byte[32];
-                RandomNumberGenerator.Fill(nonce);
+                var nonce = RandomNumberGenerator.GetBytes(32);
                 Buffer.BlockCopy(nonce, 0, cookie, OffsetNonce, nonce.Length);
 
                 // Key length (Big-Endian)
@@ -135,6 +254,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
         }
 
+        #endregion
 
 
         #region Start(CancellationToken = default)
@@ -280,20 +400,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                             try
                             {
 
-                                using var networkStream = new NetworkStream(clientSocket, ownsSocket: false);
-
-                                var tlsServerProtocol = new TlsServerProtocol(networkStream);
-
-                                var tlsServer = new NTSKE_TLSService();
+                                using var networkStream  = new NetworkStream    (clientSocket, ownsSocket: false);
+                                var tlsServerProtocol    = new TlsServerProtocol(networkStream);
+                                var tlsServer            = new NTSKE_TLSService ();
                                 tlsServerProtocol.Accept(tlsServer);
 
-                                var c2sKey = tlsServer.NTS_C2S_Key ?? [];
-                                var s2cKey = tlsServer.NTS_S2C_Key ?? [];
+                                var c2sKey               = tlsServer.NTS_C2S_Key ?? [];
+                                var s2cKey               = tlsServer.NTS_S2C_Key ?? [];
 
 
                                 // Read client request bytes from the stream
-                                var buffer = new Byte[BufferSize];
-                                int bytesRead = await tlsServerProtocol.Stream.ReadAsync(buffer, cts.Token);
+                                var buffer               = new Byte[BufferSize];
+                                var bytesRead            = await tlsServerProtocol.Stream.ReadAsync(buffer, cts.Token);
                                 if (bytesRead > 0)
                                 {
 
@@ -306,10 +424,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
                                         var ntsKERecords = new List<NTSKE_Record> {
                                                                NTSKE_Record.NTSNextProtocolNegotiation,
-                                                               NTSKE_Record.AEADAlgorithm_AES_SIV_CMAC_256
+                                                               NTSKE_Record.AEADAlgorithmNegotiation()
                                                            };
 
-                                        ntsKERecords.AddRange(GetCookies(7, NTSKE_Record.AES_SIV_CMAC_256, c2sKey, s2cKey));
+                                        ntsKERecords.AddRange(
+                                            GenerateNTSCookies(
+                                                GetCurrentMasterKey(),
+                                                7,
+                                                c2sKey,
+                                                s2cKey
+                                            )
+                                        );
+
                                         ntsKERecords.Add(NTSKE_Record.EndOfMessage);
 
                                         await tlsServerProtocol.Stream.WriteAsync(ntsKERecords.ToByteArray());
@@ -322,11 +448,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                                     }
 
                                 }
-
-                                //// Write "Hello World!" to the TLS-encrypted stream
-                                //using var writer = new StreamWriter(tlsServerProtocol.Stream, Encoding.UTF8, leaveOpen: true);
-                                //await writer.WriteLineAsync("Hello World!");
-                                //await writer.FlushAsync();
 
                                 tlsServerProtocol.Close();
 
@@ -378,14 +499,32 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         #endregion
 
 
+        private Byte[] GetS2CKey(NTSCookieExtension CookieExtension)
+        {
+
+            return CookieExtension.Value;
+
+        }
+
+
         private NTPPacket BuildResponse(NTPPacket RequestPacket)
         {
 
-            var extensions = new List<NTPExtension>();
+            var extensions  = new List<NTPExtension>();
 
             if (RequestPacket.UniqueIdentifier?.Length > 0)
                 extensions.Add(new UniqueIdentifierExtension(RequestPacket.UniqueIdentifier ?? []));
 
+            var s2cKey      = RequestPacket.NTSCookie is not null
+                                  ? GetS2CKey(RequestPacket.NTSCookie)
+                                  : [];
+
+
+
+
+            // AuthenticatorAndEncryptedExtension with embedded NTSCookieExtension
+
+            extensions.Add(NTSSignedResponseExtension.Create(extensions.Select(extension => extension.ToByteArray())));
 
 
             var response = new NTPPacket(

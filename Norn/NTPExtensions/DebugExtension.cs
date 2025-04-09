@@ -28,13 +28,20 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
     public class DebugExtension(String   Text,
                                 Boolean  Authenticated   = false,
-                                Boolean  Encrypted       = false) : NTPExtension(ExtensionTypes.Debug,
-                                                                                 Text.ToUTF8Bytes(),
-                                                                                 Authenticated,
-                                                                                 Encrypted)
+                                Boolean  Encrypted       = false)
+
+        : NTPExtension(ExtensionTypes.Debug,
+                       Text.ToUTF8Bytes(),
+                       Authenticated,
+                       Encrypted)
+
     {
 
+        #region Properties
+
         public String  Text    { get; private set; } = Text;
+
+        #endregion
 
 
         public static Boolean TryParse(Byte[]                                    Data,

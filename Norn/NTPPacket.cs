@@ -191,6 +191,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         public Byte[]?                    UniqueIdentifier
             => Extensions.FirstOrDefault(ext => ext.Type == ExtensionTypes.UniqueIdentifier)?.Value;
 
+        /// <summary>
+        /// The value of an optional NTS Cookie extension.
+        /// </summary>
+        public NTSCookieExtension?        NTSCookie
+            => Extensions.FirstOrDefault(ext => ext.Type == ExtensionTypes.NTSCookie) as NTSCookieExtension;
 
         /// <summary>
         /// Optional 4 byte key identification

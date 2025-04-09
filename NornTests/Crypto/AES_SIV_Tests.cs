@@ -30,7 +30,7 @@ using org.GraphDefined.Vanaheimr.Norn.NTP;
 
 #endregion
 
-namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTP
+namespace org.GraphDefined.Vanaheimr.Norn.Tests.Crypto
 {
 
     [TestFixture]
@@ -513,53 +513,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTP
 
             var aes = new AES_SIV(key);
             var enc = aes.Encrypt([ data1, data2 ], nonce, plaintext.ToUTF8Bytes());
-            var dec = aes.Decrypt([ data1, data2 ], nonce, enc).ToUTF8String();
+            var dec = aes.Decrypt([ data1, data2 ], nonce, enc).     ToUTF8String();
 
             Assert.That(dec, Is.EqualTo(plaintext));
-
-        }
-
-        #endregion
-
-        #region AES128_SIV_EncryptDecrypt_NTPRequest_Test()
-
-        /// <summary>
-        /// An AES128-SIV NTP request encryption/decryption test.
-        /// </summary>
-        [Test]
-        public void AES128_SIV_EncryptDecrypt_NTPRequest_Test()
-        {
-
-            var key            = new Byte[32];
-            var cookie         = new Byte[100];
-            var uniqueId       = new Byte[32];
-            var message1       = "Hello world!";
-            var message2       = "Hallo Welt!";
-
-            RandomNumberGenerator.Fill(key);
-            RandomNumberGenerator.Fill(cookie);
-            RandomNumberGenerator.Fill(uniqueId);
-
-            var ntsKEResponse  = new NTSKE_Response([ new NTSKE_Record(true, NTSKE_RecordTypes.NewCookieForNTPv4, cookie) ], key, key);
-            var plaintext      = new DebugExtension(message1).ToByteArray().Concat(new DebugExtension(message2).ToByteArray()).ToArray();
-
-            var requestPacket  = NTSClient.BuildNTPRequest(ntsKEResponse, uniqueId, plaintext);
-            var isValid        = NTPPacket.TryParseRequest(requestPacket.ToByteArray(), out var ntpPacket, out var errorRequest, ntsKEResponse.C2SKey);
-            var uniqueId2      = (ntpPacket?.Extensions.FirstOrDefault(extension => extension.Type == ExtensionTypes.UniqueIdentifier) as UniqueIdentifierExtension)?.Value;
-            var cookie2        = (ntpPacket?.Extensions.FirstOrDefault(extension => extension.Type == ExtensionTypes.NTSCookie)        as NTSCookieExtension)?.       Value;
-            var debugMessages  =  ntpPacket?.Extensions.Where         (extension => extension.Type == ExtensionTypes.Debug).Cast<DebugExtension>().ToArray() ?? [];
-
-            Assert.That(isValid,                         Is.True);
-            Assert.That(uniqueId.ToHexString(),          Is.EqualTo(uniqueId2?.ToHexString()));
-            Assert.That(cookie.  ToHexString(),          Is.EqualTo(cookie2?.  ToHexString()));
-
-            Assert.That(debugMessages[0].Authenticated,  Is.True);
-            Assert.That(debugMessages[0].Encrypted,      Is.True);
-            Assert.That(debugMessages[0].Text,           Is.EqualTo(message1));
-
-            Assert.That(debugMessages[1].Authenticated,  Is.True);
-            Assert.That(debugMessages[1].Encrypted,      Is.True);
-            Assert.That(debugMessages[1].Text,           Is.EqualTo(message2));
 
         }
 

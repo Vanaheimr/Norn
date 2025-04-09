@@ -19,7 +19,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 {
 
     /// <summary>
-    /// Common NTP Extension Types
+    /// Common NTP Extension Types (rfc5905)
     /// </summary>
     public enum ExtensionTypes : UInt16
     {
@@ -48,7 +48,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         /// <summary>
         /// Debug (just for testing)
         /// </summary>
-        Debug                       = 0xffff
+        Debug                       = 0xffff,
+
+
+
+        NTSRequestSignedResponse    = 0xf000,
+        NTSSignedResponse           = 0xf001
 
     }
 

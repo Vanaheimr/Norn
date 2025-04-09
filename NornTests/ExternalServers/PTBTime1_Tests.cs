@@ -28,10 +28,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 {
 
     /// <summary>
-    /// Test the NTS client against public NTS servers.
+    /// Test the NTS client against public NTS server of the
+    /// Physikalisch-Technische Bundesanstalt (PTB) in Braunschweig, Germany.
     /// </summary>
     [TestFixture]
-    public class ExternalNTSTests
+    public class PTBTime1_Tests
     {
 
         #region TestPTBTime1()
@@ -64,7 +65,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
                 var request = ntsResponse.Request;
 
-                Assert.That(request,  Is.Not.Null);
+                Assert.That(request,  Is.Not.Null,  ntsResponse.ErrorMessage);
 
                 if (request is not null)
                 {
@@ -151,7 +152,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
             {
 
                 var request = ntsResponse.Request;
-                Assert.That(request,  Is.Not.Null);
+                Assert.That(request,  Is.Not.Null,  ntsResponse.ErrorMessage);
                 if (request is not null)
                 {
 
@@ -228,7 +229,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
                 var request = ntsResponse.Request;
 
-                Assert.That(request,  Is.Not.Null);
+                Assert.That(request,  Is.Not.Null,  ntsResponse.ErrorMessage);
 
                 if (request is not null)
                 {
@@ -315,6 +316,96 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
             Assert.That(ntsResponse,                  Is.Not.Null);
             Assert.That(ntsResponse?.ErrorMessage,    Is.EqualTo("certificate_unknown(46)"));
+
+        }
+
+        #endregion
+
+
+        #region TestPTBTime1_RequestSignedResponse()
+
+        /// <summary>
+        /// Test the NTS client against the public NTS server ptbtime1.ptb.de
+        /// using the NTSRequestSignedResponse extension.
+        /// </summary>
+        [Test]
+        public async Task TestPTBTime1_RequestSignedResponse()
+        {
+
+            var ntsClient                  = new NTSClient("ptbtime1.ptb.de");
+
+            var ntsKEResponse              = ntsClient.GetNTSKERecords();
+
+            Assert.That(ntsKEResponse,                   Is.Not.Null);
+            Assert.That(ntsKEResponse.C2SKey,            Is.Not.Null);
+            Assert.That(ntsKEResponse.C2SKey.Length,     Is.GreaterThan(0));
+            Assert.That(ntsKEResponse.S2CKey,            Is.Not.Null);
+            Assert.That(ntsKEResponse.S2CKey.Length,     Is.GreaterThan(0));
+            Assert.That(ntsKEResponse.Cookies.Count(),   Is.GreaterThan(0));
+
+
+            var ntsResponse                = await ntsClient.QueryTime(NTSKEResponse: ntsKEResponse, RequestSignedResponse: true);
+
+            Assert.That(ntsResponse,  Is.Not.Null);
+
+            if (ntsResponse is not null)
+            {
+
+                var request = ntsResponse.Request;
+
+                Assert.That(request,  Is.Not.Null,  ntsResponse.ErrorMessage);
+
+                if (request is not null)
+                {
+
+                    Assert.That(request.    UniqueIdentifier,                                            Is.Not.Null);
+                    Assert.That(ntsResponse.UniqueIdentifier,                                            Is.Not.Null);
+                    Assert.That(ntsResponse.UniqueIdentifier?.ToHexString(),                             Is.EqualTo(request.UniqueIdentifier?.ToHexString()));
+
+                    Assert.That(request.Extensions.Count(),                                              Is.EqualTo(4));
+                    Assert.That(request.Extensions.ElementAt(0) is UniqueIdentifierExtension,            Is.True);
+                    Assert.That(request.Extensions.ElementAt(1) is NTSCookieExtension,                   Is.True);
+                    Assert.That(request.Extensions.ElementAt(2) is NTSRequestSignedResponseExtension,    Is.True);
+                    Assert.That(request.Extensions.ElementAt(3) is AuthenticatorAndEncryptedExtension,   Is.True);
+
+                }
+
+
+                // Initially 2, but +1 decrypted extension
+                Assert.That(ntsResponse.Extensions.Count(),  Is.EqualTo(3));
+
+
+                // 1. Check Unique Identifier Extension
+                if (ntsResponse.Extensions.ElementAt(0) is UniqueIdentifierExtension uniqueIdentifierExtension)
+                {
+                    Assert.That(uniqueIdentifierExtension.Authenticated,                          Is.True);
+                    Assert.That(uniqueIdentifierExtension.Encrypted,                              Is.False);
+                }
+                else
+                    Assert.Fail("Unique Identifier Extension is invalid!");
+
+
+                // 2. Check NTS Authenticator and Encrypted Extension
+                if (ntsResponse.Extensions.ElementAt(1) is AuthenticatorAndEncryptedExtension authenticatorAndEncryptedExtension)
+                {
+                    Assert.That(authenticatorAndEncryptedExtension.Authenticated,                 Is.False);
+                    Assert.That(authenticatorAndEncryptedExtension.Encrypted,                     Is.False);
+                    Assert.That(authenticatorAndEncryptedExtension.EncryptedExtensions.Count(),   Is.EqualTo(1));
+                }
+                else
+                    Assert.Fail("NTS Authenticator and Encrypted Extension is invalid!");
+
+
+                // 3. Check NTS Cookie Extension
+                if (ntsResponse.Extensions.ElementAt(2) is NTSCookieExtension cookieExtension)
+                {
+                    Assert.That(cookieExtension.Authenticated,                                    Is.True);
+                    Assert.That(cookieExtension.Encrypted,                                        Is.True);
+                }
+                else
+                    Assert.Fail("NTS Cookie Extension is invalid!");
+
+            }
 
         }
 

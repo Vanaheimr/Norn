@@ -21,8 +21,7 @@ using NUnit.Framework;
 
 using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Norn.NTP;
-using System.Security.Cryptography.X509Certificates;
-using System.Security.Cryptography;
+using org.GraphDefined.Vanaheimr.Norn.NTS;
 
 #endregion
 
@@ -33,7 +32,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
     /// Test the NTS server.
     /// </summary>
     [TestFixture]
-    public class NTSServerTests
+    public class NTSServer_Tests
     {
 
         #region TestServer1()
@@ -89,7 +88,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
                 var request = ntsResponse.Request;
 
-                Assert.That(request,  Is.Not.Null);
+                Assert.That(request,  Is.Not.Null,  ntsResponse.ErrorMessage);
 
                 if (request is not null)
                 {

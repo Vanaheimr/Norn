@@ -28,7 +28,7 @@ using org.GraphDefined.Vanaheimr.Illias;
 
 #endregion
 
-namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTP
+namespace org.GraphDefined.Vanaheimr.Norn.Tests.Crypto
 {
 
     [TestFixture]

@@ -60,12 +60,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         /// <param name="Nonce">The nonce.</param>
         /// <param name="Ciphertext">The ciphertext.</param>
         /// <param name="EncryptedExtensions">Optional encrypted extensions.</param>
+        /// <param name="Authenticated">Whether the extension is/was authenticated.</param>
+        /// <param name="Encrypted">Whether the extension is/was encrypted.</param>
         public AuthenticatorAndEncryptedExtension(Byte[]                      Nonce,
                                                   Byte[]                      Ciphertext,
-                                                  IEnumerable<NTPExtension>?  EncryptedExtensions   = null)
+                                                  IEnumerable<NTPExtension>?  EncryptedExtensions   = null,
+                                                  Boolean                     Authenticated         = false,
+                                                  Boolean                     Encrypted             = false)
 
             : base(ExtensionTypes.AuthenticatorAndEncrypted,
-                   new Byte[4 + ((Nonce.Length + 3) & ~3) + ((Ciphertext.Length + 3) & ~3)])
+                   new Byte[4 + ((Nonce.Length + 3) & ~3) + ((Ciphertext.Length + 3) & ~3)],
+                   Authenticated,
+                   Encrypted)
 
         {
 
@@ -91,6 +97,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         }
 
         #endregion
+
 
         public static Boolean TryParse(Byte[]                                                        ReceivedValue,
                                        IEnumerable<Byte[]>                                           AssociatedData,
@@ -119,7 +126,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                 var paddedCiphertextLength       = (ciphertextLength + 3) & ~3;
 
                 var expectedTotalLength          = 4 + paddedNonceLength + paddedCiphertextLength;
-                if (ReceivedValue.Length != expectedTotalLength)
+                if (ReceivedValue.Length < expectedTotalLength)
                 {
                     ErrorResponse = "NTS Authenticator and Encrypted extension value has unexpected length!";
                     return false;
@@ -220,6 +227,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
             }
 
         }
+
 
         #region Create(NTSKEResponse, AssociatedData, Plainttext = null, Nonce = null)
 

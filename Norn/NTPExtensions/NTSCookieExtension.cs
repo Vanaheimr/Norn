@@ -15,28 +15,18 @@
  * limitations under the License.
  */
 
-#region Usings
-
-using System.Security.Cryptography;
-using System.Diagnostics.CodeAnalysis;
-
-using org.GraphDefined.Vanaheimr.Illias;
-
-#endregion
-
 namespace org.GraphDefined.Vanaheimr.Norn.NTP
 {
 
     public class NTSCookieExtension(Byte[]   Cookie,
                                     Boolean  Authenticated   = false,
-                                    Boolean  Encrypted       = false) : NTPExtension(ExtensionTypes.NTSCookie,
-                                                                                     Cookie,
-                                                                                     Authenticated,
-                                                                                     Encrypted)
-    {
+                                    Boolean  Encrypted       = false)
 
+        : NTPExtension(ExtensionTypes.NTSCookie,
+                       Cookie,
+                       Authenticated,
+                       Encrypted)
 
-
-    }
+    { }
 
 }
