@@ -21,10 +21,11 @@ using System.Security.Cryptography;
 using System.Diagnostics.CodeAnalysis;
 
 using org.GraphDefined.Vanaheimr.Illias;
+using org.GraphDefined.Vanaheimr.Norn.NTP;
 
 #endregion
 
-namespace org.GraphDefined.Vanaheimr.Norn.NTP
+namespace org.GraphDefined.Vanaheimr.Norn.NTS
 {
 
     /// <summary>

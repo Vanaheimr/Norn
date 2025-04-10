@@ -30,6 +30,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
     /// <summary>
     /// The NTP Reference Identifier.
+    /// 
+    /// This is a 32-bit bitstring identifying the particular reference source.
+    /// 
+    /// This field is significant only in server messages, where for stratum 0
+    /// (kiss-o'-death message) and 1 (primary server), the value is a
+    /// four-character ASCII string, left justified and zero padded to 32 bits.
+    /// 
+    /// For IPv4 secondary servers, the value is the 32-bit IPv4 address of
+    /// the synchronization source.
+    /// 
+    /// For IPv6 and OSI secondary servers, the value is the first 32 bits of
+    /// the MD5 hash of the IPv6 or NSAP address of the synchronization source.
     /// </summary>
     [StructLayout(LayoutKind.Explicit)]
     public readonly struct ReferenceIdentifier : IId,
@@ -181,6 +193,56 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                                  "NTSN" => $"'{ascii}' NTS Negative Acknowledgment (NAK)",
 
                                  _      => ascii
+
+                             }
+
+                           : null;
+
+            }
+
+        }
+
+        #endregion
+
+        #region TimeSource
+
+        /// <summary>
+        /// The reference identifier as time source.
+        /// </summary>
+        public String? TimeSource
+        {
+            get
+            {
+
+                var ascii = AsASCII;
+
+                return IsASCII
+
+                           ? ascii switch {
+
+                              // https://datatracker.ietf.org/doc/html/rfc4330
+
+                              // Code                 External Reference Source
+                              // ---------------------------------------------------------------------------------
+                                "LOCL" => $"'{ascii}' uncalibrated local clock",
+                                "CESM" => $"'{ascii}' calibrated Cesium clock",
+                                "RBDM" => $"'{ascii}' calibrated Rubidium clock",
+                                "PPS"  => $"'{ascii}' calibrated quartz clock or other pulse-per-second source",
+                                "IRIG" => $"'{ascii}' Inter-Range Instrumentation Group",
+                                "ACTS" => $"'{ascii}' NIST telephone modem service",
+                                "USNO" => $"'{ascii}' USNO telephone modem service",
+                                "PTB"  => $"'{ascii}' PTB (Germany) telephone modem service",
+                                "TDF"  => $"'{ascii}' Allouis (France) Radio 164 kHz",
+                                "DCF"  => $"'{ascii}' Mainflingen (Germany) Radio 77.5 kHz",
+                                "MSF"  => $"'{ascii}' Rugby (UK) Radio 60 kHz",
+                                "WWV"  => $"'{ascii}' Ft. Collins (US) Radio 2.5, 5, 10, 15, 20 MHz",
+                                "WWVB" => $"'{ascii}' Boulder (US) Radio 60 kHz",
+                                "WWVH" => $"'{ascii}' Kauai Hawaii (US) Radio 2.5, 5, 10, 15 MHz",
+                                "CHU"  => $"'{ascii}' Ottawa (Canada) Radio 3330, 7335, 14670 kHz",
+                                "LORC" => $"'{ascii}' LORAN-C radionavigation system",
+                                "OMEG" => $"'{ascii}' OMEGA radionavigation system",
+                                "GPS"  => $"'{ascii}' Global Positioning Service",
+                                 _     => ascii
 
                              }
 

@@ -17,14 +17,40 @@
 
 #region Usings
 
+using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 
 using org.GraphDefined.Vanaheimr.Illias;
+using org.GraphDefined.Vanaheimr.Norn.NTS;
 
 #endregion
 
 namespace org.GraphDefined.Vanaheimr.Norn.NTP
 {
+
+    public static class NTPPacketExtensions
+    {
+
+        /// <summary>
+        /// The value of an optional UniqueIdentifier extension.
+        /// </summary>
+        public static Byte[]?                     UniqueIdentifier          (this NTPPacket NTPPacket)
+            => NTPPacket.Extensions.FirstOrDefault(extension => extension.Type == ExtensionTypes.UniqueIdentifier)?.Value;
+
+        /// <summary>
+        /// The value of an optional UniqueIdentifier extension.
+        /// </summary>
+        public static UniqueIdentifierExtension?  UniqueIdentifierExtension (this NTPPacket NTPPacket)
+            => NTPPacket.Extensions.FirstOrDefault(extension => extension.Type == ExtensionTypes.UniqueIdentifier) as UniqueIdentifierExtension;
+
+        /// <summary>
+        /// The value of an optional NTS Cookie extension.
+        /// </summary>
+        public static NTSCookieExtension?         NTSCookieExtension        (this NTPPacket NTPPacket)
+            => NTPPacket.Extensions.FirstOrDefault(extension => extension.Type == ExtensionTypes.NTSCookie)        as NTSCookieExtension;
+
+    }
+
 
     // Stratum  Meaning
     //   ----------------------------------------------
@@ -83,151 +109,108 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         /// <summary>
         /// Leap Indicator (2 Bit, default: 0)
         /// </summary>
-        public Byte                       LI                     { get; } = LI                  ?? 0;
+        public Byte                        LI                     { get; } = LI                  ?? 0;
 
         /// <summary>
         /// Version Number (3 Bit, default: 4)
         /// </summary>
-        public Byte                       VN                     { get; } = VN                  ?? 4;
+        public Byte                        VN                     { get; } = VN                  ?? 4;
 
         /// <summary>
         /// Mode (3 Bit, client default: 3)
         /// </summary>
-        public Byte                       Mode                   { get; } = Mode                ?? 3;
+        public Byte                        Mode                   { get; } = Mode                ?? 3;
 
         /// <summary>
         /// Stratum (client default: 0)
         /// </summary>
-        public Byte                       Stratum                { get; } = Stratum             ?? 0;
+        public Byte                        Stratum                { get; } = Stratum             ?? 0;
 
         /// <summary>
         /// Poll (2^n exponential value, e.g. 4 for 16 seconds)
         /// </summary>
-        public Byte                       Poll                   { get; } = Poll                ?? 4;
+        public Byte                        Poll                   { get; } = Poll                ?? 4;
 
         /// <summary>
         /// Precision (as two's complement, e.g. -6)
         /// </summary>
-        public SByte                      Precision              { get; } = Precision           ?? -6;
+        public SByte                       Precision              { get; } = Precision           ?? -6;
 
         /// <summary>
         /// Root Delay (16.16 fixed point format)
         /// </summary>
-        public UInt32                     RootDelay              { get; } = RootDelay           ?? 0;
+        public UInt32                      RootDelay              { get; } = RootDelay           ?? 0;
 
         /// <summary>
         /// Root Dispersion (16.16 fixed point format)
         /// </summary>
-        public UInt32                     RootDispersion         { get; } = RootDispersion      ?? 0;
-
-        // Code   External Reference Source
-        // -----------------------------------------------------------------
-        // LOCL   uncalibrated local clock
-        // CESM   calibrated Cesium clock
-        // RBDM   calibrated Rubidium clock
-        // PPS    calibrated quartz clock or other pulse-per-second source
-        // IRIG   Inter-Range Instrumentation Group
-        // ACTS   NIST telephone modem service
-        // USNO   USNO telephone modem service
-        // PTB    PTB (Germany) telephone modem service
-        // TDF    Allouis (France) Radio 164 kHz
-        // DCF    Mainflingen (Germany) Radio 77.5 kHz
-        // MSF    Rugby (UK) Radio 60 kHz
-        // WWV    Ft. Collins (US) Radio 2.5, 5, 10, 15, 20 MHz
-        // WWVB   Boulder (US) Radio 60 kHz
-        // WWVH   Kauai Hawaii (US) Radio 2.5, 5, 10, 15 MHz
-        // CHU    Ottawa (Canada) Radio 3330, 7335, 14670 kHz
-        // LORC   LORAN-C radionavigation system
-        // OMEG   OMEGA radionavigation system
-        // GPS    Global Positioning Service
+        public UInt32                      RootDispersion         { get; } = RootDispersion      ?? 0;
 
         /// <summary>
-        /// Reference Identifier (32 Bit)
-        /// This is a 32-bit bitstring identifying the
-        /// particular reference source.This field is significant only in
-        /// server messages, where for stratum 0 (kiss-o'-death message) and 1
-        /// (primary server), the value is a four-character ASCII string, left
-        /// justified and zero padded to 32 bits.
-        /// For IPv4 secondary servers, the value is the 32-bit IPv4 address of
-        /// the synchronization source.
-        /// For IPv6 and OSI secondary servers, the value is the first 32 bits of
-        /// the MD5 hash of the IPv6 or NSAP address of the synchronization source.
+        /// Reference Identifier
         /// </summary>
-        public ReferenceIdentifier        ReferenceIdentifier    { get; } = ReferenceIdentifier ?? NTP.ReferenceIdentifier.Zero;
+        public ReferenceIdentifier         ReferenceIdentifier    { get; } = ReferenceIdentifier ?? NTP.ReferenceIdentifier.Zero;
 
         /// <summary>
         /// Reference Timestamp (64 Bit)
         /// Default for clients: 0
         /// </summary>
-        public UInt64                     ReferenceTimestamp     { get; } = ReferenceTimestamp  ?? 0;
+        public UInt64                      ReferenceTimestamp     { get; } = ReferenceTimestamp  ?? 0;
 
         /// <summary>
         /// Originate Timestamp (64 Bit)
         /// Default for clients: 0
         /// </summary>
-        public UInt64                     OriginateTimestamp     { get; } = OriginateTimestamp  ?? 0;
+        public UInt64                      OriginateTimestamp     { get; } = OriginateTimestamp  ?? 0;
 
         /// <summary>
         /// Receive Timestamp (64 Bit)
         /// Default for clients: 0
         /// </summary>
-        public UInt64                     ReceiveTimestamp       { get; } = ReceiveTimestamp    ?? 0;
+        public UInt64                      ReceiveTimestamp       { get; } = ReceiveTimestamp    ?? 0;
 
         /// <summary>
         /// Transmit Timestamp (64 Bit)
         /// Will normally be set to the current time when the request is sent.
         /// </summary>
-        public UInt64?                    TransmitTimestamp      { get; } = TransmitTimestamp;
-
+        public UInt64?                     TransmitTimestamp      { get; } = TransmitTimestamp;
 
         /// <summary>
         /// The optional enumeration of NTP extensions.
         /// </summary>
-        public IEnumerable<NTPExtension>  Extensions             { get; } = Extensions          ?? [];
-
-        /// <summary>
-        /// The value of an optional UniqueIdentifier extension.
-        /// </summary>
-        public Byte[]?                    UniqueIdentifier
-            => Extensions.FirstOrDefault(ext => ext.Type == ExtensionTypes.UniqueIdentifier)?.Value;
-
-        /// <summary>
-        /// The value of an optional NTS Cookie extension.
-        /// </summary>
-        public NTSCookieExtension?        NTSCookie
-            => Extensions.FirstOrDefault(ext => ext.Type == ExtensionTypes.NTSCookie) as NTSCookieExtension;
+        public IEnumerable<NTPExtension>   Extensions             { get; } = Extensions          ?? [];
 
         /// <summary>
         /// Optional 4 byte key identification
         /// </summary>
-        public Int32?                     KeyId                  { get; } = KeyId;
+        public Int32?                      KeyId                  { get; } = KeyId;
 
         /// <summary>
         /// Optional 16 byte message digest
         /// </summary>
-        public Byte[]?                    MessageDigest          { get; } = MessageDigest;
+        public Byte[]?                     MessageDigest          { get; } = MessageDigest;
 
         /// <summary>
         /// Optional 64 bit destination timestamp
         /// Note: This timestamp is not part of the packet itself!
         /// It is captured upon arrival and returned in the receive buffer along with the buffer length and data.
         /// </summary>
-        public UInt64?                    DestinationTimestamp   { get; } = DestinationTimestamp;
+        public UInt64?                     DestinationTimestamp   { get; } = DestinationTimestamp;
 
         /// <summary>
         /// The optional NTP request that led to this response.
         /// </summary>
-        public NTPPacket?                 Request                { get; } = Request;
+        public NTPPacket?                  Request                { get; } = Request;
 
         /// <summary>
         /// The optional byte representation of the response.
         /// </summary>
-        public Byte[]?                    ResponseBytes          { get; } = ResponseBytes;
+        public Byte[]?                     ResponseBytes          { get; } = ResponseBytes;
 
         /// <summary>
         /// An optional error message.
         /// </summary>
-        public String?                    ErrorMessage           { get; } = ErrorMessage;
+        public String?                     ErrorMessage           { get; } = ErrorMessage;
 
         #endregion
 
@@ -424,10 +407,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
         #region TryParseRequest  (Buffer, out NTPPacket, out ErrorResponse,                 NTSKey = null)
 
-        public static Boolean TryParseRequest(Byte[]                               Buffer,
-                                              [NotNullWhen(true)]  out NTPPacket?  NTPPacket,
-                                              [NotNullWhen(false)] out String?     ErrorResponse,
-                                              Byte[]?                              NTSKey             = null)
+        public static Boolean TryParseRequest(Byte[]                                    Buffer,
+                                              [NotNullWhen(true)]  out NTPPacket?       NTPPacket,
+                                              [NotNullWhen(false)] out String?          ErrorResponse,
+                                              Byte[]?                                   NTSKey       = null,
+                                              ConcurrentDictionary<UInt64, MasterKey>?  MasterKeys   = null)
         {
 
             #region Initial checks
@@ -485,14 +469,30 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
                     case ExtensionTypes.NTSCookie:
 
-                        var cookie = new NTSCookieExtension(data);
-                        extensions.Add(cookie);
+                        var ntsCookieExtension = new NTSCookieExtension(data);
 
-                        if (NTSKey is null)
+                        if (NTS.NTSCookie.TryParse(ntsCookieExtension.Value, out var encryptedCookie, out var err) &&
+                            encryptedCookie.MasterKeyId.HasValue &&
+                            MasterKeys is not null &&
+                            MasterKeys.TryGetValue(encryptedCookie.MasterKeyId.Value, out var masterKey) &&
+                            encryptedCookie.Timestamp >= masterKey.NotBefore &&
+                            encryptedCookie.Timestamp <  masterKey.NotAfter)
                         {
-                            //ToDo: Decrypt the cookie with the master key!
-                            NTSKey = new Byte[32];                       // 32 should be read from the cookie!
-                            Array.Copy(cookie.Value, 46, NTSKey, 0, 32); // 46 is the offset of the C2S key in the cookie!
+
+                            var ntsCookie = encryptedCookie.Decrypt(masterKey);
+                            NTSKey = ntsCookie.C2SKey;
+
+                            extensions.Add(
+                                new NTSCookieExtension(
+                                    data,
+                                    Cookie: ntsCookie
+                                )
+                            );
+
+                        }
+                        else
+                        {
+                            extensions.Add(ntsCookieExtension);
                         }
 
                         break;
@@ -642,11 +642,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                     case ExtensionTypes.UniqueIdentifier:
 
                         var uid = new UniqueIdentifierExtension(data);
+                        var r1  = Request?.UniqueIdentifier();
 
-                        if (Request?.UniqueIdentifier is not null &&
-                            !uid.Value.SequenceEqual(Request.UniqueIdentifier))
+                        if (r1 is not null && !uid.Value.SequenceEqual(r1))
                         {
-                            ErrorResponse = $"Unexpected UniqueIdentifier '{uid.Value}' != '{Request.UniqueIdentifier}'!";
+                            ErrorResponse = $"Unexpected UniqueIdentifier '{uid.Value}' != '{r1}'!";
                             return false;
                         }
 

@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-namespace org.GraphDefined.Vanaheimr.Norn.NTP
+namespace org.GraphDefined.Vanaheimr.Norn.NTS
 {
 
     public static class AEADAlgorithmsExtensions

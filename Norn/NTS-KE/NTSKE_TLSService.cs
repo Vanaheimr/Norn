@@ -35,7 +35,7 @@ using org.GraphDefined.Vanaheimr.Illias;
 
 #endregion
 
-namespace org.GraphDefined.Vanaheimr.Norn.NTP
+namespace org.GraphDefined.Vanaheimr.Norn.NTS
 {
 
     /// <summary>

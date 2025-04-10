@@ -27,10 +27,11 @@ using Org.BouncyCastle.Tls;
 
 using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Hermod;
+using org.GraphDefined.Vanaheimr.Norn.NTP;
 
 #endregion
 
-namespace org.GraphDefined.Vanaheimr.Norn.NTP
+namespace org.GraphDefined.Vanaheimr.Norn.NTS
 {
 
     /// <summary>
@@ -333,7 +334,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                                                    out var errorResponse,
                                                    Request:           requestPacket,
                                                    NTSKey:            NTSKEResponse?.S2CKey,
-                                                   ExpectedUniqueId:  requestPacket.UniqueIdentifier))
+                                                   ExpectedUniqueId:  requestPacket.UniqueIdentifier()))
                     {
 
                         DebugX.Log($"{Host} Serverzeit (UTC): " + NTPPacket.NTPTimestampToDateTime(ntpResponse.TransmitTimestamp.Value).ToString("o"));

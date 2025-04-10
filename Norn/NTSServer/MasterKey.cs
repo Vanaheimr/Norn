@@ -30,6 +30,106 @@ using org.GraphDefined.Vanaheimr.Hermod.HTTP;
 namespace org.GraphDefined.Vanaheimr.Norn.NTS
 {
 
+    public static class MasterKeyExtensions
+    {
+
+        #region (private) GenerateNTSKECookies        (MasterKey, NumberOfCookies, C2SKey, S2CKey, AEADAlgorithm = AEADAlgorithms.AES_SIV_CMAC_256, IsCritical = false)
+
+        public static IEnumerable<NTSKE_Record>
+
+            GenerateNTSKECookies(this MasterKey  MasterKey,
+                                 UInt16          NumberOfCookies,
+                                 Byte[]          C2SKey,
+                                 Byte[]          S2CKey,
+                                 AEADAlgorithms  AEADAlgorithm   = AEADAlgorithms.AES_SIV_CMAC_256,
+                                 Boolean         IsCritical      = false)
+
+        {
+
+            #region Initial checks
+
+            if (NumberOfCookies == 0)
+                return [];
+
+            if (C2SKey.Length == 0)
+                throw new ArgumentException("The C2SKey must not be empty!", nameof(C2SKey));
+
+            if (S2CKey.Length == 0)
+                throw new ArgumentException("The S2CKey must not be empty!", nameof(S2CKey));
+
+            if (C2SKey.Length != S2CKey.Length)
+                throw new ArgumentException("The C2SKey and S2CKey must be of the same length!");
+
+            #endregion
+
+            var cookies = new List<NTSKE_Record>();
+
+            for (var i = 0; i < NumberOfCookies; i++)
+            {
+                cookies.Add(
+                    new NTSKE_Record(
+                        IsCritical,
+                        NTSKE_RecordTypes.NewCookieForNTPv4,
+                        NTSCookie.Create(C2SKey, S2CKey, AEADAlgorithm, MasterKey).Encrypt(MasterKey)
+                    )
+                );
+            }
+
+            return cookies;
+
+        }
+
+        #endregion
+
+        #region (private) GenerateNTSCookieExtensions (MasterKey, NumberOfCookies, C2SKey, S2CKey, AEADAlgorithm = AEADAlgorithms.AES_SIV_CMAC_256, IsCritical = false)
+
+        public static IEnumerable<NTSCookieExtension>
+
+            GenerateNTSCookieExtensions(this MasterKey  MasterKey,
+                                        UInt16          NumberOfCookies,
+                                        Byte[]          C2SKey,
+                                        Byte[]          S2CKey,
+                                        AEADAlgorithms  AEADAlgorithm   = AEADAlgorithms.AES_SIV_CMAC_256,
+                                        Boolean         IsCritical      = false)
+
+        {
+
+            #region Initial checks
+
+            if (NumberOfCookies == 0)
+                return [];
+
+            if (C2SKey.Length == 0)
+                throw new ArgumentException("The C2SKey must not be empty!", nameof(C2SKey));
+
+            if (S2CKey.Length == 0)
+                throw new ArgumentException("The S2CKey must not be empty!", nameof(S2CKey));
+
+            if (C2SKey.Length != S2CKey.Length)
+                throw new ArgumentException("The C2SKey and S2CKey must be of the same length!");
+
+            #endregion
+
+            var cookies = new List<NTSCookieExtension>();
+
+            for (var i = 0; i < NumberOfCookies; i++)
+            {
+                cookies.Add(
+                    new NTSCookieExtension(
+                        NTSCookie.Create(C2SKey, S2CKey, AEADAlgorithm, MasterKey).Encrypt(MasterKey)
+                    )
+                );
+            }
+
+            return cookies;
+
+        }
+
+        #endregion
+
+    }
+
+
     /// <summary>
     /// A NTS server master key.
     /// </summary>
@@ -51,7 +151,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <summary>
         /// The key identification.
         /// </summary>
-        public UInt64          KeyId        { get; }
+        public UInt64          Id           { get; }
 
         /// <summary>
         /// The key value.
@@ -75,18 +175,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <summary>
         /// Create a new NTS server master key.
         /// </summary>
-        /// <param name="KeyId">The key identification.</param>
+        /// <param name="Id">The key identification.</param>
         /// <param name="Value">The key value.</param>
         /// <param name="NotBefore">The key is valid from this date/time.</param>
         /// <param name="NotAfter">The key is valid until this date/time.</param>
-        public MasterKey(UInt64          KeyId,
+        public MasterKey(UInt64          Id,
                          Byte[]          Value,
                          DateTimeOffset  NotBefore,
                          DateTimeOffset  NotAfter)
 
         {
 
-            this.KeyId      = KeyId;
+            this.Id         = Id;
             this.Value      = Value;
             this.NotBefore  = NotBefore;
             this.NotAfter   = NotAfter;
@@ -94,7 +194,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             unchecked
             {
 
-                hashCode = this.KeyId.    GetHashCode() * 7 ^
+                hashCode = this.Id.       GetHashCode() * 7 ^
                            this.Value.    GetHashCode() * 5 ^
                            this.NotBefore.GetHashCode() * 3 ^
                            this.NotAfter. GetHashCode();
@@ -247,11 +347,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                 MasterKey = default;
 
-                #region KeyId        [mandatory]
+                #region Id           [mandatory]
 
-                if (!JSON.ParseMandatory("keyId",
+                if (!JSON.ParseMandatory("id",
                                          "key identification",
-                                         out UInt64 keyId,
+                                         out UInt64 id,
                                          out ErrorResponse))
                 {
                     return false;
@@ -275,7 +375,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     return false;
                 }
 
-                if (!StringExtensions.TryParseBASE64(valueBase64, out var Value, out var errorResponse))
+                if (!StringExtensions.TryParseBASE64(valueBase64, out var value, out var errorResponse))
                 {
                     ErrorResponse = "The given key value is not a valid BASE64 string: " + errorResponse;
                     return false;
@@ -309,8 +409,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
 
                 MasterKey = new MasterKey(
-                                keyId,
-                                Value,
+                                id,
+                                value,
                                 notBefore,
                                 notAfter
                             );
@@ -350,7 +450,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                ? new JProperty("@context",    DefaultJSONLDContext.ToString())
                                : null,
 
-                                 new JProperty("keyId",       KeyId),
+                                 new JProperty("id",          Id),
                                  new JProperty("masterKey",   Value.               ToBase64()),
                                  new JProperty("notBefore",   NotBefore.           ToIso8601()),
                                  new JProperty("notAfter",    NotAfter.            ToIso8601())
@@ -373,7 +473,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public MasterKey Clone()
 
             => new (
-                   KeyId,
+                   Id,
                    Value.ToHexString().FromHEX(),
                    NotBefore,
                    NotAfter
@@ -486,8 +586,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <param name="Object">A MasterKey to compare with.</param>
         public Int32 CompareTo(Object? Object)
 
-            => Object is MasterKey masterKeyInfo
-                   ? CompareTo(masterKeyInfo)
+            => Object is MasterKey masterKey
+                   ? CompareTo(masterKey)
                    : throw new ArgumentException("The given object is not a MasterKey!",
                                                  nameof(Object));
 
@@ -502,7 +602,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public Int32 CompareTo(MasterKey MasterKey)
         {
 
-            var c = KeyId.                  CompareTo(MasterKey.KeyId);
+            var c = Id.                  CompareTo(MasterKey.Id);
 
             if (c == 0)
                 c = Value.    ToHexString().CompareTo(MasterKey.Value.    ToHexString());
@@ -531,8 +631,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <param name="Object">A MasterKey to compare with.</param>
         public override Boolean Equals(Object? Object)
 
-            => Object is MasterKey masterKeyInfo &&
-                   Equals(masterKeyInfo);
+            => Object is MasterKey masterKey &&
+                   Equals(masterKey);
 
         #endregion
 
@@ -544,7 +644,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <param name="MasterKey">A MasterKey to compare with.</param>
         public Boolean Equals(MasterKey MasterKey)
 
-            => KeyId.                Equals       (MasterKey.KeyId)                 &&
+            => Id.                Equals       (MasterKey.Id)                 &&
                Value.                SequenceEqual(MasterKey.Value)                 &&
                NotBefore.ToIso8601().Equals       (MasterKey.NotBefore.ToIso8601()) &&
                NotAfter. ToIso8601().Equals       (MasterKey.NotAfter. ToIso8601());
@@ -572,7 +672,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </summary>
         public override String ToString()
 
-            => $"{KeyId}: {Value.ToBase64()}, not before: {NotBefore}, not after: {NotAfter}";
+            => $"{Id}: {Value.ToBase64()}, not before: {NotBefore}, not after: {NotAfter}";
 
         #endregion
 

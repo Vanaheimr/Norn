@@ -21,7 +21,7 @@ using System.Diagnostics.CodeAnalysis;
 
 #endregion
 
-namespace org.GraphDefined.Vanaheimr.Norn.NTP
+namespace org.GraphDefined.Vanaheimr.Norn.NTS
 {
 
     /// <summary>

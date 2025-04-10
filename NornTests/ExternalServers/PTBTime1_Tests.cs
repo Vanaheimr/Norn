@@ -21,6 +21,7 @@ using NUnit.Framework;
 
 using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Norn.NTP;
+using org.GraphDefined.Vanaheimr.Norn.NTS;
 
 #endregion
 
@@ -70,9 +71,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                 if (request is not null)
                 {
 
-                    Assert.That(request.    UniqueIdentifier,                                            Is.Not.Null);
-                    Assert.That(ntsResponse.UniqueIdentifier,                                            Is.Not.Null);
-                    Assert.That(ntsResponse.UniqueIdentifier?.ToHexString(),                             Is.EqualTo(request.UniqueIdentifier?.ToHexString()));
+                    Assert.That(request.    UniqueIdentifier(),                                          Is.Not.Null);
+                    Assert.That(ntsResponse.UniqueIdentifier(),                                          Is.Not.Null);
+                    Assert.That(ntsResponse.UniqueIdentifier()?.ToHexString(),                           Is.EqualTo(request.UniqueIdentifier()?.ToHexString()));
 
                     Assert.That(request.Extensions.Count(),                                              Is.EqualTo(3));
                     Assert.That(request.Extensions.ElementAt(0) is UniqueIdentifierExtension,            Is.True);
@@ -234,9 +235,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                 if (request is not null)
                 {
 
-                    Assert.That(request.    UniqueIdentifier,                                            Is.Not.Null);
-                    Assert.That(ntsResponse.UniqueIdentifier,                                            Is.Not.Null);
-                    Assert.That(ntsResponse.UniqueIdentifier?.ToHexString(),                             Is.EqualTo(request.UniqueIdentifier?.ToHexString()));
+                    Assert.That(request.    UniqueIdentifier(),                                          Is.Not.Null);
+                    Assert.That(ntsResponse.UniqueIdentifier(),                                          Is.Not.Null);
+                    Assert.That(ntsResponse.UniqueIdentifier()?.ToHexString(),                           Is.EqualTo(request.UniqueIdentifier()?.ToHexString()));
 
                     Assert.That(request.Extensions.Count(),                                              Is.EqualTo(3));
                     Assert.That(request.Extensions.ElementAt(0) is UniqueIdentifierExtension,            Is.True);
@@ -358,9 +359,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                 if (request is not null)
                 {
 
-                    Assert.That(request.    UniqueIdentifier,                                            Is.Not.Null);
-                    Assert.That(ntsResponse.UniqueIdentifier,                                            Is.Not.Null);
-                    Assert.That(ntsResponse.UniqueIdentifier?.ToHexString(),                             Is.EqualTo(request.UniqueIdentifier?.ToHexString()));
+                    Assert.That(request.    UniqueIdentifier(),                                          Is.Not.Null);
+                    Assert.That(ntsResponse.UniqueIdentifier(),                                          Is.Not.Null);
+                    Assert.That(ntsResponse.UniqueIdentifier()?.ToHexString(),                           Is.EqualTo(request.UniqueIdentifier()?.ToHexString()));
 
                     Assert.That(request.Extensions.Count(),                                              Is.EqualTo(4));
                     Assert.That(request.Extensions.ElementAt(0) is UniqueIdentifierExtension,            Is.True);

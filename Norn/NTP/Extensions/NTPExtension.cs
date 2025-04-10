@@ -20,6 +20,8 @@
 using System.Security.Cryptography;
 using System.Diagnostics.CodeAnalysis;
 
+using org.GraphDefined.Vanaheimr.Norn.NTS;
+
 #endregion
 
 namespace org.GraphDefined.Vanaheimr.Norn.NTP
@@ -33,9 +35,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
     /// 
     /// Network Time Protocol Version 4 (NTPv4) Extension Fields: https://datatracker.ietf.org/doc/html/rfc7822
     /// </summary>
-    /// <param name="Type">The extension type.</param>
-    /// <param name="Length">The overall length of the extension in octets (including the 4-byte header).</param>
-    /// <param name="Value">The data within the extension (excluding the 4-byte header).</param>
     public class NTPExtension
     {
 
@@ -273,6 +272,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
             => $"Type: {Type}, Length: {Length}, Data: {BitConverter.ToString(Value ?? [])}";
 
         #endregion
+
 
     }
 

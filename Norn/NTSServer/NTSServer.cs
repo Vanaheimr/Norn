@@ -42,13 +42,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #region Data
 
-        private                  Socket?                                      tcpSocket;
-        private                  Socket?                                      udpSocket;
-        private                  CancellationTokenSource?                     cts;
+        private                  Socket?                                  tcpSocket;
+        private                  Socket?                                  udpSocket;
+        private                  CancellationTokenSource?                 cts;
 
-        private readonly         ConcurrentDictionary<UInt64, MasterKey>  masterKeys            = [];
-        private static readonly  Lock                                         currentMasterKeyLock  = new();
+        private readonly         ConcurrentDictionary<UInt64, MasterKey>  masterKeys             = [];
+        private static readonly  Lock                                     currentMasterKeyLock   = new();
         private                  MasterKey?                               currentMasterKey;
+        private const            String                                   masterKeysFile         = "masterKeys.json";
 
         #endregion
 
@@ -85,20 +86,34 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             this.TCPPort = TCPPort ?? IPPort.NTSKE;
             this.UDPPort = UDPPort ?? IPPort.NTP;
 
-            foreach (var masterKeyText in File.ReadAllLines("masterKeys.json"))
+            try
             {
-                if (MasterKey.TryParse(masterKeyText, out var masterKey, out var errorResponse))
+
+                var invalidAfter = Timestamp.Now + TimeSpan.FromDays(7);
+
+                foreach (var masterKeyText in File.ReadAllLines(masterKeysFile))
                 {
-                    masterKeys.TryAdd(
-                        masterKey.KeyId,
-                        masterKey
-                    );
+                    if (MasterKey.TryParse(masterKeyText, out var masterKey, out var errorResponse))
+                    {
+
+                        if (masterKey.NotAfter < invalidAfter)
+                            continue;
+
+                        masterKeys.TryAdd(
+                            masterKey.Id,
+                            masterKey
+                        );
+
+                    }
+                    else
+                    {
+                        DebugX.Log($"Invalid master key: {masterKeyText}");
+                    }
                 }
-                else
-                {
-                    DebugX.Log($"Invalid master key: {masterKeyText}");
-                }
+
             }
+            catch (FileNotFoundException)
+            { }
 
         }
 
@@ -149,16 +164,27 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                 : masterKeys.Keys.Max() + 1;
 
                         currentMasterKey  = new MasterKey(
-                                                newKeyId,
-                                                RandomNumberGenerator.GetBytes(32),
-                                                Timestamp.Now,
-                                                Timestamp.Now + TimeSpan.FromDays(1)
+                                                Id:         newKeyId,
+                                                Value:      RandomNumberGenerator.GetBytes(32),
+                                                NotBefore:  Timestamp.Now,
+                                                NotAfter:   Timestamp.Now + TimeSpan.FromDays(1)
                                             );
 
                         masterKeys.TryAdd(
-                            currentMasterKey.Value.KeyId,
+                            currentMasterKey.Value.Id,
                             currentMasterKey.Value
                         );
+
+                        try
+                        {
+                            File.AppendAllText(
+                                masterKeysFile,
+                                currentMasterKey.Value.ToJSON().ToString(Newtonsoft.Json.Formatting.None) + Environment.NewLine
+                            );
+                        }
+                        catch (Exception e) {
+                            DebugX.LogException(e, "Failed to write master key to file!");
+                        }
 
                     }
 
@@ -166,91 +192,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             }
 
             return currentMasterKey.Value;
-
-        }
-
-        #endregion
-
-        #region (private) GenerateNTSCookies(MasterKey, NumberOfCookies, C2SKey, S2CKey, AEADAlgorithm = AEADAlgorithms.AES_SIV_CMAC_256)
-
-        private IEnumerable<NTSKE_Record> GenerateNTSCookies(MasterKey       MasterKey,
-                                                             Byte            NumberOfCookies,
-                                                             Byte[]          C2SKey,
-                                                             Byte[]          S2CKey,
-                                                             AEADAlgorithms  AEADAlgorithm   = AEADAlgorithms.AES_SIV_CMAC_256)
-        {
-
-            #region Initial checks
-
-            if (NumberOfCookies == 0)
-                return [];
-            if (C2SKey.Length == 0)
-                throw new ArgumentException("The C2SKey must not be empty!", nameof(C2SKey));
-            if (S2CKey.Length == 0)
-                throw new ArgumentException("The S2CKey must not be empty!", nameof(S2CKey));
-            if (C2SKey.Length != S2CKey.Length)
-                throw new ArgumentException("The C2SKey and S2CKey must be of the same length!");
-
-            #endregion
-
-            #region Data
-
-            const Byte OffsetAlgorithmId  = 0;
-            const Byte OffsetTimestamp    = 4;
-            const Byte OffsetNonce        = 12;
-            const Byte OffsetKeyLength    = 44;
-            const Byte OffsetC2SKey       = 46;
-            var        OffsetS2CKey       = (Byte) (OffsetC2SKey + C2SKey.Length);
-            var        totalLength        = OffsetS2CKey + S2CKey.Length;
-
-            #endregion
-
-
-            var unixTimestamp  = (UInt64) Timestamp.Now.ToUnixTimestamp();
-            var cookies        = new List<NTSKE_Record>();
-
-            for (var i = 0; i < NumberOfCookies; i++)
-            {
-
-                // rfc8915 Section 6 https://datatracker.ietf.org/doc/html/rfc8915#name-suggested-format-for-nts-co
-                // gives just some general hints about the cookie format!
-                //
-                // Therefore this is OUR format!
-
-                var cookie          = new Byte[totalLength];
-                var algorithmBytes  = AEADAlgorithm.GetBytes();
-                cookie[OffsetAlgorithmId  ] = algorithmBytes[0];
-                cookie[OffsetAlgorithmId+1] = algorithmBytes[1];
-
-                // Timestamp (Big-Endian)
-                for (var j = 0; j < 8; j++)
-                    cookie[OffsetTimestamp + j] = (Byte) (unixTimestamp >> (56 - 8 * j));
-
-                // Nonce (32 bytes)
-                var nonce = RandomNumberGenerator.GetBytes(32);
-                Buffer.BlockCopy(nonce, 0, cookie, OffsetNonce, nonce.Length);
-
-                // Key length (Big-Endian)
-                cookie[OffsetKeyLength + 0] = (Byte) (C2SKey.Length >> 8);
-                cookie[OffsetKeyLength + 1] = (Byte) (C2SKey.Length & 0xFF);
-
-                // Keys
-                Buffer.BlockCopy(C2SKey, 0, cookie, OffsetC2SKey,                 C2SKey.Length);
-                Buffer.BlockCopy(S2CKey, 0, cookie, OffsetC2SKey + C2SKey.Length, S2CKey.Length);
-
-                // TODO: AEAD-Encrypt `cookie` with master key
-
-                cookies.Add(
-                    new NTSKE_Record(
-                        false,
-                        NTSKE_RecordTypes.NewCookieForNTPv4,
-                        cookie
-                    )
-                );
-
-            }
-
-            return cookies;
 
         }
 
@@ -316,7 +257,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                                 Array.Resize(ref buffer, resultLocal.ReceivedBytes);
 
-                                if (NTPPacket.TryParseRequest(buffer, out var requestPacket, out var errorResponse))
+                                if (NTPPacket.TryParseRequest(buffer, out var requestPacket, out var errorResponse,
+                                                              MasterKeys: masterKeys))
                                 {
 
                                     var responsePacket = BuildResponse(requestPacket);
@@ -420,20 +362,20 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                     if (NTSKE_Record.TryParse(buffer, out var ntsKERequest, out var errorResponse))
                                     {
 
-                                        DebugX.Log($"Received NTS-KE request: {ntsKERequest}");
-
                                         var ntsKERecords = new List<NTSKE_Record> {
                                                                NTSKE_Record.NTSNextProtocolNegotiation,
                                                                NTSKE_Record.AEADAlgorithmNegotiation()
                                                            };
 
                                         ntsKERecords.AddRange(
-                                            GenerateNTSCookies(
-                                                GetCurrentMasterKey(),
-                                                7,
-                                                c2sKey,
-                                                s2cKey
-                                            )
+                                            GetCurrentMasterKey().
+                                                GenerateNTSKECookies(
+                                                    NumberOfCookies:   7,
+                                                    C2SKey:            c2sKey,
+                                                    S2CKey:            s2cKey,
+                                                    AEADAlgorithm:     AEADAlgorithms.AES_SIV_CMAC_256,
+                                                    IsCritical:        false
+                                                )
                                         );
 
                                         ntsKERecords.Add(NTSKE_Record.EndOfMessage);
@@ -499,28 +441,89 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         #endregion
 
 
-        private Byte[] GetS2CKey(NTSCookieExtension CookieExtension)
-        {
-
-            return CookieExtension.Value;
-
-        }
-
-
         private NTPPacket BuildResponse(NTPPacket RequestPacket)
         {
 
-            var extensions  = new List<NTPExtension>();
+            var extensions           = new List<NTPExtension>();
+            var encryptedExtensions  = new List<NTPExtension>();
 
-            if (RequestPacket.UniqueIdentifier?.Length > 0)
-                extensions.Add(new UniqueIdentifierExtension(RequestPacket.UniqueIdentifier ?? []));
+            var u1 = RequestPacket.UniqueIdentifier();
 
-            var s2cKey      = RequestPacket.NTSCookie is not null
-                                  ? GetS2CKey(RequestPacket.NTSCookie)
-                                  : [];
+            if (u1?.Length > 0)
+                extensions.Add(new UniqueIdentifierExtension(u1));
+
+            var n1 = RequestPacket.NTSCookieExtension();
+
+            if (n1 is null)
+                return new NTPPacket(
+                           LI:                     0,
+                           VN:                     0,
+                           Mode:                   0,
+                           Stratum:                0,
+                           Poll:                   0,
+                           Precision:              0,
+                           RootDelay:              0,
+                           RootDispersion:         0,
+                           ReferenceIdentifier:    ReferenceIdentifier.Zero,
+                           ReferenceTimestamp:     0,
+                           OriginateTimestamp:     0,
+                           ReceiveTimestamp:       0,
+                           TransmitTimestamp:      0,
+                           Extensions:             [],
+                           KeyId:                  0,
+                           MessageDigest:          null,
+                           DestinationTimestamp:   0,
+
+                           Request:                RequestPacket,
+                           ResponseBytes:          null,
+                           ErrorMessage:           "Invalid NTS cookie!"
+                       );
+
+            if (!NTSCookie.TryParse(n1.Value, out var ntsCookie, out var errorResponse))
+                return new NTPPacket(
+                           LI:                     0,
+                           VN:                     0,
+                           Mode:                   0,
+                           Stratum:                0,
+                           Poll:                   0,
+                           Precision:              0,
+                           RootDelay:              0,
+                           RootDispersion:         0,
+                           ReferenceIdentifier:    ReferenceIdentifier.Zero,
+                           ReferenceTimestamp:     0,
+                           OriginateTimestamp:     0,
+                           ReceiveTimestamp:       0,
+                           TransmitTimestamp:      0,
+                           Extensions:             [],
+                           KeyId:                  0,
+                           MessageDigest:          null,
+                           DestinationTimestamp:   0,
+
+                           Request:                RequestPacket,
+                           ResponseBytes:          null,
+                           ErrorMessage:           "Invalid NTS cookie: " + errorResponse
+                       );
 
 
+            encryptedExtensions.Add(
+                GetCurrentMasterKey().
+                    GenerateNTSCookieExtensions(
+                        NumberOfCookies:  1,
+                        C2SKey:           ntsCookie.C2SKey,
+                        S2CKey:           ntsCookie.S2CKey,
+                        AEADAlgorithm:    ntsCookie.AEADAlgorithm
+                        //IsCritical:       true
+                    ).First()
+            );
 
+            extensions.Add(
+                AuthenticatorAndEncryptedExtension.Create(
+                    NTSKEResponse:   NTSKEResponse,
+                    AssociatedData:  extensions.         Select(ext => ext.ToByteArray()).Aggregate(),
+                    Plaintext:       encryptedExtensions.Select(ext => ext.ToByteArray()).Aggregate(),
+                    Nonce:           null
+                )
+            );
 
             // AuthenticatorAndEncryptedExtension with embedded NTSCookieExtension
 

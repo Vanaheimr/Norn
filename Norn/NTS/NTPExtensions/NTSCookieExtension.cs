@@ -15,18 +15,30 @@
  * limitations under the License.
  */
 
-namespace org.GraphDefined.Vanaheimr.Norn.NTP
+#region Usings
+
+using org.GraphDefined.Vanaheimr.Norn.NTP;
+
+#endregion
+
+namespace org.GraphDefined.Vanaheimr.Norn.NTS
 {
 
-    public class NTSCookiePlaceholderExtension(UInt16   CookieLength,
-                                               Boolean  Authenticated   = false,
-                                               Boolean  Encrypted       = false)
+    public class NTSCookieExtension(Byte[]      CookieBytes,
+                                    Boolean     Authenticated   = false,
+                                    Boolean     Encrypted       = false,
+                                    NTSCookie?  Cookie          = null)
 
-        : NTPExtension(ExtensionTypes.NTSCookiePlaceholder,
-                       new Byte[CookieLength],
+        : NTPExtension(ExtensionTypes.NTSCookie,
+                       CookieBytes,
                        Authenticated,
                        Encrypted)
 
-    { }
+    {
+
+        public NTSCookie?  Cookie    { get; } = Cookie;
+
+
+    }
 
 }
