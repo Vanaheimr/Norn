@@ -123,7 +123,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
         #endregion
 
-        #region TestPTBTime1_RandomBitError()
+        #region TestPTBTime1_RandomBitError()      <<<<<<<<<<<<< It seem's that this will not ALWAYS FAIL!?!
 
         /// <summary>
         /// Test the NTS client against the public NTS server ptbtime1.ptb.de,

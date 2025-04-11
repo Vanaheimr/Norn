@@ -114,7 +114,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             (this.Certificate, this.PrivateKey)  = GenerateSelfSignedServerCertificate(
                                                        SubjectName.IsNotNullOrEmpty()
                                                            ? $"CN={SubjectName}"
-                                                           : "CN=ntpKE.example.org"
+                                                           : "CN=ntpKE.example.org",
+                                                       [ "ntpKE1.example.org", "ntpKE2.example.org" ]
                                                    );
 
             this.encodedCertificate              = this.Certificate.GetEncoded();
@@ -259,36 +260,22 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 new ExtendedKeyUsage([ KeyPurposeID.id_kp_serverAuth ])
             );
 
-            var subjectAlternativeNames = SubjectAlternativeNames?.Select(subjectAlternativeName => new GeneralName(GeneralName.DnsName, subjectAlternativeName)).ToList() ?? [];
-
-            if (subjectAlternativeNames.Count == 0)
+            if (SubjectAlternativeNames?.Any() == true)
             {
-                subjectAlternativeNames.Add(new GeneralName(GeneralName.DnsName, "ntpKE1.example.org"));
-                subjectAlternativeNames.Add(new GeneralName(GeneralName.DnsName, "ntpKE2.example.org"));
+
+                var generalNames = new List<Asn1Encodable>();
+                foreach (var name in SubjectAlternativeNames)
+                {
+                    generalNames.Add(new GeneralName(GeneralName.DnsName, name));
+                }
+
+                certGenerator.AddExtension(
+                    X509Extensions.SubjectAlternativeName,
+                    false,
+                    new DerSequence(generalNames.ToArray())
+                );
+
             }
-
-            //certGenerator.AddExtension(
-            //    X509Extensions.SubjectAlternativeName,
-            //    false,
-            //    new DerSequence(
-            //        subjectAlternativeNames.Cast<Asn1Encodable>().ToArray()
-            //       // new Asn1Encodable[] {
-            //       //     new GeneralName(GeneralName.DnsName, "ntpKE1.example.org"),
-            //       //     new GeneralName(GeneralName.DnsName, "ntpKE2.example.org")
-            //       // }
-            //    )
-            //);
-
-            certGenerator.AddExtension(
-                X509Extensions.SubjectAlternativeName,
-                false,
-                new DerSequence(
-                    new Asn1Encodable[] {
-                        new GeneralName(GeneralName.DnsName, "ntpKE1.example.org"),
-                        new GeneralName(GeneralName.DnsName, "ntpKE2.example.org")
-                    }
-                )
-            );
 
             var signedCertificate = certGenerator.Generate(
                                         new Asn1SignatureFactory(

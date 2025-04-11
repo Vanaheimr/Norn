@@ -89,8 +89,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                         UInt16          NumberOfCookies,
                                         Byte[]          C2SKey,
                                         Byte[]          S2CKey,
-                                        AEADAlgorithms  AEADAlgorithm   = AEADAlgorithms.AES_SIV_CMAC_256,
-                                        Boolean         IsCritical      = false)
+                                        AEADAlgorithms  AEADAlgorithm   = AEADAlgorithms.AES_SIV_CMAC_256)
+                                    //    Boolean         IsCritical      = false)
 
         {
 

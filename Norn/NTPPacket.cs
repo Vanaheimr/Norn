@@ -216,24 +216,24 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
         #region Constructor(s)
 
-        #region NTPPacket(NTPRequest, Extensions = null)
+        #region NTPPacket(NTPPacket,    Extensions = null)
 
-        public NTPPacket(NTPPacket                   NTPRequest,
+        public NTPPacket(NTPPacket                   NTPPacket,
                          IEnumerable<NTPExtension>?  Extensions   = null)
 
-            : this(NTPRequest.LI,
-                   NTPRequest.VN,
-                   NTPRequest.Mode,
-                   NTPRequest.Stratum,
-                   NTPRequest.Poll,
-                   NTPRequest.Precision,
-                   NTPRequest.RootDelay,
-                   NTPRequest.RootDispersion,
-                   NTPRequest.ReferenceIdentifier,
-                   NTPRequest.ReferenceTimestamp,
-                   NTPRequest.OriginateTimestamp,
-                   NTPRequest.ReceiveTimestamp,
-                   NTPRequest.TransmitTimestamp,
+            : this(NTPPacket.LI,
+                   NTPPacket.VN,
+                   NTPPacket.Mode,
+                   NTPPacket.Stratum,
+                   NTPPacket.Poll,
+                   NTPPacket.Precision,
+                   NTPPacket.RootDelay,
+                   NTPPacket.RootDispersion,
+                   NTPPacket.ReferenceIdentifier,
+                   NTPPacket.ReferenceTimestamp,
+                   NTPPacket.OriginateTimestamp,
+                   NTPPacket.ReceiveTimestamp,
+                   NTPPacket.TransmitTimestamp,
                    Extensions)
 
         {
@@ -242,7 +242,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
         #endregion
 
-        #region NTPPacket(NTPRequest, Extensions = null)
+        #region NTPPacket(ErrorMessage, Extensions = null)
 
         public NTPPacket(String ErrorMessage)
 
@@ -272,12 +272,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         #endregion
 
 
-        #region ToByteArray()
+        #region ToByteArray(SkipExtensions = false)
 
         /// <summary>
         /// Get a binary of the NTP request (big-endian).
         /// </summary>
-        public Byte[] ToByteArray()
+        public Byte[] ToByteArray(Boolean SkipExtensions = false)
         {
 
             var buffer = new Byte[48];
@@ -309,7 +309,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
             }
 
-            if (Extensions.Any())
+            if (Extensions.Any() && !SkipExtensions)
             {
 
                 var bufferLength = buffer.Length;
@@ -679,6 +679,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                             ErrorResponse = "Missing NTS key!";
                             return false;
                         }
+                        DebugX.Log("Client S2CKey: " + NTSKey.ToBase64());
                         if (!AuthenticatorAndEncryptedExtension.TryParse(data,
                                                                          things.Take(things.Count-1),
                                                                          ref extensions,
@@ -701,6 +702,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                             return false;
                         }
                         extensions.Add(debugExtension);
+                        break;
+
+                    case ExtensionTypes.NTSSignedResponse:
+                        if (!NTSSignedResponseExtension.TryParse(data, out var signedResponseExtension, out ErrorResponse))
+                        {
+                            return false;
+                        }
+                        extensions.Add(signedResponseExtension);
                         break;
 
                     default:

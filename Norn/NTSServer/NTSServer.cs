@@ -516,33 +516,48 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     ).First()
             );
 
+
+            var response1 = new NTPPacket(
+
+                                Mode:                4, // 4 (Server)
+                                Stratum:             2,
+                                Poll:                RequestPacket.Poll,
+                                Precision:           RequestPacket.Precision,
+                                TransmitTimestamp:   NTPPacket.GetCurrentNTPTimestamp()
+
+                            );
+
+
+            var associatedData = new List<Byte[]>() { response1.ToByteArray(SkipExtensions: true) }.
+                                     Concat(extensions.Select(ext => ext.ToByteArray())).ToArray();
+
             extensions.Add(
                 AuthenticatorAndEncryptedExtension.Create(
-                    NTSKEResponse:   NTSKEResponse,
-                    AssociatedData:  extensions.         Select(ext => ext.ToByteArray()).Aggregate(),
+                    NTSKey:          ntsCookie.S2CKey,
+                    AssociatedData:  associatedData,
                     Plaintext:       encryptedExtensions.Select(ext => ext.ToByteArray()).Aggregate(),
                     Nonce:           null
                 )
             );
 
-            // AuthenticatorAndEncryptedExtension with embedded NTSCookieExtension
 
-            extensions.Add(NTSSignedResponseExtension.Create(extensions.Select(extension => extension.ToByteArray())));
+            var response2 = new NTPPacket(
+                                response1,
+                                Extensions: extensions
+                            ).ToByteArray();
+
+            extensions.Add(
+                NTSSignedResponseExtension.Sign(
+                    1,
+                    response2
+                )
+            );
 
 
-            var response = new NTPPacket(
-
-                               Mode:                4, // 4 (Server)
-                               Stratum:             2,
-                               Poll:                RequestPacket.Poll,
-                               Precision:           RequestPacket.Precision,
-                               TransmitTimestamp:   NTPPacket.GetCurrentNTPTimestamp(),
-
-                               Extensions:          extensions
-
-                           );
-
-            return response;
+            return new NTPPacket(
+                       response1,
+                       Extensions: extensions
+                   );
 
         }
 

@@ -241,10 +241,35 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <param name="Nonce">The optional nonce to be used for encryption.</param>
         public static AuthenticatorAndEncryptedExtension
 
-            Create(NTSKE_Response  NTSKEResponse,
-                   IList<Byte[]>   AssociatedData,
-                   Byte[]?         Plaintext   = null,
-                   Byte[]?         Nonce       = null)
+            Create(NTSKE_Response       NTSKEResponse,
+                   IEnumerable<Byte[]>  AssociatedData,
+                   Byte[]?              Plaintext   = null,
+                   Byte[]?              Nonce       = null)
+
+            => Create(
+                   NTSKEResponse.C2SKey,
+                   AssociatedData,
+                   Plaintext,
+                   Nonce
+               );
+
+        #endregion
+
+        #region Create(NTSKey,        AssociatedData, Plainttext = null, Nonce = null)
+
+        /// <summary>
+        /// Create a "NTS Authenticator and Encrypted Extension Fields" extension (type=0x0404)
+        /// </summary>
+        /// <param name="NTSKey">The C2S or S2C key from the Network Time Security Key Establishment (NTS-KE) response.</param>
+        /// <param name="AssociatedData">An array of byte arrays to be authenticated but not encrypted.</param>
+        /// <param name="Plaintext">The optional plaintext to be encrypted (e.g. internal extension fields).</param>
+        /// <param name="Nonce">The optional nonce to be used for encryption.</param>
+        public static AuthenticatorAndEncryptedExtension
+
+            Create(Byte[]               NTSKey,
+                   IEnumerable<Byte[]>  AssociatedData,
+                   Byte[]?              Plaintext   = null,
+                   Byte[]?              Nonce       = null)
 
         {
 
@@ -255,11 +280,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             return new AuthenticatorAndEncryptedExtension(
                        nonce,
-                       new AES_SIV(NTSKEResponse.C2SKey).Encrypt(
-                                                             [ AssociatedData.Aggregate() ],
-                                                             nonce,
-                                                             Plaintext ?? []
-                                                         )
+                       new AES_SIV(NTSKey).
+                           Encrypt(
+                               [ AssociatedData.Aggregate() ],
+                               nonce,
+                               Plaintext ?? []
+                           )
                    );
 
         }
