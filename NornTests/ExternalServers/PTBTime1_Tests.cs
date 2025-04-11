@@ -345,7 +345,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
             Assert.That(ntsKEResponse.Cookies.Count(),   Is.GreaterThan(0));
 
 
-            var ntsResponse                = await ntsClient.QueryTime(NTSKEResponse: ntsKEResponse, RequestSignedResponse: true);
+            var ntsResponse                = await ntsClient.QueryTimeSigned(NTSKEResponse: ntsKEResponse);
 
             Assert.That(ntsResponse,  Is.Not.Null);
 

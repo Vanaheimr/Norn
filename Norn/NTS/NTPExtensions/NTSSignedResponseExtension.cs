@@ -17,16 +17,15 @@
 
 #region Usings
 
-using System.Security.Cryptography;
 using System.Diagnostics.CodeAnalysis;
 
-using org.GraphDefined.Vanaheimr.Illias;
-using Org.BouncyCastle.Security;
+using Org.BouncyCastle.Math;
 using Org.BouncyCastle.Asn1.Sec;
+using Org.BouncyCastle.Security;
 using Org.BouncyCastle.Crypto.Parameters;
 using Org.BouncyCastle.Crypto.Generators;
-using Org.BouncyCastle.Asn1.X9;
-using Org.BouncyCastle.Math;
+
+using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Norn.NTS;
 
 #endregion
@@ -100,8 +99,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
             try
             {
 
-                ErrorResponse              = null;
-                NTSSignedResponseExtension = null;
+                ErrorResponse               = null;
+                NTSSignedResponseExtension  = null;
 
                 if (Data is null || Data.Length < 4)
                 {
@@ -126,8 +125,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
             }
             catch (Exception e)
             {
-                ErrorResponse              = e.Message;
-                NTSSignedResponseExtension = null;
+                ErrorResponse               = e.Message;
+                NTSSignedResponseExtension  = null;
                 return false;
             }
 
@@ -202,7 +201,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         }
 
         #endregion
-
 
 
         #region (static) GenerateECKeys        (ECCurve)

@@ -80,7 +80,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
             Assert.That(ntsKEResponse.S2CKey.Length,     Is.GreaterThan(0));
             Assert.That(ntsKEResponse.Cookies.Count(),   Is.GreaterThan(0));
 
-            var ntsResponse                = await ntsClient.QueryTime(NTSKEResponse: ntsKEResponse);
+            var ntsResponse                = await ntsClient.QueryTimeSigned(NTSKEResponse:  ntsKEResponse,
+                                                                             Timeout:        TimeSpan.FromMinutes(1));
             Assert.That(ntsResponse,    Is.Not.Null);
 
             if (ntsResponse is not null)
@@ -97,16 +98,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                     Assert.That(ntsResponse.UniqueIdentifier(),                                          Is.Not.Null);
                     Assert.That(ntsResponse.UniqueIdentifier()?.ToHexString(),                           Is.EqualTo(request.UniqueIdentifier()?.ToHexString()));
 
-                    Assert.That(request.Extensions.Count(),                                              Is.EqualTo(3));
+                    Assert.That(request.Extensions.Count(),                                              Is.EqualTo(4));
                     Assert.That(request.Extensions.ElementAt(0) is UniqueIdentifierExtension,            Is.True);
                     Assert.That(request.Extensions.ElementAt(1) is NTSCookieExtension,                   Is.True);
-                    Assert.That(request.Extensions.ElementAt(2) is AuthenticatorAndEncryptedExtension,   Is.True);
+                    Assert.That(request.Extensions.ElementAt(2) is NTSRequestSignedResponseExtension,    Is.True);
+                    Assert.That(request.Extensions.ElementAt(3) is AuthenticatorAndEncryptedExtension,   Is.True);
 
                 }
 
 
                 // Initially 2, but +1 decrypted extension
-                Assert.That(ntsResponse.Extensions.Count(),  Is.EqualTo(4));
+                Assert.That(ntsResponse.Extensions.Count(),  Is.EqualTo(5));
 
 
                 // 1. Check Unique Identifier Extension
@@ -119,8 +121,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                     Assert.Fail("Unique Identifier Extension is invalid!");
 
 
-                // 2. Check NTS Authenticator and Encrypted Extension
-                if (ntsResponse.Extensions.ElementAt(1) is AuthenticatorAndEncryptedExtension authenticatorAndEncryptedExtension)
+                // 2. Check NTS Signed Response Announcement Extension
+                if (ntsResponse.Extensions.ElementAt(1) is NTSSignedResponseAnnouncementExtension signedResponseAnnouncementExtension)
+                {
+                    Assert.That(signedResponseAnnouncementExtension.IsScheduled,                  Is.True);
+                }
+                else
+                    Assert.Fail("NTS Signed Response Announcement Extension is invalid!");
+
+
+                // 3. Check NTS Authenticator and Encrypted Extension
+                if (ntsResponse.Extensions.ElementAt(2) is AuthenticatorAndEncryptedExtension authenticatorAndEncryptedExtension)
                 {
                     Assert.That(authenticatorAndEncryptedExtension.Authenticated,                 Is.False);
                     Assert.That(authenticatorAndEncryptedExtension.Encrypted,                     Is.False);
@@ -130,8 +141,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                     Assert.Fail("NTS Authenticator and Encrypted Extension is invalid!");
 
 
-                // 3. Check NTS Cookie Extension
-                if (ntsResponse.Extensions.ElementAt(2) is NTSCookieExtension cookieExtension)
+                // 4. Check NTS Cookie Extension
+                if (ntsResponse.Extensions.ElementAt(3) is NTSCookieExtension cookieExtension)
                 {
                     Assert.That(cookieExtension.Authenticated,                                    Is.True);
                     Assert.That(cookieExtension.Encrypted,                                        Is.True);
@@ -140,8 +151,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                     Assert.Fail("NTS Cookie Extension is invalid!");
 
 
-                // 4. Check NTS Signed Response Extension
-                if (ntsResponse.Extensions.ElementAt(3) is NTSSignedResponseExtension signedResponseExtension)
+                // 5. Check NTS Signed Response Extension
+                if (ntsResponse.Extensions.ElementAt(4) is NTSSignedResponseExtension signedResponseExtension)
                 {
                     Assert.That(signedResponseExtension.Authenticated,                            Is.False);
                     Assert.That(signedResponseExtension.Encrypted,                                Is.False);

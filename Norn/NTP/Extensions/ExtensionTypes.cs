@@ -27,33 +27,34 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         /// <summary>
         /// Unique Identifier
         /// </summary>
-        UniqueIdentifier            = 0x0104,
+        UniqueIdentifier                = 0x0104,
 
         /// <summary>
         /// NTS Cookie
         /// </summary>
-        NTSCookie                   = 0x0204,
+        NTSCookie                       = 0x0204,
 
         /// <summary>
         /// NTS Cookie Placeholder
         /// </summary>
-        NTSCookiePlaceholder        = 0x0304,
+        NTSCookiePlaceholder            = 0x0304,
 
         /// <summary>
         /// Authenticator and Encrypted
         /// </summary>
-        AuthenticatorAndEncrypted   = 0x0404,
+        AuthenticatorAndEncrypted       = 0x0404,
 
 
         /// <summary>
         /// Debug (just for testing)
         /// </summary>
-        Debug                       = 0xffff,
+        Debug                           = 0xffff,
 
 
 
-        NTSRequestSignedResponse    = 0xf000,
-        NTSSignedResponse           = 0xf001
+        NTSRequestSignedResponse        = 0xff00,
+        NTSSignedResponseAnnouncement   = 0xff01,
+        NTSSignedResponse               = 0xff02
 
     }
 

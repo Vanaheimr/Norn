@@ -34,20 +34,38 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         /// <summary>
         /// The value of an optional UniqueIdentifier extension.
         /// </summary>
-        public static Byte[]?                     UniqueIdentifier          (this NTPPacket NTPPacket)
+        public static Byte[]?                                  UniqueIdentifier              (this NTPPacket NTPPacket)
             => NTPPacket.Extensions.FirstOrDefault(extension => extension.Type == ExtensionTypes.UniqueIdentifier)?.Value;
 
         /// <summary>
         /// The value of an optional UniqueIdentifier extension.
         /// </summary>
-        public static UniqueIdentifierExtension?  UniqueIdentifierExtension (this NTPPacket NTPPacket)
-            => NTPPacket.Extensions.FirstOrDefault(extension => extension.Type == ExtensionTypes.UniqueIdentifier) as UniqueIdentifierExtension;
+        public static UniqueIdentifierExtension?               UniqueIdentifierExtension     (this NTPPacket NTPPacket)
+            => NTPPacket.Extensions.FirstOrDefault(extension => extension.Type == ExtensionTypes.UniqueIdentifier)              as UniqueIdentifierExtension;
 
         /// <summary>
         /// The value of an optional NTS Cookie extension.
         /// </summary>
-        public static NTSCookieExtension?         NTSCookieExtension        (this NTPPacket NTPPacket)
-            => NTPPacket.Extensions.FirstOrDefault(extension => extension.Type == ExtensionTypes.NTSCookie)        as NTSCookieExtension;
+        public static NTSCookieExtension?                      NTSCookieExtension            (this NTPPacket NTPPacket)
+            => NTPPacket.Extensions.FirstOrDefault(extension => extension.Type == ExtensionTypes.NTSCookie)                     as NTSCookieExtension;
+
+        /// <summary>
+        /// The value of an optional NTS Request Signed Response extension.
+        /// </summary>
+        public static NTSRequestSignedResponseExtension?       NTSRequestSignedResponse      (this NTPPacket NTPPacket)
+            => NTPPacket.Extensions.FirstOrDefault(extension => extension.Type == ExtensionTypes.NTSRequestSignedResponse)      as NTSRequestSignedResponseExtension;
+
+        /// <summary>
+        /// The value of an optional NTS Signed Response Announcement extension.
+        /// </summary>
+        public static NTSSignedResponseAnnouncementExtension?  NTSSignedResponseAnnouncement (this NTPPacket NTPPacket)
+            => NTPPacket.Extensions.FirstOrDefault(extension => extension.Type == ExtensionTypes.NTSSignedResponseAnnouncement) as NTSSignedResponseAnnouncementExtension;
+
+        /// <summary>
+        /// The value of an optional NTS Signed Response extension.
+        /// </summary>
+        public static NTSSignedResponseExtension?              NTSSignedResponse             (this NTPPacket NTPPacket)
+            => NTPPacket.Extensions.FirstOrDefault(extension => extension.Type == ExtensionTypes.NTSSignedResponse)             as NTSSignedResponseExtension;
 
     }
 
@@ -533,6 +551,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                         extensions.Add(debugExtension);
                         break;
 
+                    case ExtensionTypes.NTSRequestSignedResponse:
+                        if (!NTSRequestSignedResponseExtension.TryParse(data, out var requestSignedResponseExtension, out ErrorResponse))
+                        {
+                            return false;
+                        }
+                        extensions.Add(requestSignedResponseExtension);
+                        break;
+
                     default:
                         extensions.Add(
                             new NTPExtension(
@@ -702,6 +728,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                             return false;
                         }
                         extensions.Add(debugExtension);
+                        break;
+
+                    case ExtensionTypes.NTSSignedResponseAnnouncement:
+                        if (!NTSSignedResponseAnnouncementExtension.TryParse(data, out var signedResponseAnnouncementExtension, out ErrorResponse))
+                        {
+                            return false;
+                        }
+                        extensions.Add(signedResponseAnnouncementExtension);
                         break;
 
                     case ExtensionTypes.NTSSignedResponse:

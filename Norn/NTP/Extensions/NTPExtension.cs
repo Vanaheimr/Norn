@@ -33,7 +33,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
     /// Network Time Security for the Network Time Protocol: https://datatracker.ietf.org/doc/html/rfc8915
     /// 5. NTS Extension Fields for NTPv4
     /// 
-    /// Network Time Protocol Version 4 (NTPv4) Extension Fields: https://datatracker.ietf.org/doc/html/rfc7822
+    /// Network Time Protocol Version 4: Protocol and Algorithms Specification: https://datatracker.ietf.org/doc/html/rfc5905
+    /// Network Time Protocol Version 4 (NTPv4) Extension Fields:               https://datatracker.ietf.org/doc/html/rfc7822
+    /// 
     /// </summary>
     public class NTPExtension
     {
@@ -95,6 +97,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                             Boolean         Authenticated = false,
                             Boolean         Encrypted     = false)
         {
+
+            #region Inital checks
+
+            if (Value.Length < 16)
+                throw new ArgumentOutOfRangeException(nameof(Value), "The value must be at least 16 bytes long! See rfc5905 section 7.5 and rfc7822 section 3!");
+
+            #endregion
 
             this.Type           = Type;
             this.Value          = Value;
@@ -255,6 +264,51 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                    Nonce,
                    Ciphertext,
                    EncryptedExtensions
+               );
+
+        #endregion
+
+        #region (static) NTSRequestSignedResponse(KeyId)
+
+        /// <summary>
+        /// Create a new NTS Request Signed Response extension.
+        /// </summary>
+        /// <param name="KeyId">The key used to sign the response.</param>
+        public static NTPExtension NTSRequestSignedResponse(UInt16 KeyId)
+
+            => new NTSRequestSignedResponseExtension(
+                   KeyId
+               );
+
+        #endregion
+
+        #region (static) NTSSignedResponseAnnouncement(IsScheduled)
+
+        /// <summary>
+        /// Create a new NTS Signed Response Announcement extension.
+        /// </summary>
+        /// <param name="IsScheduled">Whether a 2nd signed response is scheduled.</param>
+        public static NTPExtension NTSSignedResponseAnnouncement(Boolean IsScheduled)
+
+            => new NTSSignedResponseAnnouncementExtension(
+                   IsScheduled
+               );
+
+        #endregion
+
+        #region (static) NTSSignedResponse(KeyId, Signature)
+
+        /// <summary>
+        /// Create a new NTS Signed Response extension.
+        /// </summary>
+        /// <param name="KeyId">The key used to sign the response.</param>
+        /// <param name="Signature">The signature of the response.</param>
+        public static NTPExtension NTSSignedResponse(UInt16   KeyId,
+                                                     Byte[]   Signature)
+
+            => new NTSSignedResponseExtension(
+                   KeyId,
+                   Signature
                );
 
         #endregion

@@ -261,13 +261,31 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                               MasterKeys: masterKeys))
                                 {
 
-                                    var responsePacket = BuildResponse(requestPacket);
+                                    var toBeSigned       = requestPacket.NTSRequestSignedResponse() is not null;
+
+                                    var responsePacket1  = BuildResponse(
+                                                               requestPacket,
+                                                               toBeSigned
+                                                           );
 
                                     await udpSocket.SendToAsync(
-                                              new ArraySegment<Byte>(responsePacket.ToByteArray()),
+                                              new ArraySegment<Byte>(responsePacket1.ToByteArray()),
                                               SocketFlags.None,
                                               resultLocal.RemoteEndPoint
                                           );
+
+                                    if (toBeSigned)
+                                    {
+
+                                        var responsePacket2 = SignResponse(responsePacket1, 1);
+
+                                        await udpSocket.SendToAsync(
+                                                  new ArraySegment<Byte>(responsePacket2.ToByteArray()),
+                                                  SocketFlags.None,
+                                                  resultLocal.RemoteEndPoint
+                                              );
+
+                                    }
 
                                 }
                                 else
@@ -441,7 +459,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         #endregion
 
 
-        private NTPPacket BuildResponse(NTPPacket RequestPacket)
+        private NTPPacket BuildResponse(NTPPacket  RequestPacket,
+                                        Boolean    SignedResponseRequested = false)
         {
 
             var extensions           = new List<NTPExtension>();
@@ -505,6 +524,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                        );
 
 
+            // Generate a new NTS Cookie to be added to the response
             encryptedExtensions.Add(
                 GetCurrentMasterKey().
                     GenerateNTSCookieExtensions(
@@ -515,6 +535,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                         //IsCritical:       true
                     ).First()
             );
+
+
+            if (SignedResponseRequested)
+                extensions.Add(
+                    new NTSSignedResponseAnnouncementExtension(IsScheduled: true)
+                );
 
 
             var response1 = new NTPPacket(
@@ -540,22 +566,36 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 )
             );
 
+            return new NTPPacket(
+                       response1,
+                       Extensions: extensions
+                   );
+
+        }
+
+
+        private NTPPacket SignResponse(NTPPacket  NTPResponse,
+                                       UInt16     KeyId)
+        {
+
+            var extensions = new List<NTPExtension>();
+            extensions.AddRange(NTPResponse.Extensions);
+
 
             var response2 = new NTPPacket(
-                                response1,
+                                NTPResponse,
                                 Extensions: extensions
                             ).ToByteArray();
 
             extensions.Add(
                 NTSSignedResponseExtension.Sign(
-                    1,
+                    KeyId,
                     response2
                 )
             );
 
-
             return new NTPPacket(
-                       response1,
+                       NTPResponse,
                        Extensions: extensions
                    );
 

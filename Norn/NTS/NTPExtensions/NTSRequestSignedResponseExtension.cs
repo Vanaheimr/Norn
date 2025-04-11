@@ -17,6 +17,8 @@
 
 #region Usings
 
+using System.Diagnostics.CodeAnalysis;
+
 using org.GraphDefined.Vanaheimr.Norn.NTP;
 
 #endregion
@@ -24,15 +26,60 @@ using org.GraphDefined.Vanaheimr.Norn.NTP;
 namespace org.GraphDefined.Vanaheimr.Norn.NTS
 {
 
-    public class NTSRequestSignedResponseExtension(Byte[]   SignatureType,
-                                                   Boolean  Authenticated   = false,
-                                                   Boolean  Encrypted       = false)
+    public class NTSRequestSignedResponseExtension : NTPExtension
+    {
 
-        : NTPExtension(ExtensionTypes.NTSRequestSignedResponse,
-                       SignatureType,
-                       Authenticated,
-                       Encrypted)
+        public NTSRequestSignedResponseExtension(UInt16   KeyId,
+                                                 Boolean  Authenticated   = false,
+                                                 Boolean  Encrypted       = false)
 
-    { }
+            : base(ExtensionTypes.NTSRequestSignedResponse,
+                   new Byte[16], // 16 is the minimum length!
+                   Authenticated,
+                   Encrypted)
+
+        {
+
+            Value[0] = (Byte) ((KeyId >> 8) & 0xff);
+            Value[1] = (Byte)  (KeyId       & 0xff);
+
+        }
+
+        public static Boolean TryParse(Byte[]                                                       Data,
+                                       [NotNullWhen(true)]  out NTSRequestSignedResponseExtension?  NTSRequestSignedResponseExtension,
+                                       [NotNullWhen(false)] out String?                             ErrorResponse,
+                                       Boolean                                                      Authenticated   = false,
+                                       Boolean                                                      Encrypted       = false)
+        {
+
+            try
+            {
+
+                ErrorResponse                      = null;
+                NTSRequestSignedResponseExtension  = null;
+
+                if (Data is null || Data.Length < 4)
+                {
+                    ErrorResponse = "NTS Request Signed Response extension value is null or too short!";
+                    return false;
+                }
+
+                NTSRequestSignedResponseExtension  = new NTSRequestSignedResponseExtension(
+                                                         (UInt16) ((Data[0] << 8) | Data[1])
+                                                     );
+
+                return true;
+
+            }
+            catch (Exception e)
+            {
+                ErrorResponse                      = e.Message;
+                NTSRequestSignedResponseExtension  = null;
+                return false;
+            }
+
+        }
+
+    }
 
 }

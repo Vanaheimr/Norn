@@ -273,7 +273,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </summary>
         public async Task<NTPPacket?> QueryTime(TimeSpan?          Timeout                 = null,
                                                 NTSKE_Response?    NTSKEResponse           = null,
-                                                Boolean            RequestSignedResponse   = false,
                                                 CancellationToken  CancellationToken       = default)
         {
 
@@ -292,14 +291,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             // 0104 0024 2027e75e68914d89bdd2461d6c18a87914ae432326ae452516f1af36876c37e2
             // 0404 0090 0010 0078 c562375b4cf5e6338cecf184f1c9b739ecc6daa3e27bbda9935a184f9089bc5ad6060a80afd71b5dcd421b332f4f26fdb53d9a1d092662595944696573fea2c1ae33761b04f5b399f504779bf4745caab96ac43c10595f0abe61aedbb6471b806e737cba62035e8bfd44279ed869996102168d9c68edf37cba02d3db49ca6aaf28923d67bb43e0ba
 
-            var uniqueId = new Byte[32];
-            RandomNumberGenerator.Fill(uniqueId);
-
             var requestPacket  = BuildNTPRequest(
                                      NTSKEResponse,
-                                     uniqueId,
+                                     RandomNumberGenerator.GetBytes(32),
                                      Plaintext:              null,
-                                     RequestSignedResponse:  RequestSignedResponse
+                                     RequestSignedResponse:  false
                                  );
 
             var requestData    = requestPacket.ToByteArray();
@@ -356,6 +352,121 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         }
 
+        /// <summary>
+        /// Sends a single NTP request (mode=3) with NTS extension fields:
+        ///   1) Unique Identifier extension field
+        ///   2) NTS Cookie extension field (cleartext for server)
+        ///   3) NTS Authenticator & Encrypted extension field (placeholder)
+        /// and reads a single response.
+        /// </summary>
+        public async Task<NTPPacket?> QueryTimeSigned(TimeSpan?          Timeout                 = null,
+                                                      NTSKE_Response?    NTSKEResponse           = null,
+                                                      CancellationToken  CancellationToken       = default)
+        {
+
+            if (NTSKEResponse?.ErrorMessage is not null)
+                return new NTPPacket(NTSKEResponse?.ErrorMessage ?? "Unknown error!");
+
+            var requestPacket  = BuildNTPRequest(
+                                     NTSKEResponse,
+                                     RandomNumberGenerator.GetBytes(32),
+                                     Plaintext:              null,
+                                     RequestSignedResponse:  true
+                                 );
+
+            var requestData    = requestPacket.ToByteArray();
+
+            using (var udpClient = new UdpClient())
+            {
+
+                try
+                {
+
+                    await udpClient.SendAsync(
+                              requestData,
+                              Host,
+                              NTP_Port,
+                              CancellationToken
+                          );
+
+                    var timeout         = Timeout ?? this.Timeout ?? DefaultTimeout;
+
+                    var receiveTask1    = udpClient.ReceiveAsync(CancellationToken).AsTask();
+                    var timeoutTask1    = Task.Delay(timeout, CancellationToken);
+                    var finishedTask1   = await Task.WhenAny(receiveTask1, timeoutTask1);
+
+                    if (finishedTask1 == timeoutTask1)
+                        return new NTPPacket($"No 1st NTP response within {Math.Round(timeout.TotalSeconds, 2)} seconds timeout!");
+
+                    var receiveResult1  = await receiveTask1;
+
+                    DebugX.Log($"Got {receiveResult1.Buffer.Length}-byte response from {receiveResult1.RemoteEndPoint}");
+
+
+                    if (NTPPacket.TryParseResponse(receiveResult1.Buffer,
+                                                   out var ntpResponse1,
+                                                   out var errorResponse1,
+                                                   Request:           requestPacket,
+                                                   NTSKey:            NTSKEResponse?.S2CKey,
+                                                   ExpectedUniqueId:  requestPacket.UniqueIdentifier()))
+                    {
+
+                        if (ntpResponse1.NTSSignedResponseAnnouncement()?.IsScheduled == true)
+                        {
+
+                            DebugX.Log($"{Host} Serverzeit 1 (UTC): " + NTPPacket.NTPTimestampToDateTime(ntpResponse1.TransmitTimestamp.Value).ToString("o"));
+
+                            var receiveTask2    = udpClient.ReceiveAsync(CancellationToken).AsTask();
+                            var timeoutTask2    = Task.Delay(timeout, CancellationToken);
+                            var finishedTask2   = await Task.WhenAny(receiveTask2, timeoutTask2);
+
+                            if (finishedTask2 == timeoutTask2)
+                                return new NTPPacket($"No 2nd NTP response within {Math.Round(timeout.TotalSeconds, 2)} seconds timeout!");
+
+                            var receiveResult2  = await receiveTask2;
+
+                            DebugX.Log($"Got {receiveResult2.Buffer.Length}-byte response from {receiveResult2.RemoteEndPoint}");
+
+                            if (NTPPacket.TryParseResponse(receiveResult2.Buffer,
+                                                           out var ntpResponse2,
+                                                           out var errorResponse2,
+                                                           Request:           requestPacket,
+                                                           NTSKey:            NTSKEResponse?.S2CKey,
+                                                           ExpectedUniqueId:  requestPacket.UniqueIdentifier()))
+                            {
+
+                                DebugX.Log($"{Host} Serverzeit 2 (UTC): " + NTPPacket.NTPTimestampToDateTime(ntpResponse2.TransmitTimestamp.Value).ToString("o"));
+
+                                return ntpResponse2;
+
+                            }
+                            else
+                                return new NTPPacket("NTP 2nd response error: " + errorResponse2);
+
+                        }
+                        else
+                        {
+
+                            DebugX.Log($"{Host} Serverzeit (UTC): " + NTPPacket.NTPTimestampToDateTime(ntpResponse1.TransmitTimestamp.Value).ToString("o"));
+
+                            return ntpResponse1;
+
+                        }
+
+                    }
+                    else
+                        return new NTPPacket("NTP 1st response error: " + errorResponse1);
+
+                }
+                catch (Exception e)
+                {
+                    return new NTPPacket("NTP receive exception: " + e.Message);
+                }
+
+            }
+
+        }
+
 
         #region BuildNTSRequest(NTSKEResponse = null, UniqueId = null)
 
@@ -382,9 +493,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 NTSKEResponse.C2SKey.Length > 0)
             {
 
-                var uniqueIdExtension               = NTPExtension.UniqueIdentifier(UniqueId);
-                var cookieExtension                 = NTPExtension.NTSCookie(NTSKEResponse.Cookies.First());
-                var requestSignedResponseExtension  = new NTSRequestSignedResponseExtension("Hello World!".ToUTF8Bytes());
+                var uniqueIdExtension  = NTPExtension.UniqueIdentifier(UniqueId);
+                var cookieExtension    = NTPExtension.NTSCookie(NTSKEResponse.Cookies.First());
 
                 extensions.Add(
                     uniqueIdExtension
@@ -402,6 +512,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                 if (RequestSignedResponse)
                 {
+                    var requestSignedResponseExtension = new NTSRequestSignedResponseExtension(KeyId: 1);
                     extensions.    Add(requestSignedResponseExtension);
                     extensionBytes.Add(requestSignedResponseExtension.ToByteArray());
                 }
