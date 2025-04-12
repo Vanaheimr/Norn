@@ -17,6 +17,7 @@
 
 #region Usings
 
+using Microsoft.Extensions.Hosting;
 using NUnit.Framework;
 
 using org.GraphDefined.Vanaheimr.Illias;
@@ -94,9 +95,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
             var publicKey                  = ntsKEResponse.PublicKeys.First();
 
-            var ntsResponse                = await ntsClient.QueryTimeSigned(NTSKEResponse:  ntsKEResponse,
-                                                                             Timeout:        TimeSpan.FromMinutes(1));
+            var ntsResponse                = await ntsClient.QueryTime(
+                                                       NTSKEResponse:       ntsKEResponse,
+                                                       SignedResponseMode:  SignedResponseMode.Scheduled,
+                                                       Timeout:             TimeSpan.FromMinutes(1)
+                                                   );
+
             Assert.That(ntsResponse,    Is.Not.Null);
+
+            DebugX.Log($"{ntsClient.Host} Serverzeit 1 (UTC): " + NTPPacket.NTPTimestampToDateTime(ntsResponse.TransmitTimestamp.Value).ToString("o"));
+
 
             if (ntsResponse is not null)
             {

@@ -17,7 +17,6 @@
 
 #region Usings
 
-using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 
 using org.GraphDefined.Vanaheimr.Illias;

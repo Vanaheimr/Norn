@@ -84,8 +84,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <param name="TCPPort">The optional TCP port for NTS-KE to listen on (default: 4460).</param>
         /// <param name="UDPPort">The optional UDP port for NTP to listen on (default: 123).</param>
         /// <param name="KeyPair">An optional key pair to be used for NTS response signing.</param>
-        public NTSServer(IPPort?   TCPPort     = null,
-                         IPPort?   UDPPort     = null,
+        public NTSServer(IPPort?   TCPPort   = null,
+                         IPPort?   UDPPort   = null,
                          KeyPair?  KeyPair   = null)
         {
 
@@ -252,18 +252,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     while (!cts.Token.IsCancellationRequested)
                     {
 
-                        var buffer       = new Byte[BufferSize];
-                        var remoteEP     = new IPEndPoint(System.Net.IPAddress.Any, 0);
+                        var buffer          = new Byte[BufferSize];
+                        var remoteEP        = new IPEndPoint(System.Net.IPAddress.Any, 0);
 
-                        var result       = await udpSocket.ReceiveFromAsync(
-                                                     new ArraySegment<Byte>(buffer),
-                                                     SocketFlags.None,
-                                                     remoteEP,
-                                                     cts.Token
-                                                 );
+                        var udpPacket       = await udpSocket.ReceiveFromAsync(
+                                                        new ArraySegment<Byte>(buffer),
+                                                        SocketFlags.None,
+                                                        remoteEP,
+                                                        cts.Token
+                                                    );
 
                         // Local copy to pass into the Task
-                        var resultLocal  = result;
+                        var udpPacketLocal  = udpPacket;
 
 
                         _ = Task.Run(async () => {
@@ -271,7 +271,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                             try
                             {
 
-                                Array.Resize(ref buffer, resultLocal.ReceivedBytes);
+                                Array.Resize(ref buffer, udpPacketLocal.ReceivedBytes);
 
                                 if (NTPRequest.TryParse(buffer,
                                                         out var requestPacket,
@@ -289,7 +289,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                     await udpSocket.SendToAsync(
                                               new ArraySegment<Byte>(responsePacket1.ToByteArray()),
                                               SocketFlags.None,
-                                              resultLocal.RemoteEndPoint
+                                              udpPacketLocal.RemoteEndPoint
                                           );
 
                                     if (toBeSigned && currentKeyPair is not null)
@@ -300,7 +300,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                         await udpSocket.SendToAsync(
                                                   new ArraySegment<Byte>(responsePacket2.ToByteArray()),
                                                   SocketFlags.None,
-                                                  resultLocal.RemoteEndPoint
+                                                  udpPacketLocal.RemoteEndPoint
                                               );
 
                                     }
@@ -308,7 +308,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                 }
                                 else
                                 {
-                                    DebugX.Log($"Invalid NTP request from {resultLocal.RemoteEndPoint}: {errorResponse}");
+                                    DebugX.Log($"Invalid NTP request from {udpPacketLocal.RemoteEndPoint}: {errorResponse}");
                                 }
                             }
                             catch (Exception e)
