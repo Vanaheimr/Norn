@@ -72,7 +72,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                 }
 
                 NTSSignedResponseAnnouncementExtension  = new NTSSignedResponseAnnouncementExtension(
-                                                              Data[0] == 0x80
+                                                              Data[0] == 0x80,
+                                                              Authenticated,
+                                                              Encrypted
                                                           );
 
                 return true;

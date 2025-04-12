@@ -44,7 +44,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         public async Task TestServer1()
         {
 
-            var ntsServer                  = new NTSServer();
+            var ntsServer                  = new NTSServer(
+                                                 KeyPair:   new KeyPair(
+                                                                  Id:                   1,
+                                                                  PrivateKey:          "ANm7PAbjqlK+SPW/JLFXVt8U7vCpg69Xxy77rA8SN+Ce".FromBASE64(),
+                                                                  PublicKey:           "BNJ9BLZTcAeuPMHDDDXA0RiVNse8WH4b+/r/bA9HhDsDtTSBsrvmjbnA3w3JlC7ipvhHEkdGbFEIH+ZT0ZEekTA=".FromBASE64(),
+                                                                  Description:          I18NString.Create(Languages.en, "Test public key"),
+                                                                  EllipticCurve:       "secp256r1",
+                                                                  SignatureAlgorithm:  "SHA256withECDSA",
+                                                                  NotBefore:            Timestamp.Now,
+                                                                  NotAfter:             Timestamp.Now.AddMonths(1)
+                                                              )
+                                             );
             await ntsServer.Start();
 
             var ntsClient                  = new NTSClient(
@@ -71,14 +82,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                                                                               }
                                              );
 
-            var ntsKEResponse              = ntsClient.GetNTSKERecords();
+            var ntsKEResponse              = ntsClient.GetNTSKERecords(RequestNTSPublicKeys: true);
 
-            Assert.That(ntsKEResponse,                   Is.Not.Null);
-            Assert.That(ntsKEResponse.C2SKey,            Is.Not.Null);
-            Assert.That(ntsKEResponse.C2SKey.Length,     Is.GreaterThan(0));
-            Assert.That(ntsKEResponse.S2CKey,            Is.Not.Null);
-            Assert.That(ntsKEResponse.S2CKey.Length,     Is.GreaterThan(0));
-            Assert.That(ntsKEResponse.Cookies.Count(),   Is.GreaterThan(0));
+            Assert.That(ntsKEResponse,                      Is.Not.Null);
+            Assert.That(ntsKEResponse.C2SKey,               Is.Not.Null);
+            Assert.That(ntsKEResponse.C2SKey.Length,        Is.GreaterThan(0));
+            Assert.That(ntsKEResponse.S2CKey,               Is.Not.Null);
+            Assert.That(ntsKEResponse.S2CKey.Length,        Is.GreaterThan(0));
+            Assert.That(ntsKEResponse.Cookies.   Count(),   Is.GreaterThan(0));
+            Assert.That(ntsKEResponse.PublicKeys.Count(),   Is.GreaterThan(0));
+
+            var publicKey                  = ntsKEResponse.PublicKeys.First();
 
             var ntsResponse                = await ntsClient.QueryTimeSigned(NTSKEResponse:  ntsKEResponse,
                                                                              Timeout:        TimeSpan.FromMinutes(1));
@@ -156,7 +170,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                 {
                     Assert.That(signedResponseExtension.Authenticated,                            Is.False);
                     Assert.That(signedResponseExtension.Encrypted,                                Is.False);
-                    Assert.That(signedResponseExtension.Verify(ntsResponse, 1),                   Is.True);
+                    Assert.That(signedResponseExtension.Verify(ntsResponse, publicKey),           Is.True);
                 }
                 else
                     Assert.Fail("NTS Signed Response Extension is invalid!");

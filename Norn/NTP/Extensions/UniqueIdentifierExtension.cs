@@ -15,6 +15,12 @@
  * limitations under the License.
  */
 
+#region Usings
+
+using System.Diagnostics.CodeAnalysis;
+
+#endregion
+
 namespace org.GraphDefined.Vanaheimr.Norn.NTP
 {
 
@@ -27,6 +33,46 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                        Authenticated,
                        Encrypted)
 
-    { }
+    {
+
+        public static Boolean TryParse(Byte[]                                               Data,
+                                       [NotNullWhen(true)]  out UniqueIdentifierExtension?  UniqueIdentifierExtension,
+                                       [NotNullWhen(false)] out String?                     ErrorResponse,
+                                       Boolean                                              Authenticated   = false,
+                                       Boolean                                              Encrypted       = false)
+        {
+
+            try
+            {
+
+                ErrorResponse              = null;
+                UniqueIdentifierExtension  = null;
+
+                if (Data is null || Data.Length < 16)
+                {
+                    ErrorResponse = "Unique Identifier Extension extension value is null or too short!";
+                    return false;
+                }
+
+                UniqueIdentifierExtension  = new UniqueIdentifierExtension(
+                                                 Data,
+                                                 Authenticated,
+                                                 Encrypted
+                                             );
+
+                return true;
+
+            }
+            catch (Exception e)
+            {
+                ErrorResponse              = e.Message;
+                UniqueIdentifierExtension  = null;
+                return false;
+            }
+
+        }
+
+    
+    }
 
 }

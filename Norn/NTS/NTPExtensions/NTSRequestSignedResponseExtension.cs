@@ -34,7 +34,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                  Boolean  Encrypted       = false)
 
             : base(ExtensionTypes.NTSRequestSignedResponse,
-                   new Byte[16], // 16 is the minimum length!
+                   new Byte[16],
                    Authenticated,
                    Encrypted)
 
@@ -65,7 +65,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 }
 
                 NTSRequestSignedResponseExtension  = new NTSRequestSignedResponseExtension(
-                                                         (UInt16) ((Data[0] << 8) | Data[1])
+                                                         (UInt16) ((Data[0] << 8) | Data[1]),
+                                                         Authenticated,
+                                                         Encrypted
                                                      );
 
                 return true;

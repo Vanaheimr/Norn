@@ -73,31 +73,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public NTSKE_RecordTypes  Type          { get; } = Type;
 
         /// <summary>
-        /// The type name of the record.
-        /// </summary>
-        public String            Name
-
-            => (Byte) Type switch {
-                        0 => "End of Message",
-                        1 => "NTS Next Protocol Negotiation",
-                        2 => "Error",
-                        3 => "Warning",
-                        4 => "AEAD Algorithm Negotiation",
-                        5 => "New Cookie for NTPv4",
-                        6 => "NTPv4 Server Negotiation (ASCII address?)",
-                        7 => "NTPv4 Port Negotiation",
-                        _ => "Unknown or custom record type!"
-                    };
-
-        /// <summary>
         /// The data of the record.
         /// </summary>
-        public Byte[]   Body          { get; } = Body ?? [];
+        public Byte[]             Body          { get; } = Body ?? [];
 
         /// <summary>
         /// Length of the record data.
         /// </summary>
-        public UInt16   Length        { get; } = (UInt16) (Body?.Length ?? 0);
+        public UInt16             Length        { get; } = (UInt16) (Body?.Length ?? 0);
 
         #endregion
 
@@ -146,9 +129,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 // 16 bits: BodyLength (big-endian)
                 // Body:    [BodyLength bytes]
 
-                var critical    =                      (Buffer[offset] & 0x80) != 0;
+                var critical    =                       (Buffer[offset] & 0x80) != 0;
                 var type        = (NTSKE_RecordTypes) (((Buffer[offset] & 0x7F) << 8) | Buffer[offset + 1]);
-                var bodyLength  = (UInt16)            ((Buffer[offset +2 ]     << 8) | Buffer[offset + 3]);
+                var bodyLength  = (UInt16)             ((Buffer[offset +2 ]     << 8) | Buffer[offset + 3]);
                 offset += 4;
 
                 if (offset + bodyLength > Buffer.Length)
@@ -209,32 +192,32 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <summary>
         /// The end of the message
         /// </summary>
-        public static NTSKE_Record EndOfMessage
+        public static NTSKE_Record  EndOfMessage
             => new (true,       NTSKE_RecordTypes.EndOfMessage);
 
         /// <summary>
         /// NTS Next Protocol Negotiation
         /// </summary>
-        public static NTSKE_Record NTSNextProtocolNegotiation
+        public static NTSKE_Record  NTSNextProtocolNegotiation
             => new (true,       NTSKE_RecordTypes.NTSNextProtocolNegotiation,   [0x00, 0x00]);
 
         /// <summary>
         /// NTS Error
         /// </summary>
-        public static NTSKE_Record Error(Byte[] Error)
+        public static NTSKE_Record  Error(Byte[] Error)
             => new (true,       NTSKE_RecordTypes.Error,                        Error);
 
         /// <summary>
         /// NTS Warning
         /// </summary>
-        public static NTSKE_Record Warning(Byte[] Warning)
+        public static NTSKE_Record  Warning(Byte[] Warning)
             => new (true,       NTSKE_RecordTypes.Warning,                      Warning);
 
         /// <summary>
         /// NTS AEAD Algorithm Negotiation
         /// </summary>
         /// <param name="Algorithm">The algorithm to be negotiated.</param>
-        public static NTSKE_Record AEADAlgorithmNegotiation(AEADAlgorithms Algorithm = AEADAlgorithms.AES_SIV_CMAC_256)
+        public static NTSKE_Record  AEADAlgorithmNegotiation(AEADAlgorithms Algorithm = AEADAlgorithms.AES_SIV_CMAC_256)
             => new (true,       NTSKE_RecordTypes.AEADAlgorithmNegotiation,     Algorithm.GetBytes());
 
         /// <summary>
@@ -242,23 +225,44 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </summary>
         /// <param name="IsCritical">Whether the record is critical.</param>
         /// <param name="NTSCookie">The new NTS cookie.</param>
-        public static NTSKE_Record NewCookieForNTPv4(Byte[] NTSCookie, Boolean IsCritical = true)
+        public static NTSKE_Record  NewCookieForNTPv4(Byte[] NTSCookie, Boolean IsCritical = true)
             => new (IsCritical, NTSKE_RecordTypes.NewCookieForNTPv4,            NTSCookie);
 
         /// <summary>
         /// NTS NTPv4 Server Negotiation
         /// </summary>
         /// <param name="ServerInformation">The NTP server information.</param>
-        public static NTSKE_Record NTPv4ServerNegotiation(Byte[] ServerInformation)
-            => new(true,        NTSKE_RecordTypes.NTPv4ServerNegotiation,       ServerInformation);
+        public static NTSKE_Record  NTPv4ServerNegotiation(Byte[] ServerInformation)
+            => new (true,        NTSKE_RecordTypes.NTPv4ServerNegotiation,       ServerInformation);
 
         /// <summary>
         /// NTS NTPv4 Port Negotiation
         /// </summary>
         /// <param name="PortInformation">The NTP port information.</param>
-        public static NTSKE_Record NTPv4PortNegotiation(Byte[] PortInformation)
-            => new(true,        NTSKE_RecordTypes.NTPv4PortNegotiation,         PortInformation);
+        public static NTSKE_Record  NTPv4PortNegotiation(Byte[] PortInformation)
+            => new (true,        NTSKE_RecordTypes.NTPv4PortNegotiation,         PortInformation);
 
+
+
+        /// <summary>
+        /// NTS Request Public Key
+        /// </summary>
+        public static NTSKE_Record  NTSRequestPublicKey()
+            => new (
+                   false,
+                   NTSKE_RecordTypes.NTSRequestPublicKey
+               );
+
+        /// <summary>
+        /// NTS Public Key
+        /// </summary>
+        /// <param name="PublicKey">The public key to be requested.</param>
+        public static NTSKE_Record  NTSPublicKey(PublicKey PublicKey)
+            => new (
+                   false,
+                   NTSKE_RecordTypes.NTSPublicKey,
+                   PublicKey.ToByteArray()
+               );
 
         #endregion
 
@@ -270,7 +274,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </summary>
         public override String ToString()
 
-            => $"{Name} ({Type}, {(IsCritical ? "critical" : "non critical")}, Length={Body.Length} Body=[{BitConverter.ToString(Body)}]";
+            => $"{Type.Description()} ({Type}, {(IsCritical ? "critical" : "non critical")}, Length={Body.Length} Body=[{BitConverter.ToString(Body)}]";
 
         #endregion
 

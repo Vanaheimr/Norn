@@ -31,7 +31,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                                 Boolean  Encrypted       = false)
 
         : NTPExtension(ExtensionTypes.Debug,
-                       Text.ToUTF8Bytes(),
+                       Text.ToUTF8Bytes().Pad(16),
                        Authenticated,
                        Encrypted)
 

@@ -56,6 +56,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                    Where (ntsKERecord => ntsKERecord.Type == NTSKE_RecordTypes.NewCookieForNTPv4).
                    Select(ntsKERecord => ntsKERecord.Body);
 
+
+        /// <summary>
+        /// The NTS Public Keys.
+        /// </summary>
+        public IEnumerable<PublicKey>     PublicKeys
+
+            => NTSKERecords.
+                   Where (ntsKERecord => ntsKERecord.Type == NTSKE_RecordTypes.NTSPublicKey).
+                   Select(ntsKERecord => PublicKey.Parse(ntsKERecord.Body));
+
         #endregion
 
         #region Constructor(s)

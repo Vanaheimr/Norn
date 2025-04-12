@@ -114,7 +114,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 ErrorResponse = null;
                 AuthExtension = null;
 
-                if (ReceivedValue is null || ReceivedValue.Length < 4)
+                if (Key is null || Key.Length == 0)
+                {
+                    ErrorResponse = "Missing NTS key!";
+                    return false;
+                }
+
+                if (ReceivedValue is null || ReceivedValue.Length < 16)
                 {
                     ErrorResponse = "NTS Authenticator and Encrypted extension value is null or too short!";
                     return false;

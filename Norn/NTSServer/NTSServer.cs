@@ -51,6 +51,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         private                  MasterKey?                               currentMasterKey;
         private const            String                                   masterKeysFile         = "masterKeys.json";
 
+        private readonly         ConcurrentDictionary<UInt64, KeyPair>    keyPairs               = [];
+        private                  KeyPair?                                 currentKeyPair;
+        private                  PublicKey?                               currentPublicKey;
+
         #endregion
 
         #region Properties
@@ -58,17 +62,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <summary>
         /// The NTP-KE TCP port.
         /// </summary>
-        public IPPort  TCPPort       { get; } = IPPort.NTSKE;
+        public IPPort     TCPPort       { get; } = IPPort.NTSKE;
 
         /// <summary>
         /// The NTP UDP port.
         /// </summary>
-        public IPPort  UDPPort       { get; } = IPPort.NTP;
+        public IPPort     UDPPort       { get; } = IPPort.NTP;
 
         /// <summary>
         /// The size of the buffer used for receiving NTP packets.
         /// </summary>
-        public UInt32  BufferSize    { get; } = 4096;
+        public UInt32     BufferSize    { get; } = 4096;
 
         #endregion
 
@@ -79,12 +83,24 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </summary>
         /// <param name="TCPPort">The optional TCP port for NTS-KE to listen on (default: 4460).</param>
         /// <param name="UDPPort">The optional UDP port for NTP to listen on (default: 123).</param>
-        public NTSServer(IPPort?  TCPPort   = null,
-                         IPPort?  UDPPort   = null)
+        /// <param name="KeyPair">An optional key pair to be used for NTS response signing.</param>
+        public NTSServer(IPPort?   TCPPort     = null,
+                         IPPort?   UDPPort     = null,
+                         KeyPair?  KeyPair   = null)
         {
 
             this.TCPPort = TCPPort ?? IPPort.NTSKE;
             this.UDPPort = UDPPort ?? IPPort.NTP;
+
+            if (KeyPair is not null)
+            {
+
+                this.currentKeyPair   = KeyPair;
+                this.currentPublicKey = KeyPair.ToPublicKey();
+
+                this.keyPairs.TryAdd(KeyPair.Id, KeyPair);
+
+            }
 
             try
             {
@@ -257,8 +273,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                                 Array.Resize(ref buffer, resultLocal.ReceivedBytes);
 
-                                if (NTPPacket.TryParseRequest(buffer, out var requestPacket, out var errorResponse,
-                                                              MasterKeys: masterKeys))
+                                if (NTPRequest.TryParse(buffer,
+                                                        out var requestPacket,
+                                                        out var errorResponse,
+                                                        MasterKeys: masterKeys))
                                 {
 
                                     var toBeSigned       = requestPacket.NTSRequestSignedResponse() is not null;
@@ -274,10 +292,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                               resultLocal.RemoteEndPoint
                                           );
 
-                                    if (toBeSigned)
+                                    if (toBeSigned && currentKeyPair is not null)
                                     {
 
-                                        var responsePacket2 = SignResponse(responsePacket1, 1);
+                                        var responsePacket2 = SignResponse(responsePacket1, currentKeyPair);
 
                                         await udpSocket.SendToAsync(
                                                   new ArraySegment<Byte>(responsePacket2.ToByteArray()),
@@ -395,6 +413,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                     IsCritical:        false
                                                 )
                                         );
+
+                                        if (ntsKERequest.Any(ntsKERecord => ntsKERecord.Type == NTSKE_RecordTypes.NTSRequestPublicKey) &&
+                                            currentPublicKey is not null)
+                                        {
+                                            ntsKERecords.Add(
+                                                NTSKE_Record.NTSPublicKey(currentPublicKey)
+                                            );
+                                        }
 
                                         ntsKERecords.Add(NTSKE_Record.EndOfMessage);
 
@@ -575,7 +601,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
 
         private NTPPacket SignResponse(NTPPacket  NTPResponse,
-                                       UInt16     KeyId)
+                                       KeyPair    KeyPair)
         {
 
             var extensions = new List<NTPExtension>();
@@ -589,7 +615,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             extensions.Add(
                 NTSSignedResponseExtension.Sign(
-                    KeyId,
+                    KeyPair,
                     response2
                 )
             );

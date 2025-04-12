@@ -70,13 +70,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         #endregion
 
 
-        #region GetNTSKERecords(Timeout = null)
+        #region GetNTSKERecords(RequestNTSPublicKeys = false, Timeout = null)
 
         /// <summary>
         /// Get NTS-KE records from the server.
         /// </summary>
+        /// <param name="RequestNTSPublicKeys">Whether to request the public keys used for NTS response signing.</param>
         /// <param name="Timeout">An optional timeout.</param>
-        public NTSKE_Response GetNTSKERecords(TimeSpan? Timeout = null)
+        public NTSKE_Response GetNTSKERecords(Boolean    RequestNTSPublicKeys   = false,
+                                              TimeSpan?  Timeout                = null)
         {
             try
             {
@@ -97,7 +99,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 C2S_Key                  = ntsTlsClient.NTS_C2S_Key ?? [];
                 S2C_Key                  = ntsTlsClient.NTS_S2C_Key ?? [];
 
-                var ntsKERequest = BuildNTSKERequest();
+                var ntsKERequest = BuildNTSKERequest(RequestNTSPublicKeys);
                 tlsClientProtocol.Stream.Write(ntsKERequest, 0, ntsKERequest.Length);
                 tlsClientProtocol.Stream.Flush();
 
@@ -113,9 +115,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                     Array.Resize(ref buffer, bytesRead);
 
-                    if (NTSKE_Record.TryParse(buffer, out var record, out var errorResponse))
+                    if (NTSKE_Record.TryParse(buffer, out var records, out var errorResponse))
                         return new NTSKE_Response(
-                                   record,
+                                   records,
                                    C2S_Key,
                                    S2C_Key
                                );
@@ -246,23 +248,33 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         #endregion
 
 
-        #region (private) BuildNTSKERequest()
+        #region (private) BuildNTSKERequest(RequestPublicKeys = false)
 
         /// <summary>
         /// Create a new NTS-KE request.
         /// </summary>
-        private static Byte[] BuildNTSKERequest()
+        /// <param name="RequestPublicKeys">Whether to request the public keys used for NTS response signing.</param>
+        private static Byte[] BuildNTSKERequest(Boolean RequestPublicKeys = false)
+        {
 
-            => new List<NTSKE_Record>() {
-                       NTSKE_Record.NTSNextProtocolNegotiation,
-                       NTSKE_Record.AEADAlgorithmNegotiation(),
-                       NTSKE_Record.EndOfMessage
-                   }.ToByteArray();
+            var records = new List<NTSKE_Record>() {
+                              NTSKE_Record.NTSNextProtocolNegotiation,
+                              NTSKE_Record.AEADAlgorithmNegotiation()
+                          };
+
+            if (RequestPublicKeys)
+                records.Add(NTSKE_Record.NTSRequestPublicKey());
+
+            records.Add(NTSKE_Record.EndOfMessage);
+
+            return records.ToByteArray();
+
+        }
 
         #endregion
 
 
-
+        #region QueryTime       (Timeout = null, NTSKEResponse = null, CancellationToken = default)
 
         /// <summary>
         /// Sends a single NTP request (mode=3) with NTS extension fields:
@@ -325,12 +337,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                     DebugX.Log($"Got {receiveResult.Buffer.Length}-byte response from {receiveResult.RemoteEndPoint}");
 
-                    if (NTPPacket.TryParseResponse(receiveResult.Buffer,
-                                                   out var ntpResponse,
-                                                   out var errorResponse,
-                                                   Request:           requestPacket,
-                                                   NTSKey:            NTSKEResponse?.S2CKey,
-                                                   ExpectedUniqueId:  requestPacket.UniqueIdentifier()))
+                    if (NTPResponse.TryParse(receiveResult.Buffer,
+                                             out var ntpResponse,
+                                             out var errorResponse,
+                                             Request:           requestPacket,
+                                             NTSKey:            NTSKEResponse?.S2CKey,
+                                             ExpectedUniqueId:  requestPacket.UniqueIdentifier()))
                     {
 
                         DebugX.Log($"{Host} Serverzeit (UTC): " + NTPPacket.NTPTimestampToDateTime(ntpResponse.TransmitTimestamp.Value).ToString("o"));
@@ -351,6 +363,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             }
 
         }
+
+        #endregion
+
+        #region QueryTimeSigned (Timeout = null, NTSKEResponse = null, CancellationToken = default)
 
         /// <summary>
         /// Sends a single NTP request (mode=3) with NTS extension fields:
@@ -403,12 +419,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     DebugX.Log($"Got {receiveResult1.Buffer.Length}-byte response from {receiveResult1.RemoteEndPoint}");
 
 
-                    if (NTPPacket.TryParseResponse(receiveResult1.Buffer,
-                                                   out var ntpResponse1,
-                                                   out var errorResponse1,
-                                                   Request:           requestPacket,
-                                                   NTSKey:            NTSKEResponse?.S2CKey,
-                                                   ExpectedUniqueId:  requestPacket.UniqueIdentifier()))
+                    if (NTPResponse.TryParse(receiveResult1.Buffer,
+                                             out var ntpResponse1,
+                                             out var errorResponse1,
+                                             Request:           requestPacket,
+                                             NTSKey:            NTSKEResponse?.S2CKey,
+                                             ExpectedUniqueId:  requestPacket.UniqueIdentifier()))
                     {
 
                         if (ntpResponse1.NTSSignedResponseAnnouncement()?.IsScheduled == true)
@@ -427,12 +443,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                             DebugX.Log($"Got {receiveResult2.Buffer.Length}-byte response from {receiveResult2.RemoteEndPoint}");
 
-                            if (NTPPacket.TryParseResponse(receiveResult2.Buffer,
-                                                           out var ntpResponse2,
-                                                           out var errorResponse2,
-                                                           Request:           requestPacket,
-                                                           NTSKey:            NTSKEResponse?.S2CKey,
-                                                           ExpectedUniqueId:  requestPacket.UniqueIdentifier()))
+                            if (NTPResponse.TryParse(receiveResult2.Buffer,
+                                                     out var ntpResponse2,
+                                                     out var errorResponse2,
+                                                     Request:           requestPacket,
+                                                     NTSKey:            NTSKEResponse?.S2CKey,
+                                                     ExpectedUniqueId:  requestPacket.UniqueIdentifier()))
                             {
 
                                 DebugX.Log($"{Host} Serverzeit 2 (UTC): " + NTPPacket.NTPTimestampToDateTime(ntpResponse2.TransmitTimestamp.Value).ToString("o"));
@@ -467,6 +483,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         }
 
+        #endregion
+
 
         #region BuildNTSRequest(NTSKEResponse = null, UniqueId = null)
 
@@ -476,13 +494,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         ///   2) NTS Cookie (0204)
         ///   3) NTS Auth & Encrypted (0404) - with placeholder AEAD data
         /// </summary>
-        public static NTPPacket BuildNTPRequest(NTSKE_Response?  NTSKEResponse           = null,
-                                                Byte[]?          UniqueId                = null,
-                                                Byte[]?          Plaintext               = null,
-                                                Boolean          RequestSignedResponse   = false)
+        public static NTPRequest BuildNTPRequest(NTSKE_Response?  NTSKEResponse           = null,
+                                                 Byte[]?          UniqueId                = null,
+                                                 Byte[]?          Plaintext               = null,
+                                                 Boolean          RequestSignedResponse   = false)
         {
 
-            var ntpPacket1  = new NTPPacket(
+            var ntpPacket1  = new NTPRequest(
                                   TransmitTimestamp: NTPPacket.GetCurrentNTPTimestamp()
                               );
 
@@ -528,7 +546,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             }
 
-            var ntpPacket = new NTPPacket(
+            var ntpPacket = new NTPRequest(
                                 ntpPacket1,
                                 Extensions: extensions
                             );

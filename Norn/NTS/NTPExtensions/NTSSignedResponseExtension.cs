@@ -25,7 +25,6 @@ using Org.BouncyCastle.Security;
 using Org.BouncyCastle.Crypto.Parameters;
 using Org.BouncyCastle.Crypto.Generators;
 
-using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Norn.NTS;
 
 #endregion
@@ -117,7 +116,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
                 NTSSignedResponseExtension  = new NTSSignedResponseExtension(
                                                   keyId,
-                                                  signature
+                                                  signature,
+                                                  Authenticated,
+                                                  Encrypted
                                               );
 
                 return true;
@@ -133,7 +134,50 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         }
 
 
-        public Boolean Verify(NTPPacket NTPResponse, UInt16 KeyId)
+        #region Sign(KeyPair, Data, PrivateKey = null)
+
+        /// <summary>
+        /// Sign 
+        /// </summary>
+        /// <param name="KeyPair">The key pair to be used to sign the response.</param>
+        /// <param name="Data">An array of bytes to be signed.</param>
+        public static NTSSignedResponseExtension Sign(KeyPair  KeyPair,
+                                                      Byte[]   Data)
+        {
+
+            var ellipticCurve  = SecNamedCurves.GetByName(KeyPair.EllipticCurve);
+
+            var domainParams   = new ECDomainParameters(
+                                     ellipticCurve.Curve,
+                                     ellipticCurve.G,
+                                     ellipticCurve.N,
+                                     ellipticCurve.H
+                                 );
+
+            var privateKey     = ParsePrivateKey(domainParams, KeyPair.PrivateKey);
+
+            var signer         = SignerUtilities.GetSigner(KeyPair.SignatureAlgorithm);
+            signer.Init(true, privateKey);
+            signer.BlockUpdate(Data, 0, Data.Length);
+
+            return new NTSSignedResponseExtension(
+                       KeyPair.Id,
+                       signer.GenerateSignature()
+                   );
+
+        }
+
+        #endregion
+
+        #region Verify(NTPResponse, PublicKey)
+
+        /// <summary>
+        /// Verify the signature of the NTP response.
+        /// </summary>
+        /// <param name="NTPResponse">A NTP response.</param>
+        /// <param name="PublicKey">The public key to verify the response.</param>
+        public Boolean Verify(NTPPacket  NTPResponse,
+                              PublicKey  PublicKey)
         {
 
             var data            = new NTPPacket(
@@ -141,7 +185,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                                       NTPResponse.Extensions.Where(e => e is not NTSCookieExtension && e is not NTSSignedResponseExtension)
                                   ).ToByteArray();
 
-            var ellipticCurve   = SecNamedCurves.GetByName("secp256r1");
+            var ellipticCurve   = SecNamedCurves.GetByName(PublicKey.EllipticCurve);
 
             var domainParams    = new ECDomainParameters(
                                         ellipticCurve.Curve,
@@ -150,60 +194,19 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                                         ellipticCurve.H
                                     );
 
-            var publicKey       = ParsePublicKeyBase64(domainParams, "BNJ9BLZTcAeuPMHDDDXA0RiVNse8WH4b+/r/bA9HhDsDtTSBsrvmjbnA3w3JlC7ipvhHEkdGbFEIH+ZT0ZEekTA=");
+            var publicKey       = ParsePublicKey(domainParams, PublicKey.Value);
 
-            var verifier = SignerUtilities.GetSigner("SHA-256withECDSA");
+            var verifier = SignerUtilities.GetSigner(PublicKey.SignatureAlgorithm);
             verifier.Init(false, publicKey);
             verifier.BlockUpdate(data);
             return verifier.VerifySignature(Signature);
 
         }
 
-
-
-        #region Sign(KeyId, Data, PrivateKey = null)
-
-        /// <summary>
-        /// Create a "NTS Signed Response Extension Fields" extension (type=0x0404)
-        /// </summary>
-        /// <param name="Data">An array of bytes to be signed.</param>
-        /// <param name="PrivateKey">The private key to sign the response.</param>
-        public static NTSSignedResponseExtension
-
-            Sign(UInt16                   KeyId,
-                 Byte[]                   Data,
-                 ECPrivateKeyParameters?  PrivateKey   = null)
-
-        {
-
-            var ellipticCurve   = SecNamedCurves.GetByName("secp256r1");
-
-            var domainParams    = new ECDomainParameters(
-                                      ellipticCurve.Curve,
-                                      ellipticCurve.G,
-                                      ellipticCurve.N,
-                                      ellipticCurve.H
-                                  );
-
-            //var keyPair         = GenerateECKeys(domainParams);
-            var privateKey      = ParsePrivateKeyBase64(domainParams, "ANm7PAbjqlK+SPW/JLFXVt8U7vCpg69Xxy77rA8SN+Ce");//SerializePrivateKey(PrivateKey ?? keyPair.Item1).ToBase64();
-            //var publicKey       = SerializePublicKey (keyPair.Item2              ).ToBase64();
-
-            var signer = SignerUtilities.GetSigner("SHA-256withECDSA");
-            signer.Init(true, PrivateKey ?? privateKey);
-            signer.BlockUpdate(Data, 0, Data.Length);
-
-            return new NTSSignedResponseExtension(
-                       KeyId,
-                       signer.GenerateSignature()
-                   );
-
-        }
-
         #endregion
 
 
-        #region (static) GenerateECKeys        (ECCurve)
+        #region (static) GenerateECKeys      (ECCurve)
 
         public static (ECPrivateKeyParameters, ECPublicKeyParameters) GenerateECKeys(ECDomainParameters ECCurve)
         {
@@ -221,14 +224,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
         #endregion
 
-        #region (static) SerializePrivateKey   (PrivateKey)
+        #region (static) SerializePrivateKey (PrivateKey)
 
         public static Byte[] SerializePrivateKey(ECPrivateKeyParameters PrivateKey)
             => PrivateKey.D.ToByteArray();
 
         #endregion
 
-        #region (static) SerializePublicKey    (PublicKey)
+        #region (static) SerializePublicKey  (PublicKey)
 
         public static Byte[] SerializePublicKey(ECPublicKeyParameters PublicKey)
 
@@ -236,23 +239,23 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
         #endregion
 
-        #region (static) ParsePrivateKeyBase64 (EllipticCurveSpec, PrivateKeyBase64)
+        #region (static) ParsePrivateKey     (EllipticCurveSpec, ByteArray)
 
-        public static ECPrivateKeyParameters ParsePrivateKeyBase64(ECDomainParameters  EllipticCurveSpec,
-                                                                   String              PrivateKeyBase64)
+        public static ECPrivateKeyParameters ParsePrivateKey(ECDomainParameters  EllipticCurveSpec,
+                                                             Byte[]              ByteArray)
 
-            => new (new BigInteger(PrivateKeyBase64.FromBASE64()),
+            => new (new BigInteger(ByteArray),
                     EllipticCurveSpec);
 
         #endregion
 
-        #region (static) ParsePublicKeyBase64 (EllipticCurveSpec, PublicKeyBase64)
+        #region (static) ParsePublicKey      (EllipticCurveSpec, ByteArray)
 
-        public static ECPublicKeyParameters ParsePublicKeyBase64(ECDomainParameters  EllipticCurveSpec,
-                                                                 String              PublicKeyBase64)
+        public static ECPublicKeyParameters ParsePublicKey(ECDomainParameters  EllipticCurveSpec,
+                                                           Byte[]              ByteArray)
 
             => new ("ECDSA",
-                    EllipticCurveSpec.Curve.DecodePoint(PublicKeyBase64.FromBASE64()),
+                    EllipticCurveSpec.Curve.DecodePoint(ByteArray),
                     EllipticCurveSpec);
 
         #endregion

@@ -165,7 +165,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                         fakeNTSResponseBytes[randomIndex] ^= randomBit;
                     }
 
-                    if (!NTPPacket.TryParseResponse(fakeNTSResponseBytes, out _, out var error, NTSKey: ntsKEResponse.S2CKey))
+                    if (!NTPResponse.TryParse(fakeNTSResponseBytes, out _, out var error, NTSKey: ntsKEResponse.S2CKey))
                         Assert.That(error, Is.EqualTo("Authentication failed: SIV mismatch!"));
                     else
                         Assert.Fail("Parsing the fake NTS response should have failed!");
