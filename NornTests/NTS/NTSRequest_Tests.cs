@@ -24,6 +24,7 @@ using System.Security.Cryptography;
 using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Norn.NTP;
 using org.GraphDefined.Vanaheimr.Norn.NTS;
+using System.Reflection;
 
 #endregion
 
@@ -56,7 +57,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
             var ntsKEResponse  = new NTSKE_Response([ new NTSKE_Record(true, NTSKE_RecordTypes.NewCookieForNTPv4, cookie) ], key, key);
             var plaintext      = new DebugExtension(message1).ToByteArray().Concat(new DebugExtension(message2).ToByteArray()).ToArray();
 
-            var requestPacket  = NTSClient.BuildNTPRequest(ntsKEResponse, uniqueId, plaintext);
+            // Use reflection...
+            var methodInfo     = typeof(NTSClient).GetMethod("BuildNTSRequest", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.That(methodInfo,  Is.Not.Null, "The method 'BuildNTSRequest' could not be reflected!");
+            var requestPacket  = methodInfo?.Invoke(null, [ ntsKEResponse, uniqueId, plaintext, SignedResponseMode.None, (UInt16) 0 ]) as NTPRequest;
+
             var isValid        = NTPRequest.TryParse(requestPacket.ToByteArray(), out var ntpPacket, out var errorRequest, ntsKEResponse.C2SKey);
             var uniqueId2      = (ntpPacket?.Extensions.FirstOrDefault(extension => extension.Type == ExtensionTypes.UniqueIdentifier) as UniqueIdentifierExtension)?.Value;
             var cookie2        = (ntpPacket?.Extensions.FirstOrDefault(extension => extension.Type == ExtensionTypes.NTSCookie)        as NTSCookieExtension)?.       Value;
