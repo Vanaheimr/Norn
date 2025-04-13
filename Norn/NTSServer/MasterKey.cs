@@ -69,7 +69,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 cookies.Add(
                     new NTSKERecords.NewCookieForNTPv4(
                         IsCritical,
-                        NTSCookie.Create(C2SKey, S2CKey, AEADAlgorithm, MasterKey).Encrypt(MasterKey)
+                        NTSCookie.Create(MasterKey, C2SKey, S2CKey, AEADAlgorithm).Encrypt(MasterKey)
                     )
                 );
             }
@@ -115,7 +115,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             {
                 cookies.Add(
                     new NTSCookieExtension(
-                        NTSCookie.Create(C2SKey, S2CKey, AEADAlgorithm, MasterKey).Encrypt(MasterKey)
+                        NTSCookie.Create(MasterKey, C2SKey, S2CKey, AEADAlgorithm).Encrypt(MasterKey)
                     )
                 );
             }

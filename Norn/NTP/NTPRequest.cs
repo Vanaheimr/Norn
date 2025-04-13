@@ -239,9 +239,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                         var ntsCookieExtension = new NTSCookieExtension(data);
 
                         if (NTSCookie.TryParse(ntsCookieExtension.Value, out var encryptedCookie, out var err) &&
-                            encryptedCookie.MasterKeyId.HasValue &&
+                            //encryptedCookie.MasterKeyId.HasValue &&
                             MasterKeys is not null &&
-                            MasterKeys.TryGetValue(encryptedCookie.MasterKeyId.Value, out var masterKey) &&
+                            MasterKeys.TryGetValue(encryptedCookie.MasterKeyId, out var masterKey) &&
                             encryptedCookie.Timestamp >= masterKey.NotBefore &&
                             encryptedCookie.Timestamp <  masterKey.NotAfter)
                         {

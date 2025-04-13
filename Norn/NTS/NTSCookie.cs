@@ -23,7 +23,6 @@ using System.Diagnostics.CodeAnalysis;
 using Newtonsoft.Json.Linq;
 
 using org.GraphDefined.Vanaheimr.Illias;
-using org.GraphDefined.Vanaheimr.Hermod;
 using org.GraphDefined.Vanaheimr.Hermod.HTTP;
 
 #endregion
@@ -32,7 +31,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 {
 
     /// <summary>
-    /// A NTS cookie.
+    /// A NTS cookie as used by the NTS server.
     /// </summary>
     public class NTSCookie : IEquatable<NTSCookie>,
                              IComparable<NTSCookie>
@@ -59,12 +58,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #region Properties
 
+        public UInt64          MasterKeyId      { get; } = 0;
         public Byte[]          C2SKey           { get; } = [];
         public Byte[]          S2CKey           { get; } = [];
         public AEADAlgorithms  AEADAlgorithm    { get; } = AEADAlgorithms.AES_SIV_CMAC_256;
         public DateTimeOffset  Timestamp        { get; } = Illias.Timestamp.Now;
         public Byte[]          Nonce            { get; } = [];
-        public UInt64?         MasterKeyId      { get; } = null;
 
         #endregion
 
@@ -73,11 +72,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <summary>
         /// Create a new NTS cookie.
         /// </summary>
-        private NTSCookie(Byte[]           C2SKey,
+        private NTSCookie(UInt64           MasterKeyId,
+                          Byte[]           C2SKey,
                           Byte[]           S2CKey,
-                          UInt64?          MasterKeyId     = null,
-                          AEADAlgorithms?  AEADAlgorithm   = null,
                           DateTimeOffset?  Timestamp       = null,
+                          AEADAlgorithms?  AEADAlgorithm   = null,
                           Byte[]?          Nonce           = null)
         {
 
@@ -118,16 +117,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         #endregion
 
 
-        public static NTSCookie Create(Byte[]           C2SKey,
+        public static NTSCookie Create(MasterKey        MasterKey,
+                                       Byte[]           C2SKey,
                                        Byte[]           S2CKey,
-                                       AEADAlgorithms?  AEADAlgorithm   = null,
-                                       MasterKey?       MasterKey       = null)
+                                       AEADAlgorithms?  AEADAlgorithm   = null)
         {
 
             return new (
                        C2SKey:          C2SKey,
                        S2CKey:          S2CKey,
-                       MasterKeyId:     MasterKey?.Id,
+                       MasterKeyId:     MasterKey.Id,
                        AEADAlgorithm:   AEADAlgorithm,
                        Timestamp:       Illias.Timestamp.Now,
                        Nonce:           RandomNumberGenerator.GetBytes(32)
@@ -135,32 +134,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         }
 
-
-
-        #region (static) Parse    (Text,  ...)
-
-        /// <summary>
-        /// Parse the given text representation of a NTS cookie.
-        /// </summary>
-        /// <param name="CustomNTSCookieParser">A delegate to parse custom NTSCookie JSON objects.</param>
-        public static NTSCookie Parse(String                                   Text,
-                                      CustomJObjectParserDelegate<NTSCookie>?  CustomNTSCookieParser   = null)
-        {
-
-            if (TryParse(Text,
-                         out var ntsCookie,
-                         out var errorResponse,
-                         CustomNTSCookieParser))
-            {
-                return ntsCookie;
-            }
-
-            throw new ArgumentException("The given text representation of a NTS cookie is invalid: " + errorResponse,
-                                        nameof(Text));
-
-        }
-
-        #endregion
 
         #region (static) Parse    (JSON,  ...)
 
@@ -209,60 +182,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #endregion
 
-        #region (static) TryParse (Text,  out NTSCookie, out ErrorResponse, ...)
-
-        // Note: The following is needed to satisfy pattern matching delegates! Do not refactor it!
-
-        /// <summary>
-        /// Try to parse the given JSON representation of a NTS cookie.
-        /// </summary>
-        /// <param name="Text">The text to be parsed.</param>
-        /// <param name="NTSCookie">The parsed NTS cookie.</param>
-        /// <param name="ErrorResponse">An optional error response.</param>
-        public static Boolean TryParse(String                               Text,
-                                       [NotNullWhen(true)]  out NTSCookie?  NTSCookie,
-                                       [NotNullWhen(false)] out String?     ErrorResponse)
-
-            => TryParse(Text,
-                        out NTSCookie,
-                        out ErrorResponse,
-                        null);
-
-
-        /// <summary>
-        /// Try to parse the given text representation of a NTS cookie.
-        /// </summary>
-        /// <param name="JSON">The text to be parsed.</param>
-        /// <param name="NTSCookie">The parsed NTS cookie.</param>
-        /// <param name="ErrorResponse">An optional error response.</param>
-        /// <param name="CustomNTSCookieParser">A delegate to parse custom NTSCookie JSON objects.</param>
-        public static Boolean TryParse(String                                   Text,
-                                       [NotNullWhen(true)]  out NTSCookie?      NTSCookie,
-                                       [NotNullWhen(false)] out String?         ErrorResponse,
-                                       CustomJObjectParserDelegate<NTSCookie>?  CustomNTSCookieParser)
-        {
-            try
-            {
-
-                var json = JObject.Parse(Text);
-
-                if (TryParse(json, out NTSCookie, out ErrorResponse, CustomNTSCookieParser))
-                    return true;
-
-                return false;
-
-            }
-            catch (Exception e)
-            {
-                NTSCookie      = default;
-                ErrorResponse  = "The given text representation of a NTS cookie is invalid: " + e.Message;
-                return false;
-            }
-
-        }
-
-        #endregion
-
         #region (static) TryParse (JSON,  out NTSCookie, out ErrorResponse, ...)
 
         // Note: The following is needed to satisfy pattern matching delegates! Do not refactor it!
@@ -300,11 +219,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                 NTSCookie = null;
 
-                #region KeyId        [mandatory]
+                #region MasterKeyId      [mandatory]
 
-                if (!JSON.ParseMandatory("keyId",
-                                         "key identification",
-                                         out UInt64 keyId,
+                if (!JSON.ParseMandatory("masterKeyId",
+                                         "master key identification",
+                                         out UInt64 masterKeyId,
                                          out ErrorResponse))
                 {
                     return false;
@@ -312,35 +231,39 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                 #endregion
 
-                #region Value        [mandatory]
+                #region C2SKey           [mandatory]
 
-                if (!JSON.ParseMandatoryText("value",
-                                             "key value",
-                                             out String? valueBase64,
+                if (!JSON.ParseMandatoryText("c2sKey",
+                                             "C2S key",
+                                             out String? c2sKeyBASE64,
                                              out ErrorResponse))
                 {
                     return false;
                 }
 
-                if (valueBase64.IsNullOrEmpty())
-                {
-                    ErrorResponse = "The given key value must not be null or empty!";
-                    return false;
-                }
-
-                if (!StringExtensions.TryParseBASE64(valueBase64, out var Value, out var errorResponse))
-                {
-                    ErrorResponse = "The given key value is not a valid BASE64 string: " + errorResponse;
-                    return false;
-                }
+                var c2sKey = c2sKeyBASE64.FromBASE64();
 
                 #endregion
 
-                #region NotBefore    [mandatory]
+                #region S2CKey           [mandatory]
 
-                if (!JSON.ParseMandatory("notBefore",
-                                         "not before",
-                                         out DateTimeOffset notBefore,
+                if (!JSON.ParseMandatoryText("s2cKey",
+                                             "S2C key",
+                                             out String? s2cKeyBASE64,
+                                             out ErrorResponse))
+                {
+                    return false;
+                }
+
+                var s2cKey = s2cKeyBASE64.FromBASE64();
+
+                #endregion
+
+                #region Timestamp        [mandatory]
+
+                if (!JSON.ParseMandatory("timestamp",
+                                         "NTS cookie timestamp",
+                                         out DateTimeOffset timestamp,
                                          out ErrorResponse))
                 {
                     return false;
@@ -348,26 +271,42 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                 #endregion
 
-                #region NotAfter     [mandatory]
+                #region AEADAlgorithm    [optional]
 
-                if (!JSON.ParseMandatory("notAfter",
-                                         "not after",
-                                         out DateTimeOffset notAfter,
-                                         out ErrorResponse))
+                if (JSON.ParseOptional("aeadAlgorithm",
+                                       "AEAD algorithm",
+                                       AEADAlgorithmsExtensions.TryParse,
+                                       out AEADAlgorithms? aeadAlgorithm,
+                                       out ErrorResponse))
+                {
+                    if (ErrorResponse is not null)
+                        return false;
+                }
+
+                #endregion
+
+                #region Nonce            [mandatory]
+
+                if (!JSON.ParseMandatoryText("nonce",
+                                             "cryptographic nonce",
+                                             out String? nonceBASE64,
+                                             out ErrorResponse))
                 {
                     return false;
                 }
+
+                var nonce = nonceBASE64.FromBASE64();
 
                 #endregion
 
 
                 NTSCookie = new NTSCookie(
-                                [],
-                                [],
-                                1,
-                                AEADAlgorithms.AEGIS256,
-                                Illias.Timestamp.Now,
-                                []
+                                masterKeyId,
+                                c2sKey,
+                                s2cKey,
+                                timestamp,
+                                aeadAlgorithm,
+                                nonce
                             );
 
                 if (CustomNTSCookieParser is not null)
@@ -443,11 +382,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
 
                 NTSCookie = new NTSCookie(
+                                (UInt64) masterKeyIdInt64,
                                 c2sKey,
                                 s2cKey,
-                                (UInt64) masterKeyIdInt64,
+                                DateTimeOffsetExtensions.FromUnixTimestamp(timestampInt64),
                                 algorithmId,
-                                Illias.Timestamp.Now,
                                 nonce
                             );
 
@@ -465,8 +404,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #endregion
 
-
-        #region ToJSON(IncludeJSONLDContext = false, CustomNTSCookieSerializer = null)
+        #region ToJSON      (IncludeJSONLDContext = false, CustomNTSCookieSerializer = null)
 
         /// <summary>
         /// Return a JSON representation of this NTS cookie.
@@ -480,13 +418,19 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             var json = JSONObject.Create(
 
                            IncludeJSONLDContext
-                               ? new JProperty("@context",    DefaultJSONLDContext.ToString())
-                               : null
+                               ? new JProperty("@context",        DefaultJSONLDContext.ToString())
+                               : null,
 
-                                 //new JProperty("keyId",       KeyId),
-                                 //new JProperty("masterKey",   Value.               ToBase64()),
-                                 //new JProperty("notBefore",   NotBefore.           ToIso8601()),
-                                 //new JProperty("notAfter",    NotAfter.            ToIso8601())
+                                 new JProperty("masterKeyId",     MasterKeyId),
+                                 new JProperty("c2sKey",          C2SKey.              ToBase64()),
+                                 new JProperty("s2cKey",          S2CKey.              ToBase64()),
+                                 new JProperty("timestamp",       Timestamp.           ToIso8601()),
+
+                           AEADAlgorithm != AEADAlgorithms.AES_SIV_CMAC_256
+                               ? new JProperty("aeadAlgorithm",   AEADAlgorithm.       ToString())
+                               : null,
+
+                                 new JProperty("nonce",           Nonce.               ToBase64())
 
                        );
 
@@ -498,6 +442,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #endregion
 
+        #region ToByteArray ()
+
+        /// <summary>
+        /// Return a binary representation of this NTS cookie.
+        /// </summary>
         public Byte[] ToByteArray()
         {
 
@@ -510,10 +459,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             #endregion
 
+            // NOTE: This is a vendor specific implementation of the NTS cookie format!
             // rfc8915 Section 6 https://datatracker.ietf.org/doc/html/rfc8915#name-suggested-format-for-nts-co
             // gives just some general hints about the cookie format!
-            //
-            // Therefore this is OUR format!
 
             var cookie = new Byte[totalLength];
 
@@ -522,13 +470,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 cookie[OffsetTimestamp + i] = (Byte) (unixTimestamp >> (56 - 8 * i));
 
             // MasterKeyId (Big-Endian)
-            if (MasterKeyId.HasValue)
+            //if (MasterKeyId.HasValue)
                 for (var i = 0; i < 8; i++)
-                    cookie[OffsetMasterKeyId + i] = (Byte) (MasterKeyId.Value >> (56 - 8 * i));
+                    cookie[OffsetMasterKeyId + i] = (Byte) (MasterKeyId >> (56 - 8 * i));
 
 
             // The following should be **encrypted**!!!
-            // TODO: AEAD-Encrypt `cookie` with master key
+            // ToDo: AEAD-Encrypt `cookie` with master key
 
             // Nonce (32 bytes)
             var nonce = RandomNumberGenerator.GetBytes(32);
@@ -543,10 +491,30 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             Buffer.BlockCopy(C2SKey, 0, cookie, OffsetC2SKey,                 C2SKey.Length);
             Buffer.BlockCopy(S2CKey, 0, cookie, OffsetC2SKey + C2SKey.Length, S2CKey.Length);
 
-
             return cookie;
 
         }
+
+        #endregion
+
+        #region Clone()
+
+        /// <summary>
+        /// Clone this NTS cookie.
+        /// </summary>
+        public NTSCookie Clone()
+
+            => new (
+                   MasterKeyId,
+                   C2SKey.ToHexString().FromHEX(),
+                   S2CKey.ToHexString().FromHEX(),
+                   Timestamp,
+                   AEADAlgorithm,
+                   Nonce. ToHexString().FromHEX()
+               );
+
+        #endregion
+
 
         public Byte[] Encrypt(MasterKey MasterKey)
         {
@@ -554,11 +522,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             var ntsCookie  = MasterKey.Id != this.MasterKeyId
 
                                  ? new NTSCookie(
+                                       MasterKey.Id,
                                        C2SKey,
                                        S2CKey,
-                                       MasterKey.Id,
-                                       AEADAlgorithm,
                                        Timestamp,
+                                       AEADAlgorithm,
                                        Nonce
                                  )
 
@@ -577,30 +545,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         }
 
-
         public NTSCookie Decrypt(MasterKey masterKey)
         {
             return this;
         }
-
-
-        #region Clone()
-
-        /// <summary>
-        /// Clone this NTS cookie.
-        /// </summary>
-        public NTSCookie Clone()
-
-            => new (
-                   C2SKey.ToHexString().FromHEX(),
-                   S2CKey.ToHexString().FromHEX(),
-                   MasterKeyId,
-                   AEADAlgorithm,
-                   Timestamp,
-                   Nonce. ToHexString().FromHEX()
-               );
-
-        #endregion
 
 
         #region Operator overloading

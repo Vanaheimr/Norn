@@ -15,6 +15,8 @@
  * limitations under the License.
  */
 
+using System.Diagnostics.CodeAnalysis;
+
 namespace org.GraphDefined.Vanaheimr.Norn.NTS
 {
 
@@ -32,6 +34,102 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             return bytes;
 
         }
+
+
+        public static Boolean TryParse(String                                    Text,
+                                       [NotNullWhen(true)]  out AEADAlgorithms?  AEADAlgorithm,
+                                       [NotNullWhen(false)] out String?          ErrorResponse)
+        {
+
+            AEADAlgorithm = Text switch {
+
+                "AES_128_GCM"            => AEADAlgorithms.AES_128_GCM,
+                "AES_256_GCM"            => AEADAlgorithms.AES_256_GCM,
+                "AES_128_CCM"            => AEADAlgorithms.AES_128_CCM,
+                "AES_256_CCM"            => AEADAlgorithms.AES_256_CCM,
+                "AES_128_GCM_8"          => AEADAlgorithms.AES_128_GCM_8,
+                "AES_256_GCM_8"          => AEADAlgorithms.AES_256_GCM_8,
+                "AES_128_GCM_12"         => AEADAlgorithms.AES_128_GCM_12,
+                "AES_256_GCM_12"         => AEADAlgorithms.AES_256_GCM_12,
+                "AES_128_CCM_SHORT"      => AEADAlgorithms.AES_128_CCM_SHORT,
+                "AES_256_CCM_SHORT"      => AEADAlgorithms.AES_256_CCM_SHORT,
+                "AES_128_CCM_SHORT_8"    => AEADAlgorithms.AES_128_CCM_SHORT_8,
+                "AES_256_CCM_SHORT_8"    => AEADAlgorithms.AES_256_CCM_SHORT_8,
+                "AES_128_CCM_SHORT_12"   => AEADAlgorithms.AES_128_CCM_SHORT_12,
+                "AES_256_CCM_SHORT_12"   => AEADAlgorithms.AES_256_CCM_SHORT_12,
+                "AES_SIV_CMAC_256"       => AEADAlgorithms.AES_SIV_CMAC_256,
+                "AES_SIV_CMAC_384"       => AEADAlgorithms.AES_SIV_CMAC_384,
+                "AES_SIV_CMAC_512"       => AEADAlgorithms.AES_SIV_CMAC_512,
+                "AES_128_CCM_8"          => AEADAlgorithms.AES_128_CCM_8,
+                "AES_256_CCM_8"          => AEADAlgorithms.AES_256_CCM_8,
+                "AES_128_OCB_TAGLEN128"  => AEADAlgorithms.AES_128_OCB_TAGLEN128,
+                "AES_128_OCB_TAGLEN96"   => AEADAlgorithms.AES_128_OCB_TAGLEN96,
+                "AES_128_OCB_TAGLEN64"   => AEADAlgorithms.AES_128_OCB_TAGLEN64,
+                "AES_192_OCB_TAGLEN128"  => AEADAlgorithms.AES_192_OCB_TAGLEN128,
+                "AES_192_OCB_TAGLEN96"   => AEADAlgorithms.AES_192_OCB_TAGLEN96,
+                "AES_192_OCB_TAGLEN64"   => AEADAlgorithms.AES_192_OCB_TAGLEN64,
+                "AES_256_OCB_TAGLEN128"  => AEADAlgorithms.AES_256_OCB_TAGLEN128,
+                "AES_256_OCB_TAGLEN96"   => AEADAlgorithms.AES_256_OCB_TAGLEN96,
+                "AES_256_OCB_TAGLEN64"   => AEADAlgorithms.AES_256_OCB_TAGLEN64,
+                "CHACHA20_POLY1305"      => AEADAlgorithms.CHACHA20_POLY1305,
+                "AES_128_GCM_SIV"        => AEADAlgorithms.AES_128_GCM_SIV,
+                "AES_256_GCM_SIV"        => AEADAlgorithms.AES_256_GCM_SIV,
+                "AEGIS128L"              => AEADAlgorithms.AEGIS128L,
+                "AEGIS256"               => AEADAlgorithms.AEGIS256,
+
+                _                        => null
+
+            };
+
+            ErrorResponse = AEADAlgorithm is null
+                ? "Unknown AEAD algorithm!"
+                : null;
+
+            return AEADAlgorithm is not null;
+
+        }
+
+        public static String AsText(AEADAlgorithms AEADAlgorithm)
+
+            => AEADAlgorithm switch {
+
+                AEADAlgorithms.AES_128_GCM            => "AES_128_GCM",
+                AEADAlgorithms.AES_256_GCM            => "AES_256_GCM",
+                AEADAlgorithms.AES_128_CCM            => "AES_128_CCM",
+                AEADAlgorithms.AES_256_CCM            => "AES_256_CCM",
+                AEADAlgorithms.AES_128_GCM_8          => "AES_128_GCM_8",
+                AEADAlgorithms.AES_256_GCM_8          => "AES_256_GCM_8",
+                AEADAlgorithms.AES_128_GCM_12         => "AES_128_GCM_12",
+                AEADAlgorithms.AES_256_GCM_12         => "AES_256_GCM_12",
+                AEADAlgorithms.AES_128_CCM_SHORT      => "AES_128_CCM_SHORT",
+                AEADAlgorithms.AES_256_CCM_SHORT      => "AES_256_CCM_SHORT",
+                AEADAlgorithms.AES_128_CCM_SHORT_8    => "AES_128_CCM_SHORT_8",
+                AEADAlgorithms.AES_256_CCM_SHORT_8    => "AES_256_CCM_SHORT_8",
+                AEADAlgorithms.AES_128_CCM_SHORT_12   => "AES_128_CCM_SHORT_12",
+                AEADAlgorithms.AES_256_CCM_SHORT_12   => "AES_256_CCM_SHORT_12",
+                AEADAlgorithms.AES_SIV_CMAC_256       => "AES_SIV_CMAC_256",
+                AEADAlgorithms.AES_SIV_CMAC_384       => "AES_SIV_CMAC_384",
+                AEADAlgorithms.AES_SIV_CMAC_512       => "AES_SIV_CMAC_512",
+                AEADAlgorithms.AES_128_CCM_8          => "AES_128_CCM_8",
+                AEADAlgorithms.AES_256_CCM_8          => "AES_256_CCM_8",
+                AEADAlgorithms.AES_128_OCB_TAGLEN128  => "AES_128_OCB_TAGLEN128",
+                AEADAlgorithms.AES_128_OCB_TAGLEN96   => "AES_128_OCB_TAGLEN96",
+                AEADAlgorithms.AES_128_OCB_TAGLEN64   => "AES_128_OCB_TAGLEN64",
+                AEADAlgorithms.AES_192_OCB_TAGLEN128  => "AES_192_OCB_TAGLEN128",
+                AEADAlgorithms.AES_192_OCB_TAGLEN96   => "AES_192_OCB_TAGLEN96",
+                AEADAlgorithms.AES_192_OCB_TAGLEN64   => "AES_192_OCB_TAGLEN64",
+                AEADAlgorithms.AES_256_OCB_TAGLEN128  => "AES_256_OCB_TAGLEN128",
+                AEADAlgorithms.AES_256_OCB_TAGLEN96   => "AES_256_OCB_TAGLEN96",
+                AEADAlgorithms.AES_256_OCB_TAGLEN64   => "AES_256_OCB_TAGLEN64",
+                AEADAlgorithms.CHACHA20_POLY1305      => "CHACHA20_POLY1305",
+                AEADAlgorithms.AES_128_GCM_SIV        => "AES_128_GCM_SIV",
+                AEADAlgorithms.AES_256_GCM_SIV        => "AES_256_GCM_SIV",
+                AEADAlgorithms.AEGIS128L              => "AEGIS128L",
+                AEADAlgorithms.AEGIS256               => "AEGIS256",
+
+                _                                     => "Unknown AEAD algorithm!"
+
+            };
 
     }
 
