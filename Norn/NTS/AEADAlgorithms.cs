@@ -89,7 +89,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         }
 
-        public static String AsText(AEADAlgorithms AEADAlgorithm)
+        public static String AsText(this AEADAlgorithms AEADAlgorithm)
 
             => AEADAlgorithm switch {
 
