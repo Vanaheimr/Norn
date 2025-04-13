@@ -36,6 +36,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
     public class PTBTime1_Tests
     {
 
+        private const String serverName = "ptbtime1.ptb.de";
+
+
         #region TestPTBTime1()
 
         /// <summary>
@@ -45,7 +48,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         public async Task TestPTBTime1()
         {
 
-            var ntsClient                  = new NTSClient("ptbtime1.ptb.de");
+            var ntsClient                  = new NTSClient(serverName);
 
             var ntsKEResponse              = ntsClient.GetNTSKERecords();
 
@@ -134,7 +137,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         public async Task TestPTBTime1_RandomBitError()
         {
 
-            var ntsClient      = new NTSClient("ptbtime1.ptb.de");
+            var ntsClient      = new NTSClient(serverName);
 
             var ntsKEResponse  = ntsClient.GetNTSKERecords();
 
@@ -189,7 +192,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         {
 
             var ntsClient                  = new NTSClient(
-                                                 "ptbtime1.ptb.de",
+                                                 serverName,
                                                  RemoteCertificateValidator: (sender,
                                                                               serverCertificate,
                                                                               certificateChain,
@@ -200,7 +203,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                                                                                                  ? serverCertificate.DecodeSubjectAlternativeNames()
                                                                                                  : [];
 
-                                                                                  if (serverCertificate?.Subject.Contains("ptbtime1.ptb.de") == true &&
+                                                                                  if (serverCertificate?.Subject.Contains(serverName) == true &&
                                                                                       sans.Contains("DNS-Name=ptbtime1.ptb.de") &&
                                                                                       sans.Contains("DNS-Name=ipv6ptbtime1.ptb.de"))
                                                                                   {
@@ -298,7 +301,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         {
 
             var ntsClient                  = new NTSClient(
-                                                 "ptbtime1.ptb.de",
+                                                 serverName,
                                                  RemoteCertificateValidator: (sender,
                                                                               serverCertificate,
                                                                               certificateChain,
@@ -327,13 +330,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
         /// <summary>
         /// Test the NTS client against the public NTS server ptbtime1.ptb.de
-        /// using the NTSRequestSignedResponse extension.
+        /// using the NTSRequestSignedResponse extension, which should be ignored.
         /// </summary>
         [Test]
         public async Task TestPTBTime1_RequestSignedResponse()
         {
 
-            var ntsClient                  = new NTSClient("ptbtime1.ptb.de");
+            var ntsClient                  = new NTSClient(serverName);
 
             var ntsKEResponse              = ntsClient.GetNTSKERecords();
 

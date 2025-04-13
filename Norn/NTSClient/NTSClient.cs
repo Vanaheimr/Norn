@@ -37,16 +37,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
     /// <summary>
     /// The Network Time Security (NTS) client.
     /// </summary>
-    /// <param name="Host">The hostname or IP address of the NTS server.</param>
-    /// <param name="NTSKE_Port">An optional NTS-KE port (default: 4460).</param>
-    /// <param name="NTP_Port">An optional NTP port (default: 123).</param>
-    /// <param name="RemoteCertificateValidator">An optional remote certificate validator.</param>
-    /// <param name="Timeout">An optional timeout for the NTS-KE/NTS requests.</param>
-    public class NTSClient(String                                                         Host,
-                           UInt16                                                         NTSKE_Port                   = NTSClient.DefaultNTSKE_Port,
-                           UInt16                                                         NTP_Port                     = NTSClient.DefaultNTP_Port,
-                           RemoteTLSServerCertificateValidationHandler<NTSKE_TLSClient>?  RemoteCertificateValidator   = null,
-                           TimeSpan?                                                      Timeout                      = null)
+    /// 
+    public class NTSClient
     {
 
         #region Data
@@ -58,14 +50,44 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         #endregion
 
         #region Properties
-
-        public String                                                         Host                          { get; }      = Host;
-        public UInt16                                                         NTSKE_Port                    { get; }      = NTSKE_Port;
-        public UInt16                                                         NTP_Port                      { get; }      = NTP_Port;
-        public TimeSpan?                                                      Timeout                       { get; set; } = Timeout;
+        public UInt16                                                         Id                            { get; }
+        public String                                                         Host                          { get; }
+        public UInt16                                                         NTSKE_Port                    { get; }
+        public UInt16                                                         NTP_Port                      { get; }
+        public RemoteTLSServerCertificateValidationHandler<NTSKE_TLSClient>?  RemoteCertificateValidator    { get; }
+        public TimeSpan?                                                      Timeout                       { get; set; }
         public Byte[]                                                         C2S_Key                       { get; set; } = [];
         public Byte[]                                                         S2C_Key                       { get; set; } = [];
-        public RemoteTLSServerCertificateValidationHandler<NTSKE_TLSClient>?  RemoteCertificateValidator    { get; }      = RemoteCertificateValidator;
+
+        #endregion
+
+        #region Constructor(s)
+
+        /// <summary>
+        /// Create a new NTS client.
+        /// </summary>
+        /// <param name="Host">The hostname or IP address of the NTS server.</param>
+        /// <param name="NTSKE_Port">An optional NTS-KE port (default: 4460).</param>
+        /// <param name="NTP_Port">An optional NTP port (default: 123).</param>
+        /// <param name="Id">An optional unique identifier for the client.</param>
+        /// <param name="RemoteCertificateValidator">An optional remote certificate validator.</param>
+        /// <param name="Timeout">An optional timeout for the NTS-KE/NTS requests.</param>
+        public NTSClient(String                                                         Host,
+                         UInt16                                                         NTSKE_Port                   = NTSClient.DefaultNTSKE_Port,
+                         UInt16                                                         NTP_Port                     = NTSClient.DefaultNTP_Port,
+                         UInt16?                                                        Id                           = null,
+                         RemoteTLSServerCertificateValidationHandler<NTSKE_TLSClient>?  RemoteCertificateValidator   = null,
+                         TimeSpan?                                                      Timeout                      = null)
+        {
+
+            this.Id                          = Id      ?? RandomExtensions.RandomUInt16();
+            this.Host                        = Host;
+            this.NTSKE_Port                  = NTSKE_Port;
+            this.NTP_Port                    = NTP_Port;
+            this.RemoteCertificateValidator  = RemoteCertificateValidator;
+            this.Timeout                     = Timeout ?? DefaultTimeout;
+
+        }
 
         #endregion
 

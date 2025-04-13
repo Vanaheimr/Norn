@@ -60,19 +60,24 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         #region Properties
 
         /// <summary>
+        /// A description of the NTS server.
+        /// </summary>
+        public I18NString  Description    { get; set; } = I18NString.Empty;
+
+        /// <summary>
         /// The NTP-KE TCP port.
         /// </summary>
-        public IPPort     TCPPort       { get; } = IPPort.NTSKE;
+        public IPPort      TCPPort        { get; }      = IPPort.NTSKE;
 
         /// <summary>
         /// The NTP UDP port.
         /// </summary>
-        public IPPort     UDPPort       { get; } = IPPort.NTP;
+        public IPPort      UDPPort        { get; }      = IPPort.NTP;
 
         /// <summary>
         /// The size of the buffer used for receiving NTP packets.
         /// </summary>
-        public UInt32     BufferSize    { get; } = 4096;
+        public UInt32      BufferSize     { get; }      = 4096;
 
         #endregion
 
@@ -81,16 +86,19 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <summary>
         /// Create a new Network Time Secure (NTS) Server.
         /// </summary>
+        /// <param name="Description">An optional description of the NTS server.</param>
         /// <param name="TCPPort">The optional TCP port for NTS-KE to listen on (default: 4460).</param>
         /// <param name="UDPPort">The optional UDP port for NTP to listen on (default: 123).</param>
         /// <param name="KeyPair">An optional key pair to be used for NTS response signing.</param>
-        public NTSServer(IPPort?   TCPPort     = null,
-                         IPPort?   UDPPort     = null,
-                         KeyPair?  KeyPair   = null)
+        public NTSServer(I18NString?  Description   = null,
+                         IPPort?      TCPPort       = null,
+                         IPPort?      UDPPort       = null,
+                         KeyPair?     KeyPair       = null)
         {
 
-            this.TCPPort = TCPPort ?? IPPort.NTSKE;
-            this.UDPPort = UDPPort ?? IPPort.NTP;
+            this.Description  = Description ?? I18NString.Empty;
+            this.TCPPort      = TCPPort     ?? IPPort.NTSKE;
+            this.UDPPort      = UDPPort     ?? IPPort.NTP;
 
             if (KeyPair is not null)
             {
@@ -472,12 +480,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #endregion
 
-        #region Stop()
+        #region Shutdown()
 
         /// <summary>
         /// Stop the server.
         /// </summary>
-        public void Stop()
+        public void Shutdown()
         {
             cts?.Cancel();
         }
