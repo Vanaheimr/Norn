@@ -252,7 +252,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                             extensions.Add(
                                 new NTSCookieExtension(
                                     data,
-                                    Cookie: ntsCookie
+                                    ntsCookie
                                 )
                             );
 

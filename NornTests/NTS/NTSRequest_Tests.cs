@@ -17,14 +17,14 @@
 
 #region Usings
 
-using NUnit.Framework;
-
+using System.Reflection;
 using System.Security.Cryptography;
+
+using NUnit.Framework;
 
 using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Norn.NTP;
 using org.GraphDefined.Vanaheimr.Norn.NTS;
-using System.Reflection;
 
 #endregion
 
@@ -32,16 +32,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 {
 
     [TestFixture]
-    public class NTSRequest_Tests
+    public class SerializationDeserialization_Tests
     {
 
-        #region NTSRequest_Serialization_Deserialization_Test()
+        #region NTSRequest_Test()
 
         /// <summary>
         /// A NTS Request Serialization/Deserialization test.
         /// </summary>
         [Test]
-        public void NTSRequest_Serialization_Deserialization_Test()
+        public void NTSRequest_Test()
         {
 
             var key            = new Byte[32];
@@ -54,7 +54,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
             RandomNumberGenerator.Fill(cookie);
             RandomNumberGenerator.Fill(uniqueId);
 
-            var ntsKEResponse  = new NTSKE_Response([ new NTSKE_Record(true, NTSKE_RecordTypes.NewCookieForNTPv4, cookie) ], key, key);
+            var ntsKEResponse  = new NTSKE_Response([ new Norn.NTS.NTSKERecords.NewCookieForNTPv4(true, cookie) ], key, key);
             var plaintext      = new DebugExtension(message1).ToByteArray().Concat(new DebugExtension(message2).ToByteArray()).ToArray();
 
             // Use reflection...
@@ -62,7 +62,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
             Assert.That(methodInfo,  Is.Not.Null, "The method 'BuildNTSRequest' could not be reflected!");
             var requestPacket  = methodInfo?.Invoke(null, [ ntsKEResponse, uniqueId, plaintext, SignedResponseMode.None, (UInt16) 0 ]) as NTPRequest;
 
-            var isValid        = NTPRequest.TryParse(requestPacket.ToByteArray(), out var ntpPacket, out var errorRequest, ntsKEResponse.C2SKey);
+            var isValid        = NTPRequest.TryParse(requestPacket?.ToByteArray() ?? [], out var ntpPacket, out var errorRequest, ntsKEResponse.C2SKey);
             var uniqueId2      = (ntpPacket?.Extensions.FirstOrDefault(extension => extension.Type == ExtensionTypes.UniqueIdentifier) as UniqueIdentifierExtension)?.Value;
             var cookie2        = (ntpPacket?.Extensions.FirstOrDefault(extension => extension.Type == ExtensionTypes.NTSCookie)        as NTSCookieExtension)?.       Value;
             var debugMessages  =  ntpPacket?.Extensions.Where         (extension => extension.Type == ExtensionTypes.Debug).Cast<DebugExtension>().ToArray() ?? [];

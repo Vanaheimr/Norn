@@ -120,15 +120,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         #endregion
 
 
-        #region TryParse
+        #region TryParse(ByteArray, out NTPExtension, out ErrorResponse)
 
         /// <summary>
-        /// Try to parse the given byte representation of a NTP extension.
+        /// Try to parse the given binary representation of a NTP extension.
         /// </summary>
-        /// <param name="packet">The byte representation of a NTP extension to be parsed.</param>
+        /// <param name="ByteArray">The binary representation of a NTP extension to be parsed.</param>
         /// <param name="NTPExtension">The parsed NTP extension.</param>
         /// <param name="ErrorResponse">An optional error message.</param>
-        public static Boolean TryParse(Byte[]                                  packet,
+        public static Boolean TryParse(Byte[]                                  ByteArray,
                                        [NotNullWhen(true)]  out NTPExtension?  NTPExtension,
                                        [NotNullWhen(false)] out String?        ErrorResponse)
         {
@@ -136,14 +136,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
             ErrorResponse  = null;
             NTPExtension   = null;
 
-            if (packet.Length < 4)
+            if (ByteArray.Length < 4)
             {
                 ErrorResponse = "The packet is too short!";
                 return false;
             }
 
-            var type   = (UInt16) ((packet[0] << 8) | packet[1]);
-            var length = (UInt16) ((packet[2] << 8) | packet[3]);
+            var type   = (UInt16) ((ByteArray[0] << 8) | ByteArray[1]);
+            var length = (UInt16) ((ByteArray[2] << 8) | ByteArray[3]);
 
             if (length < 4)
             {
@@ -151,14 +151,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                 return false;
             }
 
-            if (length > packet.Length)
+            if (length > ByteArray.Length)
             {
                 ErrorResponse = "Extension field too long!";
                 return false;
             }
 
             var value = new Byte[length - 4];
-            Buffer.BlockCopy(packet, 4, value, 0, length - 4);
+            Buffer.BlockCopy(ByteArray, 4, value, 0, length - 4);
 
             NTPExtension = new NTPExtension(
                                (ExtensionTypes) type,
@@ -207,16 +207,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         /// </summary>
         /// <param name="UniqueId">The unique identifier.</param>
         public static NTPExtension UniqueIdentifier(Byte[]? UniqueId = null)
-        {
 
-            UniqueId ??= new Byte[32];
-            RandomNumberGenerator.Fill(UniqueId);
-
-            return new UniqueIdentifierExtension(
-                       UniqueId
-                   );
-
-        }
+            => new UniqueIdentifierExtension(
+                   UniqueId is not null
+                       ? UniqueId
+                       : RandomNumberGenerator.GetBytes(32)
+               );
 
         #endregion
 

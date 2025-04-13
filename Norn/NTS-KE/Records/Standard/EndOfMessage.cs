@@ -15,31 +15,18 @@
  * limitations under the License.
  */
 
-#region Usings
-
-using System.Diagnostics.CodeAnalysis;
-
-using org.GraphDefined.Vanaheimr.Norn.NTP;
-
-#endregion
-
-namespace org.GraphDefined.Vanaheimr.Norn.NTS
+namespace org.GraphDefined.Vanaheimr.Norn.NTS.NTSKERecords
 {
 
-    public class NTSCookieExtension(Byte[]      CookieBytes,
-                                    NTSCookie?  Cookie          = null,
-                                    Boolean     Authenticated   = false,
-                                    Boolean     Encrypted       = false)
+    /// <summary>
+    /// End of Message
+    /// </summary>
+    /// <param name="IsCritical">Whether an unrecognized record must cause an error.</param>
+    public class EndOfMessage(Boolean IsCritical)
 
-        : NTPExtension(ExtensionTypes.NTSCookie,
-                       CookieBytes,
-                       Authenticated,
-                       Encrypted)
+         : NTSKE_Record(IsCritical,
+                        NTSKE_RecordTypes.EndOfMessage)
 
-    {
-
-        public NTSCookie?  Cookie    { get; } = Cookie;
-
-    }
+    { }
 
 }

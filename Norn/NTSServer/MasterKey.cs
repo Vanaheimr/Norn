@@ -67,9 +67,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             for (var i = 0; i < NumberOfCookies; i++)
             {
                 cookies.Add(
-                    new NTSKE_Record(
+                    new NTSKERecords.NewCookieForNTPv4(
                         IsCritical,
-                        NTSKE_RecordTypes.NewCookieForNTPv4,
                         NTSCookie.Create(C2SKey, S2CKey, AEADAlgorithm, MasterKey).Encrypt(MasterKey)
                     )
                 );

@@ -72,7 +72,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
         }
 
-    
     }
 
 }

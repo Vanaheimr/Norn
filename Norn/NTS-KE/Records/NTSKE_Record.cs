@@ -17,6 +17,7 @@
 
 #region Usings
 
+using org.GraphDefined.Vanaheimr.Illias;
 using System.Diagnostics.CodeAnalysis;
 
 #endregion
@@ -65,7 +66,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <summary>
         /// Whether an unrecognized record must cause an error.
         /// </summary>
-        public Boolean           IsCritical    { get; } = IsCritical;
+        public Boolean            IsCritical    { get; } = IsCritical;
 
         /// <summary>
         /// The type of the record.
@@ -145,11 +146,79 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 offset += bodyLength;
 
                 records.Add(
-                    new NTSKE_Record(
-                        critical,
-                        type,
-                        body
-                    )
+                    type switch
+                    {
+
+                        NTSKE_RecordTypes.EndOfMessage
+                            => new NTSKERecords.EndOfMessage(
+                                   critical
+                               ),
+
+                        NTSKE_RecordTypes.NTSNextProtocolNegotiation
+                            => new NTSKERecords.NTSNextProtocolNegotiation(
+                                   critical,
+                                   body
+                               ),
+
+                        NTSKE_RecordTypes.Error
+                            => new NTSKERecords.Error(
+                                   critical,
+                                   body
+                               ),
+
+                        NTSKE_RecordTypes.Warning
+                            => new NTSKERecords.Warning(
+                                   critical,
+                                   body
+                               ),
+
+                        NTSKE_RecordTypes.AEADAlgorithmNegotiation
+                            => new NTSKERecords.AEADAlgorithmNegotiation(
+                                   critical,
+                                   body
+                               ),
+
+                        NTSKE_RecordTypes.NewCookieForNTPv4
+                            => new NTSKERecords.NewCookieForNTPv4(
+                                   critical,
+                                   body
+                               ),
+
+                        NTSKE_RecordTypes.NTPv4ServerNegotiation
+                            => new NTSKERecords.NTPv4ServerNegotiation(
+                                   critical,
+                                   body
+                               ),
+
+                        NTSKE_RecordTypes.NTPv4PortNegotiation
+                            => new NTSKERecords.NTPv4PortNegotiation(
+                                   critical,
+                                   body
+                               ),
+
+
+                        // Vendor Extensions
+                        NTSKE_RecordTypes.NTSRequestPublicKey
+                            => new NTSKERecords.NTSRequestPublicKey(
+                                   critical,
+                                   body
+                               ),
+
+                        NTSKE_RecordTypes.NTSPublicKey
+                            => new NTSKERecords.NTSPublicKey(
+                                   critical,
+                                   body
+                               ),
+
+
+                        _   => new NTSKE_Record(
+                                   critical,
+                                   type,
+                                   body
+                               )
+
+                    }
+
                 );
 
             }
@@ -193,74 +262,111 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// The end of the message
         /// </summary>
         public static NTSKE_Record  EndOfMessage
-            => new (true,       NTSKE_RecordTypes.EndOfMessage);
+            => new NTSKERecords.EndOfMessage(
+                   true
+               );
 
         /// <summary>
         /// NTS Next Protocol Negotiation
         /// </summary>
         public static NTSKE_Record  NTSNextProtocolNegotiation
-            => new (true,       NTSKE_RecordTypes.NTSNextProtocolNegotiation,   [0x00, 0x00]);
+            => new NTSKERecords.NTSNextProtocolNegotiation(
+                   true,
+                   [0x00, 0x00]
+               );
 
         /// <summary>
         /// NTS Error
         /// </summary>
-        public static NTSKE_Record  Error(Byte[] Error)
-            => new (true,       NTSKE_RecordTypes.Error,                        Error);
+        /// <param name="IsCritical">Whether an unrecognized record must cause an error.</param>
+        /// <param name="ErrorMessage">The error message.</param>
+        public static NTSKE_Record  Error(String   ErrorMessage,
+                                          Boolean  IsCritical   = true)
+
+            => new NTSKERecords.Error(
+                   IsCritical,
+                   ErrorMessage
+               );
 
         /// <summary>
         /// NTS Warning
         /// </summary>
-        public static NTSKE_Record  Warning(Byte[] Warning)
-            => new (true,       NTSKE_RecordTypes.Warning,                      Warning);
+        /// <param name="IsCritical">Whether an unrecognized record must cause an error.</param>
+        /// <param name="WarningMessage">The warning message.</param>
+        public static NTSKE_Record  Warning(String   WarningMessage,
+                                            Boolean  IsCritical   = false)
+
+            => new NTSKERecords.Warning(
+                   IsCritical,
+                   WarningMessage
+               );
 
         /// <summary>
         /// NTS AEAD Algorithm Negotiation
         /// </summary>
-        /// <param name="Algorithm">The algorithm to be negotiated.</param>
+        /// <param name="Algorithm">The optional AEAD algorithm to be negotiated (default: AES-SIV-CMAC-256).</param>
         public static NTSKE_Record  AEADAlgorithmNegotiation(AEADAlgorithms Algorithm = AEADAlgorithms.AES_SIV_CMAC_256)
-            => new (true,       NTSKE_RecordTypes.AEADAlgorithmNegotiation,     Algorithm.GetBytes());
+
+            => new NTSKERecords.AEADAlgorithmNegotiation(
+                   true,
+                   Algorithm
+               );
 
         /// <summary>
         /// NTS New Cookie for NTPv4
         /// </summary>
-        /// <param name="IsCritical">Whether the record is critical.</param>
         /// <param name="NTSCookie">The new NTS cookie.</param>
-        public static NTSKE_Record  NewCookieForNTPv4(Byte[] NTSCookie, Boolean IsCritical = true)
-            => new (IsCritical, NTSKE_RecordTypes.NewCookieForNTPv4,            NTSCookie);
+        /// <param name="IsCritical">Whether the record is critical.</param>
+        public static NTSKE_Record  NewCookieForNTPv4(NTSCookie  NTSCookie,
+                                                      Boolean    IsCritical   = true)
+
+            => new NTSKERecords.NewCookieForNTPv4(
+                   IsCritical,
+                   NTSCookie
+               );
 
         /// <summary>
         /// NTS NTPv4 Server Negotiation
         /// </summary>
         /// <param name="ServerInformation">The NTP server information.</param>
         public static NTSKE_Record  NTPv4ServerNegotiation(Byte[] ServerInformation)
-            => new (true,        NTSKE_RecordTypes.NTPv4ServerNegotiation,       ServerInformation);
+
+            => new NTSKERecords.NTPv4ServerNegotiation(
+                   true,
+                   ServerInformation
+               );
 
         /// <summary>
         /// NTS NTPv4 Port Negotiation
         /// </summary>
         /// <param name="PortInformation">The NTP port information.</param>
         public static NTSKE_Record  NTPv4PortNegotiation(Byte[] PortInformation)
-            => new (true,        NTSKE_RecordTypes.NTPv4PortNegotiation,         PortInformation);
+
+            => new NTSKERecords.NTPv4PortNegotiation(
+                   true,
+                   PortInformation
+               );
 
 
+        // Vendor Extensions
 
         /// <summary>
         /// NTS Request Public Key
         /// </summary>
         public static NTSKE_Record  NTSRequestPublicKey()
-            => new (
-                   false,
-                   NTSKE_RecordTypes.NTSRequestPublicKey
+
+            => new NTSKERecords.NTSRequestPublicKey(
+                   false
                );
 
         /// <summary>
         /// NTS Public Key
         /// </summary>
-        /// <param name="PublicKey">The public key to be requested.</param>
+        /// <param name="PublicKey">The public key.</param>
         public static NTSKE_Record  NTSPublicKey(PublicKey PublicKey)
-            => new (
+
+            => new NTSKERecords.NTSPublicKey(
                    false,
-                   NTSKE_RecordTypes.NTSPublicKey,
                    PublicKey.ToByteArray()
                );
 
