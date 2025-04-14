@@ -19,11 +19,9 @@
 
 using System.Diagnostics.CodeAnalysis;
 
-using Org.BouncyCastle.Math;
 using Org.BouncyCastle.Asn1.Sec;
 using Org.BouncyCastle.Security;
 using Org.BouncyCastle.Crypto.Parameters;
-using Org.BouncyCastle.Crypto.Generators;
 
 using org.GraphDefined.Vanaheimr.Norn.NTS;
 
@@ -154,7 +152,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                                      ellipticCurve.H
                                  );
 
-            var privateKey     = ParsePrivateKey(domainParams, KeyPair.PrivateKey);
+            var privateKey     = KeyPair.ParsePrivateKey(domainParams, KeyPair.PrivateKey);
 
             var signer         = SignerUtilities.GetSigner(KeyPair.SignatureAlgorithm);
             signer.Init(true, privateKey);
@@ -194,7 +192,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                                         ellipticCurve.H
                                     );
 
-            var publicKey       = ParsePublicKey(domainParams, PublicKey.Value);
+            var publicKey       = KeyPair.ParsePublicKey(domainParams, PublicKey.Value);
 
             var verifier = SignerUtilities.GetSigner(PublicKey.SignatureAlgorithm);
             verifier.Init(false, publicKey);
@@ -202,61 +200,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
             return verifier.VerifySignature(Signature);
 
         }
-
-        #endregion
-
-
-        #region (static) GenerateECKeys      (ECCurve)
-
-        public static (ECPrivateKeyParameters, ECPublicKeyParameters) GenerateECKeys(ECDomainParameters ECCurve)
-        {
-
-            var keyPairGenerator  = new ECKeyPairGenerator();
-            var keyGenParams      = new ECKeyGenerationParameters(ECCurve, new SecureRandom());
-
-            keyPairGenerator.Init(keyGenParams);
-            var keyPair = keyPairGenerator.GenerateKeyPair();
-
-            return ((ECPrivateKeyParameters) keyPair.Private,
-                    (ECPublicKeyParameters)  keyPair.Public);
-
-        }
-
-        #endregion
-
-        #region (static) SerializePrivateKey (PrivateKey)
-
-        public static Byte[] SerializePrivateKey(ECPrivateKeyParameters PrivateKey)
-            => PrivateKey.D.ToByteArray();
-
-        #endregion
-
-        #region (static) SerializePublicKey  (PublicKey)
-
-        public static Byte[] SerializePublicKey(ECPublicKeyParameters PublicKey)
-
-            => PublicKey.Q.GetEncoded();
-
-        #endregion
-
-        #region (static) ParsePrivateKey     (EllipticCurveSpec, ByteArray)
-
-        public static ECPrivateKeyParameters ParsePrivateKey(ECDomainParameters  EllipticCurveSpec,
-                                                             Byte[]              ByteArray)
-
-            => new (new BigInteger(ByteArray),
-                    EllipticCurveSpec);
-
-        #endregion
-
-        #region (static) ParsePublicKey      (EllipticCurveSpec, ByteArray)
-
-        public static ECPublicKeyParameters ParsePublicKey(ECDomainParameters  EllipticCurveSpec,
-                                                           Byte[]              ByteArray)
-
-            => new ("ECDSA",
-                    EllipticCurveSpec.Curve.DecodePoint(ByteArray),
-                    EllipticCurveSpec);
 
         #endregion
 

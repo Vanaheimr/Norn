@@ -21,9 +21,15 @@ using System.Diagnostics.CodeAnalysis;
 
 using Newtonsoft.Json.Linq;
 
+using Org.BouncyCastle.Security;
+using Org.BouncyCastle.Crypto.Generators;
+using Org.BouncyCastle.Crypto.Parameters;
+
 using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Hermod;
 using org.GraphDefined.Vanaheimr.Hermod.HTTP;
+using Org.BouncyCastle.Math;
+using Org.BouncyCastle.Asn1.Sec;
 
 #endregion
 
@@ -136,6 +142,38 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                            this.NotAfter?.         GetHashCode() ?? 0;
 
             }
+
+        }
+
+        #endregion
+
+
+        #region (static) GenerateECKeys(Id, EllipticCurve = "secp256r1")
+
+        public static KeyPair GenerateECKeys(UInt16  Id,
+                                             String  EllipticCurve = "secp256r1")
+        {
+
+            var ellipticCurve     = SecNamedCurves.GetByName(EllipticCurve);
+
+            var domainParams      = new ECDomainParameters(
+                                        ellipticCurve.Curve,
+                                        ellipticCurve.G,
+                                        ellipticCurve.N,
+                                        ellipticCurve.H
+                                    );
+
+            var keyPairGenerator  = new ECKeyPairGenerator();
+            var keyGenParams      = new ECKeyGenerationParameters(domainParams, new SecureRandom());
+
+            keyPairGenerator.Init(keyGenParams);
+            var keyPair           = keyPairGenerator.GenerateKeyPair();
+
+            return new (
+                       Id,
+                       SerializePrivateKey((ECPrivateKeyParameters) keyPair.Private),
+                       SerializePublicKey ((ECPublicKeyParameters)  keyPair.Public)
+                   );
 
         }
 
@@ -433,6 +471,43 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         #endregion
 
 
+        #region (static) SerializePrivateKey (PrivateKey)
+
+        public static Byte[] SerializePrivateKey(ECPrivateKeyParameters PrivateKey)
+            => PrivateKey.D.ToByteArray();
+
+        #endregion
+
+        #region (static) SerializePublicKey  (PublicKey)
+
+        public static Byte[] SerializePublicKey(ECPublicKeyParameters PublicKey)
+
+            => PublicKey.Q.GetEncoded();
+
+        #endregion
+
+        #region (static) ParsePrivateKey     (EllipticCurveSpec, ByteArray)
+
+        public static ECPrivateKeyParameters ParsePrivateKey(ECDomainParameters  EllipticCurveSpec,
+                                                             Byte[]              ByteArray)
+
+            => new (new BigInteger(ByteArray),
+                    EllipticCurveSpec);
+
+        #endregion
+
+        #region (static) ParsePublicKey      (EllipticCurveSpec, ByteArray)
+
+        public static ECPublicKeyParameters ParsePublicKey(ECDomainParameters  EllipticCurveSpec,
+                                                           Byte[]              ByteArray)
+
+            => new ("ECDSA",
+                    EllipticCurveSpec.Curve.DecodePoint(ByteArray),
+                    EllipticCurveSpec);
+
+        #endregion
+
+
         #region Operator overloading
 
         #region Operator == (KeyPair1, KeyPair2)
@@ -633,7 +708,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             => $"{Id}: {PublicKey.ToBase64()}, not before: {NotBefore}, not after: {NotAfter}";
 
         #endregion
-
 
     }
 

@@ -27,6 +27,7 @@ using Org.BouncyCastle.Tls;
 using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Hermod;
 using org.GraphDefined.Vanaheimr.Norn.NTP;
+using org.GraphDefined.Vanaheimr.Hermod.HTTP;
 
 #endregion
 
@@ -62,22 +63,25 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <summary>
         /// A description of the NTS server.
         /// </summary>
-        public I18NString  Description    { get; set; } = I18NString.Empty;
+        public I18NString        Description     { get; set; } = I18NString.Empty;
 
         /// <summary>
         /// The NTP-KE TCP port.
         /// </summary>
-        public IPPort      TCPPort        { get; }      = IPPort.NTSKE;
+        public IPPort            TCPPort         { get; }      = IPPort.NTSKE;
 
         /// <summary>
         /// The NTP UDP port.
         /// </summary>
-        public IPPort      UDPPort        { get; }      = IPPort.NTP;
+        public IPPort            UDPPort         { get; }      = IPPort.NTP;
 
         /// <summary>
         /// The size of the buffer used for receiving NTP packets.
         /// </summary>
-        public UInt32      BufferSize     { get; }      = 4096;
+        public UInt32            BufferSize      { get; }      = 4096;
+
+
+        public IEnumerable<URL>  ExternalURLs    { get; }
 
         #endregion
 
@@ -90,15 +94,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <param name="TCPPort">The optional TCP port for NTS-KE to listen on (default: 4460).</param>
         /// <param name="UDPPort">The optional UDP port for NTP to listen on (default: 123).</param>
         /// <param name="KeyPair">An optional key pair to be used for NTS response signing.</param>
-        public NTSServer(I18NString?  Description   = null,
-                         IPPort?      TCPPort       = null,
-                         IPPort?      UDPPort       = null,
-                         KeyPair?     KeyPair       = null)
+        /// <param name="ExternalURLs">An enumeration of external URLs to be used for NTP/NTS requests.</param>
+        public NTSServer(I18NString?        Description    = null,
+                         IPPort?            TCPPort        = null,
+                         IPPort?            UDPPort        = null,
+                         KeyPair?           KeyPair        = null,
+                         IEnumerable<URL>?  ExternalURLs   = null)
         {
 
-            this.Description  = Description ?? I18NString.Empty;
-            this.TCPPort      = TCPPort     ?? IPPort.NTSKE;
-            this.UDPPort      = UDPPort     ?? IPPort.NTP;
+            this.Description   = Description  ?? I18NString.Empty;
+            this.TCPPort       = TCPPort      ?? IPPort.NTSKE;
+            this.UDPPort       = UDPPort      ?? IPPort.NTP;
+            this.ExternalURLs  = ExternalURLs ?? [ URL.Parse($"udp://localhost:{this.UDPPort}") ];
 
             if (KeyPair is not null)
             {
@@ -222,6 +229,78 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         #endregion
 
 
+        #region (private) GenerateNTSKEServerInfos    (MasterKey, NumberOfCookies, C2SKey, S2CKey, AEADAlgorithm = AEADAlgorithms.AES_SIV_CMAC_256, IsCritical = false)
+
+        public NTSKE_ServerInfo
+
+            GenerateNTSKEServerInfo(MasterKey       MasterKey,
+                                    UInt16          NumberOfCookies,
+                                    Byte[]          C2SKey,
+                                    Byte[]          S2CKey,
+                                    AEADAlgorithms  AEADAlgorithm   = AEADAlgorithms.AES_SIV_CMAC_256)
+
+        {
+
+            #region Initial checks
+
+            if (NumberOfCookies == 0)
+                throw new ArgumentException("The number of cookies must be greater than 0!", nameof(NumberOfCookies));
+
+            if (C2SKey.Length == 0)
+                throw new ArgumentException("The C2SKey must not be empty!", nameof(C2SKey));
+
+            if (S2CKey.Length == 0)
+                throw new ArgumentException("The S2CKey must not be empty!", nameof(S2CKey));
+
+            if (C2SKey.Length != S2CKey.Length)
+                throw new ArgumentException("The C2SKey and S2CKey must be of the same length!");
+
+            #endregion
+
+            return new NTSKE_ServerInfo(
+                       C2SKey,
+                       S2CKey,
+                       Enumerable.Range(0, NumberOfCookies).
+                                  Select(_ => NTSCookie.Create (MasterKey, C2SKey, S2CKey, AEADAlgorithm).
+                                                        Encrypt(MasterKey)),
+                       ExternalURLs,
+                       this.currentPublicKey is not null
+                           ? [ currentPublicKey.ToByteArray() ]
+                           : null,
+                       AEADAlgorithm,
+                       null,
+                       null
+                   );
+
+        }
+
+        #endregion
+
+        #region GetServerInfos(NumberOfCookies = 7)
+
+        public IEnumerable<NTSKE_ServerInfo> GetServerInfos(UInt16 NumberOfCookies = 7)
+        {
+
+            var serverInfos = new List<NTSKE_ServerInfo>();
+
+            // Might include other NTS-KE servers in the future...
+            serverInfos.Add(
+                GenerateNTSKEServerInfo(
+                    MasterKey:         GetCurrentMasterKey(),
+                    NumberOfCookies:   NumberOfCookies,
+                    C2SKey:            RandomNumberGenerator.GetBytes(32),
+                    S2CKey:            RandomNumberGenerator.GetBytes(32),
+                    AEADAlgorithm:     AEADAlgorithms.AES_SIV_CMAC_256
+                )
+            );
+
+            return serverInfos;
+
+        }
+
+        #endregion
+
+
         #region Start(CancellationToken = default)
 
         /// <summary>
@@ -235,7 +314,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             cts       = CancellationTokenSource.CreateLinkedTokenSource(CancellationToken);
 
-            #region Start UDP server
+            #region Start NTP/NTS UDP server
 
             udpSocket = new Socket(
                             AddressFamily.InterNetwork,
@@ -344,7 +423,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             #endregion
 
-            #region Start TCP server
+            #region Start NTS-KE TCP server
 
             tcpSocket = new Socket(
                             AddressFamily.InterNetwork,
