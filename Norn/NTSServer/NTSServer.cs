@@ -26,8 +26,10 @@ using Org.BouncyCastle.Tls;
 
 using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Hermod;
-using org.GraphDefined.Vanaheimr.Norn.NTP;
+using org.GraphDefined.Vanaheimr.Hermod.DNS;
 using org.GraphDefined.Vanaheimr.Hermod.HTTP;
+
+using org.GraphDefined.Vanaheimr.Norn.NTP;
 
 #endregion
 
@@ -83,6 +85,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         public IEnumerable<URL>  ExternalURLs    { get; }
 
+
+        public DNSClient         DNSClient       { get; }
+
         #endregion
 
         #region Constructor(s)
@@ -91,21 +96,24 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// Create a new Network Time Secure (NTS) Server.
         /// </summary>
         /// <param name="Description">An optional description of the NTS server.</param>
-        /// <param name="TCPPort">The optional TCP port for NTS-KE to listen on (default: 4460).</param>
-        /// <param name="UDPPort">The optional UDP port for NTP to listen on (default: 123).</param>
+        /// <param name="NTSKEPort">The optional TCP port for NTS-KE to listen on (default: 4460).</param>
+        /// <param name="NTSPort">The optional UDP port for NTP to listen on (default: 123).</param>
         /// <param name="KeyPair">An optional key pair to be used for NTS response signing.</param>
         /// <param name="ExternalURLs">An enumeration of external URLs to be used for NTP/NTS requests.</param>
+        /// <param name="DNSClient">An optional DNS client to use.</param>
         public NTSServer(I18NString?        Description    = null,
-                         IPPort?            TCPPort        = null,
-                         IPPort?            UDPPort        = null,
+                         IPPort?            NTSKEPort      = null,
+                         IPPort?            NTSPort        = null,
                          KeyPair?           KeyPair        = null,
-                         IEnumerable<URL>?  ExternalURLs   = null)
+                         IEnumerable<URL>?  ExternalURLs   = null,
+                         DNSClient?         DNSClient      = null)
         {
 
             this.Description   = Description  ?? I18NString.Empty;
-            this.TCPPort       = TCPPort      ?? IPPort.NTSKE;
-            this.UDPPort       = UDPPort      ?? IPPort.NTP;
+            this.TCPPort       = NTSKEPort    ?? IPPort.NTSKE;
+            this.UDPPort       = NTSPort      ?? IPPort.NTP;
             this.ExternalURLs  = ExternalURLs ?? [ URL.Parse($"udp://localhost:{this.UDPPort}") ];
+            this.DNSClient     = DNSClient    ?? new DNSClient();
 
             if (KeyPair is not null)
             {

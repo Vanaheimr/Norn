@@ -4,12 +4,12 @@
     <TargetFramework>net9.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <RootNamespace>org.GraphDefined.Vanaheimr.Norn</RootNamespace>
-    <AssemblyName>org.GraphDefined.Vanaheimr.Norn</AssemblyName>
+    <RootNamespace>org.GraphDefined.Vanaheimr.Norn.WebAPI</RootNamespace>
+    <AssemblyName>org.GraphDefined.Vanaheimr.Norn.WebAPI</AssemblyName>
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\Hermod\Hermod\Hermod.csproj" />
+    <ProjectReference Include="..\Norn\Norn.csproj" />
   </ItemGroup>
 
 </Project>

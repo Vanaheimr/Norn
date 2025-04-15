@@ -31,7 +31,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 {
 
     /// <summary>
-    /// A NTS server public key.
+    /// A NTS Public Key,
+    /// which is e.g. used to sign NTS responses by a NTS server.
     /// </summary>
     public class PublicKey : IEquatable<PublicKey>,
                              IComparable<PublicKey>
@@ -88,7 +89,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         #region Constructor(s)
 
         /// <summary>
-        /// Create a new NTS server public key.
+        /// Create a new NTS server Public Key.
         /// </summary>
         /// <param name="Id">The key identification.</param>
         /// <param name="Value">The key value.</param>

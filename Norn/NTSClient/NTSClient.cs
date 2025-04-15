@@ -24,6 +24,8 @@ using Org.BouncyCastle.Tls;
 
 using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Hermod;
+using org.GraphDefined.Vanaheimr.Hermod.DNS;
+
 using org.GraphDefined.Vanaheimr.Norn.NTP;
 
 #endregion
@@ -55,6 +57,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public TimeSpan?                                                      Timeout                       { get; set; }
         public Byte[]                                                         C2S_Key                       { get; set; } = [];
         public Byte[]                                                         S2C_Key                       { get; set; } = [];
+        public DNSClient                                                      DNSClient                     { get; }
 
         #endregion
 
@@ -69,11 +72,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <param name="Id">An optional unique identifier for the client.</param>
         /// <param name="RemoteCertificateValidator">An optional remote certificate validator.</param>
         /// <param name="Timeout">An optional timeout for the NTS-KE/NTS requests.</param>
+        /// <param name="DNSClient">An optional DNS client to use.</param>
         public NTSClient(String                                                         Host,
                          UInt16                                                         NTSKE_Port                   = NTSClient.DefaultNTSKE_Port,
                          UInt16                                                         NTP_Port                     = NTSClient.DefaultNTP_Port,
                          UInt16?                                                        Id                           = null,
                          RemoteTLSServerCertificateValidationHandler<NTSKE_TLSClient>?  RemoteCertificateValidator   = null,
+                         DNSClient?                                                     DNSClient                    = null,
                          TimeSpan?                                                      Timeout                      = null)
         {
 
@@ -83,6 +88,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             this.NTP_Port                    = NTP_Port;
             this.RemoteCertificateValidator  = RemoteCertificateValidator;
             this.Timeout                     = Timeout ?? DefaultTimeout;
+            this.DNSClient                   = DNSClient ?? new DNSClient();
 
         }
 
