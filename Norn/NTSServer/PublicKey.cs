@@ -418,11 +418,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                  new JProperty("signatureAlgorithm",   SignatureAlgorithm),
 
                            NotBefore.HasValue
-                               ? new JProperty("notBefore",            NotBefore.Value.     ToIso8601())
+                               ? new JProperty("notBefore",            NotBefore.Value.     ToISO8601())
                                : null,
 
                            NotAfter. HasValue
-                               ? new JProperty("notAfter",             NotAfter. Value.     ToIso8601())
+                               ? new JProperty("notAfter",             NotAfter. Value.     ToISO8601())
                                : null
 
                        );
@@ -612,10 +612,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 c = Value.          ToHexString().CompareTo(PublicKey.Value.          ToHexString());
 
             if (c == 0 && NotBefore.HasValue && PublicKey.NotBefore.HasValue)
-                c = NotBefore.Value.ToIso8601().  CompareTo(PublicKey.NotBefore.Value.ToIso8601());
+                c = NotBefore.Value.ToISO8601().  CompareTo(PublicKey.NotBefore.Value.ToISO8601());
 
             if (c == 0 && NotAfter. HasValue && PublicKey.NotAfter. HasValue)
-                c = NotAfter. Value.ToIso8601().  CompareTo(PublicKey.NotAfter. Value.ToIso8601());
+                c = NotAfter. Value.ToISO8601().  CompareTo(PublicKey.NotAfter. Value.ToISO8601());
 
             return c;
 

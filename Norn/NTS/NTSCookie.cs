@@ -424,7 +424,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                  new JProperty("masterKeyId",     MasterKeyId),
                                  new JProperty("c2sKey",          C2SKey.              ToBase64()),
                                  new JProperty("s2cKey",          S2CKey.              ToBase64()),
-                                 new JProperty("timestamp",       Timestamp.           ToIso8601()),
+                                 new JProperty("timestamp",       Timestamp.           ToISO8601()),
 
                            AEADAlgorithm != AEADAlgorithms.AES_SIV_CMAC_256
                                ? new JProperty("aeadAlgorithm",   AEADAlgorithm.       ToString())
@@ -685,7 +685,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 c = AEADAlgorithm.  CompareTo(NTSCookie.AEADAlgorithm);
 
             if (c == 0)
-                c = Timestamp. ToIso8601().  CompareTo(NTSCookie.Timestamp. ToIso8601());
+                c = Timestamp. ToISO8601().  CompareTo(NTSCookie.Timestamp. ToISO8601());
 
             if (c == 0)
                 c = Nonce.     ToHexString().CompareTo(NTSCookie.Nonce.     ToHexString());
@@ -726,7 +726,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                S2CKey.               SequenceEqual(NTSCookie.S2CKey)                 &&
                //MasterKeyId.Equals(NTSCookie.MasterKeyId) &&
                AEADAlgorithm.        Equals       (NTSCookie.AEADAlgorithm)          &&
-               Timestamp.ToIso8601().Equals       (NTSCookie.Timestamp.ToIso8601()) &&
+               Timestamp.ToISO8601().Equals       (NTSCookie.Timestamp.ToISO8601()) &&
                Nonce.                SequenceEqual(NTSCookie.Nonce);
 
         #endregion

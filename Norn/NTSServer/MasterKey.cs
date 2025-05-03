@@ -451,8 +451,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                                  new JProperty("id",          Id),
                                  new JProperty("masterKey",   Value.               ToBase64()),
-                                 new JProperty("notBefore",   NotBefore.           ToIso8601()),
-                                 new JProperty("notAfter",    NotAfter.            ToIso8601())
+                                 new JProperty("notBefore",   NotBefore.           ToISO8601()),
+                                 new JProperty("notAfter",    NotAfter.            ToISO8601())
 
                        );
 
@@ -607,10 +607,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 c = Value.    ToHexString().CompareTo(MasterKey.Value.    ToHexString());
 
             if (c == 0)
-                c = NotBefore.ToIso8601().  CompareTo(MasterKey.NotBefore.ToIso8601());
+                c = NotBefore.ToISO8601().  CompareTo(MasterKey.NotBefore.ToISO8601());
 
             if (c == 0)
-                c = NotAfter. ToIso8601().  CompareTo(MasterKey.NotAfter. ToIso8601());
+                c = NotAfter. ToISO8601().  CompareTo(MasterKey.NotAfter. ToISO8601());
 
             return c;
 
@@ -645,8 +645,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             => Id.                Equals       (MasterKey.Id)                 &&
                Value.                SequenceEqual(MasterKey.Value)                 &&
-               NotBefore.ToIso8601().Equals       (MasterKey.NotBefore.ToIso8601()) &&
-               NotAfter. ToIso8601().Equals       (MasterKey.NotAfter. ToIso8601());
+               NotBefore.ToISO8601().Equals       (MasterKey.NotBefore.ToISO8601()) &&
+               NotAfter. ToISO8601().Equals       (MasterKey.NotAfter. ToISO8601());
 
         #endregion
 
