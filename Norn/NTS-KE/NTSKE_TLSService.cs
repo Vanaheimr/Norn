@@ -188,7 +188,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         {
 
             var certificateEntry    = new CertificateEntry(new BcTlsCertificate((BcTlsCrypto) Crypto, encodedCertificate), null);
-            var certificateChain    = new Certificate(TlsUtilities.EmptyBytes, [ certificateEntry ]);
+            var certificateChain    = new Org.BouncyCastle.Tls.Certificate(TlsUtilities.EmptyBytes, [ certificateEntry ]);
 
             var signatureAlgorithm  = new SignatureAndHashAlgorithm(
                                           HashAlgorithm.sha256,
