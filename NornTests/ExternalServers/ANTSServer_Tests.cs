@@ -1,5 +1,5 @@
 ﻿/*
- * Copyright (c) 2010-2025 GraphDefined GmbH <achim.friedland@graphdefined.com>
+ * Copyright (c) 2010-2026 GraphDefined GmbH <achim.friedland@graphdefined.com>
  * This file is part of Norn <https://www.github.com/Vanaheimr/Norn>
  *
  * Licensed under the Affero GPL license, Version 3.0 (the "License");
@@ -29,33 +29,42 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 {
 
     /// <summary>
-    /// Test the NTS client against public NTS server of open.charging.cloud.
+    /// Test the NTS client against the given NTS server.
     /// </summary>
-    [TestFixture]
-    public class ChargingCloud_Tests
+    /// <param name="ServerName">The NTS Server DNS Name.</param>
+    /// <param name="Timeout">An optional timeout for NTS operations.</param>
+    public abstract class ANTSServer_Tests(String     ServerName,
+                                           TimeSpan?  Timeout   = null)
     {
 
-        private readonly String[] serverNames = [
-                                      "time1.charging.cloud",
-                                      "time2.charging.cloud",
-                                      "time3.charging.cloud"
-                                  ];
-
-        private String RandomServer()
-            => serverNames[new Random().Next(serverNames.Length)];
-
-
-        #region TestChargingCloudTime1()
+        #region Properties
 
         /// <summary>
-        /// Test the NTS client against the public NTS server ptbtime1.ptb.de.
+        /// The PTB Server Name.
+        /// </summary>
+        public String     ServerName    { get; } = ServerName;
+
+        /// <summary>
+        /// The timeout for NTS operations.
+        /// </summary>
+        public TimeSpan?  Timeout       { get; } = Timeout;
+
+        #endregion
+
+
+        #region TestNTS()
+
+        /// <summary>
+        /// Test the NTS client against the public NTS server.
         /// </summary>
         [Test]
-        public async Task TestChargingCloudTime1()
+        public async Task TestNTS()
         {
 
-            var serverName                 = RandomServer();
-            var ntsClient                  = new NTSClient(serverName);
+            var ntsClient                  = new NTSClient(
+                                                 ServerName,
+                                                 Timeout:  Timeout
+                                             );
 
             var ntsKEResponse              = ntsClient.GetNTSKERecords();
 
@@ -133,19 +142,21 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
         #endregion
 
-        #region TestChargingCloudTime1_RandomBitError()      <<<<<<<<<<<<< It seem's that this will not ALWAYS FAIL!?!
+        #region TestNTS_RandomBitError()      <<<<<<<<<<<<< It seem's that this will not ALWAYS FAIL!?!
 
         /// <summary>
-        /// Test the NTS client against the public NTS server ptbtime1.ptb.de,
+        /// Test the NTS client against the public NTS server,
         /// but add a random bit error to the response and check if the response
         /// is still valid.
         /// </summary>
         [Test]
-        public async Task TestChargingCloudTime1_RandomBitError()
+        public async Task TestNTS_RandomBitError()
         {
 
-            var serverName     = RandomServer();
-            var ntsClient      = new NTSClient(serverName);
+            var ntsClient      = new NTSClient(
+                                     ServerName,
+                                     Timeout:  Timeout
+                                 );
 
             var ntsKEResponse  = ntsClient.GetNTSKERecords();
 
@@ -189,19 +200,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
         #endregion
 
-        #region TestChargingCloudTime1_CustomTLSCertificateValidation()
+        #region TestNTS_CustomTLSCertificateValidation()
 
         /// <summary>
-        /// Test the NTS client against the public NTS server ptbtime1.ptb.de,
+        /// Test the NTS client against the public NTS server,
         /// but use a custom TLS certificate validation handler.
         /// </summary>
         [Test]
-        public async Task TestChargingCloudTime1_CustomTLSCertificateValidation()
+        public async Task TestNTS_CustomTLSCertificateValidation()
         {
 
-            var serverName                 = RandomServer();
             var ntsClient                  = new NTSClient(
-                                                 serverName,
+                                                 ServerName,
                                                  RemoteCertificateValidator: (sender,
                                                                               serverCertificate,
                                                                               certificateChain,
@@ -212,15 +222,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                                                                                                  ? serverCertificate.DecodeSubjectAlternativeNames()
                                                                                                  : [];
 
-                                                                                  if (serverCertificate?.Subject.Contains(serverName) == true &&
-                                                                                      sans.Contains($"DNS-Name={serverName}"))
+                                                                                  if (serverCertificate?.Subject.Contains(ServerName) == true &&
+                                                                                      sans.Contains($"DNS-Name={ServerName}"))
                                                                                   {
                                                                                       return (true, []);
                                                                                   }
 
                                                                                   return (false, [ "Wrong server certificate!" ]);
 
-                                                                              }
+                                                                              },
+
+                                                 Timeout:  Timeout
+
                                              );
 
             var ntsKEResponse              = ntsClient.GetNTSKERecords();
@@ -298,26 +311,28 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
         #endregion
 
-        #region TestChargingCloudTime1_CustomTLSCertificateValidation_Failed()
+        #region TestNTS_CustomTLSCertificateValidation_Failed()
 
         /// <summary>
-        /// Test the NTS client against the public NTS server ptbtime1.ptb.de,
+        /// Test the NTS client against the public NTS server,
         /// but use a custom TLS certificate validation handler.
         /// </summary>
         [Test]
-        public async Task TestChargingCloudTime1_CustomTLSCertificateValidation_Failed()
+        public async Task TestNTS_CustomTLSCertificateValidation_Failed()
         {
 
-            var serverName                 = RandomServer();
             var ntsClient                  = new NTSClient(
-                                                 serverName,
+                                                 ServerName,
                                                  RemoteCertificateValidator: (sender,
                                                                               serverCertificate,
                                                                               certificateChain,
                                                                               ntsKETLSClient,
                                                                               sslPolicyErrors) => {
                                                                                   return (false, [ "Wrong server certificate!" ]);
-                                                                              }
+                                                                              },
+
+                                                 Timeout:  Timeout
+
                                              );
 
             var ntsKEResponse              = ntsClient.GetNTSKERecords();
@@ -335,18 +350,20 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         #endregion
 
 
-        #region TestChargingCloudTime1_RequestSignedResponse()
+        #region TestNTS_RequestSignedResponse()
 
         /// <summary>
-        /// Test the NTS client against the public NTS server ptbtime1.ptb.de
+        /// Test the NTS client against the public NTS server
         /// using the NTSRequestSignedResponse extension, which should be ignored.
         /// </summary>
         [Test]
-        public async Task TestChargingCloudTime1_RequestSignedResponse()
+        public async Task TestNTS_RequestSignedResponse()
         {
 
-            var serverName                 = RandomServer();
-            var ntsClient                  = new NTSClient(serverName);
+            var ntsClient                  = new NTSClient(
+                                                 ServerName,
+                                                 Timeout:  Timeout
+                                             );
 
             var ntsKEResponse              = ntsClient.GetNTSKERecords();
 

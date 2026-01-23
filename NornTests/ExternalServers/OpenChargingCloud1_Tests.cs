@@ -1,6 +1,6 @@
 ﻿/*
  * Copyright (c) 2010-2026 GraphDefined GmbH <achim.friedland@graphdefined.com>
- * This file is part of Vanaheimr Norn <https://www.github.com/Vanaheimr/Norn>
+ * This file is part of Norn <https://www.github.com/Vanaheimr/Norn>
  *
  * Licensed under the Affero GPL license, Version 3.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,18 +15,21 @@
  * limitations under the License.
  */
 
-namespace org.GraphDefined.Vanaheimr.Norn.NTS.NTSKERecords
+#region Usings
+
+using NUnit.Framework;
+
+#endregion
+
+namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 {
 
     /// <summary>
-    /// End of Message
+    /// Test the NTS client against public NTS server 'time1.charging.cloud'.
     /// </summary>
-    /// <param name="IsCritical">Whether an unrecognized record must cause an error.</param>
-    public class EndOfMessage(Boolean IsCritical)
-
-         : NTSKE_Record(IsCritical,
-                        NTSKE_RecordTypes.EndOfMessage)
-
+    [TestFixture]
+    public class OpenChargingCloud1_Tests()
+        : ANTSServer_Tests("time1.charging.cloud")
     { }
 
 }

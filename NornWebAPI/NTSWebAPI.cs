@@ -1,5 +1,5 @@
 ﻿/*
- * Copyright (c) 2010-2025 GraphDefined GmbH <achim.friedland@graphdefined.com>
+ * Copyright (c) 2010-2026 GraphDefined GmbH <achim.friedland@graphdefined.com>
  * This file is part of Vanaheimr Norn <https://www.github.com/Vanaheimr/Norn>
  *
  * Licensed under the Affero GPL license, Version 3.0 (the "License");
@@ -245,13 +245,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS.WebAPI
         /// <param name="Timestamp">The timestamp of the request.</param>
         /// <param name="API">The HTTP API.</param>
         /// <param name="Request">A HTTP request.</param>
-        protected internal Task GETServerInfosHTTPRequest(DateTime     Timestamp,
-                                                          HTTPAPI      API,
-                                                          HTTPRequest  Request)
+        protected internal Task GETServerInfosHTTPRequest(DateTimeOffset  Timestamp,
+                                                          HTTPAPI         API,
+                                                          HTTPRequest     Request)
 
-            => OnGETServerInfosHTTPRequest.WhenAll(Timestamp,
-                                                   API ?? this,
-                                                   Request);
+            => OnGETServerInfosHTTPRequest.WhenAll(
+                   Timestamp,
+                   API ?? this,
+                   Request
+               );
 
         #endregion
 
@@ -269,15 +271,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS.WebAPI
         /// <param name="API">The HTTP API.</param>
         /// <param name="Request">A HTTP request.</param>
         /// <param name="Response">A HTTP response.</param>
-        protected internal Task GETServerInfosHTTPResponse(DateTime      Timestamp,
-                                                           HTTPAPI       API,
-                                                           HTTPRequest   Request,
-                                                           HTTPResponse  Response)
+        protected internal Task GETServerInfosHTTPResponse(DateTimeOffset  Timestamp,
+                                                           HTTPAPI         API,
+                                                           HTTPRequest     Request,
+                                                           HTTPResponse    Response)
 
-            => OnGETServerInfosHTTPResponse.WhenAll(Timestamp,
-                                                    API ?? this,
-                                                    Request,
-                                                    Response);
+            => OnGETServerInfosHTTPResponse.WhenAll(
+                   Timestamp,
+                   API ?? this,
+                   Request,
+                   Response
+               );
 
         #endregion
 

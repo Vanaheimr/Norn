@@ -1,5 +1,5 @@
 ﻿/*
- * Copyright (c) 2010-2025 GraphDefined GmbH <achim.friedland@graphdefined.com>
+ * Copyright (c) 2010-2026 GraphDefined GmbH <achim.friedland@graphdefined.com>
  * This file is part of Norn <https://www.github.com/Vanaheimr/Norn>
  *
  * Licensed under the Affero GPL license, Version 3.0 (the "License");
@@ -51,15 +51,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
             ntsServer = new NTSServer(
                             KeyPair:   new KeyPair(
-                                             Id:                   1,
-                                             PrivateKey:          "ANm7PAbjqlK+SPW/JLFXVt8U7vCpg69Xxy77rA8SN+Ce".FromBASE64(),
-                                             PublicKey:           "BNJ9BLZTcAeuPMHDDDXA0RiVNse8WH4b+/r/bA9HhDsDtTSBsrvmjbnA3w3JlC7ipvhHEkdGbFEIH+ZT0ZEekTA=".FromBASE64(),
-                                             Description:          I18NString.Create(Languages.en, "Test public key"),
-                                             EllipticCurve:       "secp256r1",
-                                             SignatureAlgorithm:  "SHA256withECDSA",
-                                             NotBefore:            Timestamp.Now,
-                                             NotAfter:             Timestamp.Now.AddMonths(1)
-                                         )
+                                           Id:                   1,
+                                           PrivateKey:          "ANm7PAbjqlK+SPW/JLFXVt8U7vCpg69Xxy77rA8SN+Ce".FromBASE64(),
+                                           PublicKey:           "BNJ9BLZTcAeuPMHDDDXA0RiVNse8WH4b+/r/bA9HhDsDtTSBsrvmjbnA3w3JlC7ipvhHEkdGbFEIH+ZT0ZEekTA=".FromBASE64(),
+                                           Description:          I18NString.Create(Languages.en, "Test public key"),
+                                           EllipticCurve:       "secp256r1",
+                                           SignatureAlgorithm:  "SHA256withECDSA",
+                                           NotBefore:            Timestamp.Now,
+                                           NotAfter:             Timestamp.Now.AddMonths(1)
+                                       )
                         );
 
         }

@@ -1,5 +1,5 @@
 ﻿/*
- * Copyright (c) 2010-2025 GraphDefined GmbH <achim.friedland@graphdefined.com>
+ * Copyright (c) 2010-2026 GraphDefined GmbH <achim.friedland@graphdefined.com>
  * This file is part of Vanaheimr Norn <https://www.github.com/Vanaheimr/Norn>
  *
  * Licensed under the Affero GPL license, Version 3.0 (the "License");
