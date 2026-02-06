@@ -469,7 +469,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS.WebAPI
             //                                 LogfilePrefix:            LogfilePrefix
             //                             );
 
-            RegisterURITemplates();
+            RegisterURLTemplates();
 
             //this.RequestTimeout        = RequestTimeout;
 
@@ -569,7 +569,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS.WebAPI
             //                                 LogfilePrefix:            LogfilePrefix
             //                             );
 
-            RegisterURITemplates();
+            RegisterURLTemplates();
 
             //this.RequestTimeout        = RequestTimeout;
 
@@ -670,7 +670,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS.WebAPI
         /// The following will register HTTP overlays for text/html
         /// showing a html representation of the Norn common API!
         /// </summary>
-        private void RegisterURITemplates()
+        private void RegisterURLTemplates()
         {
 
             #region / (HTTPRoot)
