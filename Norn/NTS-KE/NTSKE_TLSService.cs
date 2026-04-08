@@ -237,8 +237,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             certGenerator.SetSubjectDN   (new X509Name(SubjectName));
             certGenerator.SetIssuerDN    (new X509Name(SubjectName));  // self-signed!
 
-            certGenerator.SetNotBefore   (DateTime.UtcNow.AddDays(-1));
-            certGenerator.SetNotAfter    (DateTime.UtcNow.AddDays(30));
+            certGenerator.SetNotBefore   (Timestamp.Now.AddDays(-1).DateTime);
+            certGenerator.SetNotAfter    (Timestamp.Now.AddDays(30).DateTime);
 
             certGenerator.SetPublicKey   (keyPair.Public);
 

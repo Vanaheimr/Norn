@@ -17,9 +17,6 @@
 
 #region Usings
 
-using System.Collections.Concurrent;
-using System.Diagnostics.CodeAnalysis;
-
 using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Norn.NTS;
 
@@ -386,7 +383,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         #region (static) GetCurrentNTPTimestamp(Timestamp = null)
 
         /// <summary>
-        /// Converts DateTime.UtcNow to a 64-bit NTP time format (seconds since 1900).
+        /// Converts Timestamp.Now to a 64-bit NTP time format (seconds since 1900).
         /// The upper 32 bits contain the seconds, the lower 32 bits the fraction of a second as 32-bit fixed-point (2^32 is 1 second).
         /// </summary>
         /// <param name="Timestamp">An optional timestamp (UTC) to be converted to a NTP timestamp.</param>
@@ -394,7 +391,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         {
 
             var ntpEpoch  = new DateTime(1900, 1, 1, 0, 0, 0, DateTimeKind.Utc);
-            var now       = Timestamp ?? DateTime.UtcNow;
+            var now       = Timestamp ?? Illias.Timestamp.Now;
             var ts        = now - ntpEpoch;
 
             var seconds   = (UInt64) ts.TotalSeconds;
