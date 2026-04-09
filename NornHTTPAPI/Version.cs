@@ -21,11 +21,11 @@ using org.GraphDefined.Vanaheimr.Illias;
 
 #endregion
 
-namespace org.GraphDefined.Vanaheimr.Norn
+namespace org.GraphDefined.Vanaheimr.Norn.HTTPAPI
 {
 
     /// <summary>
-    /// This Norn version 1.0
+    /// The Norn HTTP API version 1.0
     /// </summary>
     public static class Version
     {

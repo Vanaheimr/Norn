@@ -21,22 +21,22 @@ using org.GraphDefined.Vanaheimr.Illias;
 
 #endregion
 
-namespace org.GraphDefined.Vanaheimr.Norn
+namespace org.GraphDefined.Vanaheimr.Norn.Drone.WebAPI
 {
 
     /// <summary>
-    /// This Norn version 1.0
+    /// The Norn Drone WebAPI version 1.0
     /// </summary>
     public static class Version
     {
 
         /// <summary>
-        /// This Norn version 1.0 as text "v1.0".
+        /// This Norn WebAPI version 1.0 as text "v1.0".
         /// </summary>
         public const           String      String   = "v1.0";
 
         /// <summary>
-        /// This Norn version "1.0" as version identification.
+        /// This Norn WebAPI version "1.0" as version identification.
         /// </summary>
         public readonly static Version_Id  Id       = Version_Id.Parse(String[1..]);
 

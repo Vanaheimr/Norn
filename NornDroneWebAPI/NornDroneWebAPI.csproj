@@ -4,12 +4,10 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <RootNamespace>org.GraphDefined.Vanaheimr.Norn.WebAPI</RootNamespace>
-    <AssemblyName>org.GraphDefined.Vanaheimr.Norn.WebAPI</AssemblyName>
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\NornHTTPAPI\NornHTTPAPI.csproj" />
+    <ProjectReference Include="..\NornDroneHTTPAPI\NornDroneHTTPAPI.csproj" />
   </ItemGroup>
 
 </Project>

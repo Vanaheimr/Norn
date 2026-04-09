@@ -17,8 +17,6 @@
 
 #region Usings
 
-using System.Reflection;
-using System.Collections.Concurrent;
 using System.Security.Authentication;
 
 using Newtonsoft.Json.Linq;
@@ -32,19 +30,20 @@ using org.GraphDefined.Vanaheimr.Hermod.SMTP;
 using org.GraphDefined.Vanaheimr.Hermod.Logging;
 using org.GraphDefined.Vanaheimr.Hermod.Sockets;
 using org.GraphDefined.Vanaheimr.Hermod.Sockets.TCP;
-
-using org.GraphDefined.Vanaheimr.Norn.HTTPAPI;
 using org.GraphDefined.Vanaheimr.Norn.Monitoring;
+using System.Collections.Concurrent;
+using org.GraphDefined.Vanaheimr.Norn.NTS;
+using System.Reflection;
 
 #endregion
 
-namespace org.GraphDefined.Vanaheimr.Norn.NTS.WebAPI
+namespace org.GraphDefined.Vanaheimr.Norn.HTTPAPI
 {
 
     /// <summary>
-    /// Norn WebAPI extention methods.
+    /// Norn HTTPAPI extention methods.
     /// </summary>
-    public static class NTSWebAPIExtensions
+    public static class NornHTTPAPIExtensions
     {
 
         #region ParseRoamingNetwork(this HTTPRequest, HTTPServer, out RoamingNetwork, out HTTPResponse)
@@ -139,9 +138,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS.WebAPI
 
 
     /// <summary>
-    /// A HTTP API to configure and access the NTS-KE/NTS UDP server.
+    /// A HTTP API to configure and access a Norn drone.
     /// </summary>
-    public partial class NTSWebAPI : HTTPExtAPI
+    public partial class NornHTTPAPI : HTTPExtAPI
     {
 
         #region Data
@@ -154,17 +153,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS.WebAPI
         /// <summary>
         /// The default HTTP service name.
         /// </summary>
-        public new const            String              DefaultHTTPServiceName    = $"Norn {Version.String} WebAPI {Norn.WebAPI.Version.String}";
+        public new const            String              DefaultHTTPServiceName    = $"Norn {Version.String} HTTPAPI";
 
         /// <summary>
         /// The default HTTP realm, if HTTP Basic Authentication is used.
         /// </summary>
-        public     const            String              DefaultHTTPRealm          = $"Norn {Version.String} WebAPI {Norn.WebAPI.Version.String}";
+        public     const            String              DefaultHTTPRealm          = $"Norn {Version.String} HTTPAPI";
 
         /// <summary>
         /// The HTTP root for embedded ressources.
         /// </summary>
-        public new const            String              HTTPRoot                  = "org.graphdefined.vanaheimr.norn.WebAPI.HTTPRoot.";
+        public new const            String              HTTPRoot                  = "org.graphdefined.vanaheimr.norn.HTTPAPI.HTTPRoot.";
 
 
         //ToDo: http://www.iana.org/form/media-types
@@ -206,16 +205,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS.WebAPI
         public HTTPEventSource<JObject>                     DebugLog                { get; }
 
 
-        public NornHTTPAPI                                  HTTPAPI                 { get; }
+        public HTTPAPILogger?                               Logger                  { get; set; }
 
-        public WebAPILogger?                                Logger                  { get; set; }
-
-
-        /// <summary>
-        /// An enumeration of all measurement rounds.
-        /// </summary>
-        public IEnumerable<MeasurementRound>                MeasurementRounds
-            => measurementRounds.Values;
+        public NTSServer                                    NTSServer               { get; }
 
         #endregion
 
@@ -298,90 +290,90 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS.WebAPI
 
         #region Constructor(s)
 
-        static NTSWebAPI()
+        static NornHTTPAPI()
         {
             // Using static variables within normal constructors seems to
             // have a problem setting them up to their expected values!
         }
 
-        #region NTSWebAPI(NTSServer, HTTPHostname, ...)
+        #region NornHTTPAPI(NTSServer, HTTPHostname, ...)
 
         /// <summary>
-        /// Attach the Norn WebAPI to the given HTTP server.
+        /// Attach the Norn HTTPAPI to the given HTTP server.
         /// </summary>
         /// <param name="NTSServer">The NTS server.</param>
-        public NTSWebAPI(NornHTTPAPI                                                HTTPAPI,
+        public NornHTTPAPI(NTSServer                                                  NTSServer,
 
-                         HTTPHostname                                               HTTPHostname,
-                         String?                                                    ExternalDNSName                  = null,
-                         IPPort?                                                    HTTPServerPort                   = null,
-                         HTTPPath?                                                  BasePath                         = null,
-                         String?                                                    HTTPServerName                   = DefaultHTTPServerName,
+                           HTTPHostname                                               HTTPHostname,
+                           String?                                                    ExternalDNSName                  = null,
+                           IPPort?                                                    HTTPServerPort                   = null,
+                           HTTPPath?                                                  BasePath                         = null,
+                           String?                                                    HTTPServerName                   = DefaultHTTPServerName,
 
-                         HTTPPath?                                                  URLPathPrefix                    = null,
-                         String?                                                    HTTPServiceName                  = DefaultHTTPServiceName,
-                         String?                                                    HTMLTemplate                     = null,
-                         JObject?                                                   APIVersionHashes                 = null,
+                           HTTPPath?                                                  URLPathPrefix                    = null,
+                           String?                                                    HTTPServiceName                  = DefaultHTTPServiceName,
+                           String?                                                    HTMLTemplate                     = null,
+                           JObject?                                                   APIVersionHashes                 = null,
 
-                         ServerCertificateSelectorDelegate?                         ServerCertificateSelector        = null,
-                         RemoteTLSClientCertificateValidationHandler<IHTTPServer>?  ClientCertificateValidator       = null,
-                         LocalCertificateSelectionHandler?                          LocalCertificateSelector         = null,
-                         SslProtocols?                                              AllowedTLSProtocols              = null,
-                         Boolean?                                                   ClientCertificateRequired        = null,
-                         Boolean?                                                   CheckCertificateRevocation       = null,
+                           ServerCertificateSelectorDelegate?                         ServerCertificateSelector        = null,
+                           RemoteTLSClientCertificateValidationHandler<IHTTPServer>?  ClientCertificateValidator       = null,
+                           LocalCertificateSelectionHandler?                          LocalCertificateSelector         = null,
+                           SslProtocols?                                              AllowedTLSProtocols              = null,
+                           Boolean?                                                   ClientCertificateRequired        = null,
+                           Boolean?                                                   CheckCertificateRevocation       = null,
 
-                         ServerThreadNameCreatorDelegate?                           ServerThreadNameCreator          = null,
-                         ServerThreadPriorityDelegate?                              ServerThreadPrioritySetter       = null,
-                         Boolean?                                                   ServerThreadIsBackground         = null,
-                         ConnectionIdBuilder?                                       ConnectionIdBuilder              = null,
-                         TimeSpan?                                                  ConnectionTimeout                = null,
-                         UInt32?                                                    MaxClientConnections             = null,
+                           ServerThreadNameCreatorDelegate?                           ServerThreadNameCreator          = null,
+                           ServerThreadPriorityDelegate?                              ServerThreadPrioritySetter       = null,
+                           Boolean?                                                   ServerThreadIsBackground         = null,
+                           ConnectionIdBuilder?                                       ConnectionIdBuilder              = null,
+                           TimeSpan?                                                  ConnectionTimeout                = null,
+                           UInt32?                                                    MaxClientConnections             = null,
 
-                         Organization_Id?                                           AdminOrganizationId              = null,
-                         EMailAddress?                                              APIRobotEMailAddress             = null,
-                         String?                                                    APIRobotGPGPassphrase            = null,
-                         ISMTPClient?                                               SMTPClient                       = null,
+                           Organization_Id?                                           AdminOrganizationId              = null,
+                           EMailAddress?                                              APIRobotEMailAddress             = null,
+                           String?                                                    APIRobotGPGPassphrase            = null,
+                           ISMTPClient?                                               SMTPClient                       = null,
 
-                         PasswordQualityCheckDelegate?                              PasswordQualityCheck             = null,
-                         HTTPCookieName?                                            CookieName                       = null,
-                         Boolean                                                    UseSecureCookies                 = true,
-                         TimeSpan?                                                  MaxSignInSessionLifetime         = null,
-                         Languages?                                                 DefaultLanguage                  = null,
-                         Byte?                                                      MinUserIdLength                  = null,
-                         Byte?                                                      MinRealmLength                   = null,
-                         Byte?                                                      MinUserNameLength                = null,
-                         Byte?                                                      MinUserGroupIdLength             = null,
-                         UInt16?                                                    MinAPIKeyLength                  = null,
-                         Byte?                                                      MinMessageIdLength               = null,
-                         Byte?                                                      MinOrganizationIdLength          = null,
-                         Byte?                                                      MinOrganizationGroupIdLength     = null,
-                         Byte?                                                      MinNotificationMessageIdLength   = null,
-                         Byte?                                                      MinNewsPostingIdLength           = null,
-                         Byte?                                                      MinNewsBannerIdLength            = null,
-                         Byte?                                                      MinFAQIdLength                   = null,
+                           PasswordQualityCheckDelegate?                              PasswordQualityCheck             = null,
+                           HTTPCookieName?                                            CookieName                       = null,
+                           Boolean                                                    UseSecureCookies                 = true,
+                           TimeSpan?                                                  MaxSignInSessionLifetime         = null,
+                           Languages?                                                 DefaultLanguage                  = null,
+                           Byte?                                                      MinUserIdLength                  = null,
+                           Byte?                                                      MinRealmLength                   = null,
+                           Byte?                                                      MinUserNameLength                = null,
+                           Byte?                                                      MinUserGroupIdLength             = null,
+                           UInt16?                                                    MinAPIKeyLength                  = null,
+                           Byte?                                                      MinMessageIdLength               = null,
+                           Byte?                                                      MinOrganizationIdLength          = null,
+                           Byte?                                                      MinOrganizationGroupIdLength     = null,
+                           Byte?                                                      MinNotificationMessageIdLength   = null,
+                           Byte?                                                      MinNewsPostingIdLength           = null,
+                           Byte?                                                      MinNewsBannerIdLength            = null,
+                           Byte?                                                      MinFAQIdLength                   = null,
 
-                         Boolean?                                                   DisableMaintenanceTasks          = null,
-                         TimeSpan?                                                  MaintenanceInitialDelay          = null,
-                         TimeSpan?                                                  MaintenanceEvery                 = null,
+                           Boolean?                                                   DisableMaintenanceTasks          = null,
+                           TimeSpan?                                                  MaintenanceInitialDelay          = null,
+                           TimeSpan?                                                  MaintenanceEvery                 = null,
 
-                         Boolean?                                                   DisableWardenTasks               = null,
-                         TimeSpan?                                                  WardenInitialDelay               = null,
-                         TimeSpan?                                                  WardenCheckEvery                 = null,
+                           Boolean?                                                   DisableWardenTasks               = null,
+                           TimeSpan?                                                  WardenInitialDelay               = null,
+                           TimeSpan?                                                  WardenCheckEvery                 = null,
 
-                         IEnumerable<URLWithAPIKey>?                                RemoteAuthServers                = null,
-                         IEnumerable<APIKey_Id>?                                    RemoteAuthAPIKeys                = null,
+                           IEnumerable<URLWithAPIKey>?                                RemoteAuthServers                = null,
+                           IEnumerable<APIKey_Id>?                                    RemoteAuthAPIKeys                = null,
 
-                         Boolean?                                                   IsDevelopment                    = null,
-                         IEnumerable<String>?                                       DevelopmentServers               = null,
-                         Boolean                                                    SkipURLTemplates                 = false,
-                         String?                                                    DatabaseFileName                 = DefaultHTTPExtAPI_DatabaseFileName,
-                         Boolean                                                    DisableNotifications             = false,
-                         Boolean                                                    DisableLogging                   = false,
-                         String?                                                    LoggingPath                      = null,
-                         String?                                                    LogfileName                      = DefaultHTTPExtAPI_LogfileName,
-                         LogfileCreatorDelegate?                                    LogfileCreator                   = null,
-                         DNSClient?                                                 DNSClient                        = null,
-                         Boolean                                                    AutoStart                        = false)
+                           Boolean?                                                   IsDevelopment                    = null,
+                           IEnumerable<String>?                                       DevelopmentServers               = null,
+                           Boolean                                                    SkipURLTemplates                 = false,
+                           String?                                                    DatabaseFileName                 = DefaultHTTPExtAPI_DatabaseFileName,
+                           Boolean                                                    DisableNotifications             = false,
+                           Boolean                                                    DisableLogging                   = false,
+                           String?                                                    LoggingPath                      = null,
+                           String?                                                    LogfileName                      = DefaultHTTPExtAPI_LogfileName,
+                           LogfileCreatorDelegate?                                    LogfileCreator                   = null,
+                           DNSClient?                                                 DNSClient                        = null,
+                           Boolean                                                    AutoStart                        = false)
 
             : base(HTTPHostname,
                    ExternalDNSName,
@@ -451,13 +443,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS.WebAPI
                    LoggingPath,
                    LogfileName,
                    LogfileCreator,
-                   DNSClient ?? HTTPAPI.DNSClient,
+                   DNSClient ?? NTSServer.DNSClient,
 
                    AutoStart: false)
 
         {
 
-            this.HTTPAPI               = HTTPAPI;
+            this.NTSServer             = NTSServer;
 
             this.HTTPRealm             = HTTPRealm.IsNotNullOrEmpty() ? HTTPRealm : DefaultHTTPRealm;
             this.HTTPLogins            = HTTPLogins ?? [];
@@ -486,13 +478,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS.WebAPI
 
         #endregion
 
-        #region NTSWebAPI(NTSServer, HTTPServer,   ...)
+        #region NornHTTPAPI(NTSServer, HTTPServer,   ...)
 
         /// <summary>
-        /// Attach the Norn WebAPI to the given HTTP server.
+        /// Attach the Norn HTTPAPI to the given HTTP server.
         /// </summary>
         /// <param name="NTSServer">The NTS server.</param>
-        public NTSWebAPI(NornHTTPAPI                                 HTTPAPI,
+        public NornHTTPAPI(NTSServer                                   NTSServer,
 
                          HTTPServer                                  HTTPServer,
                          HTTPHostname?                               HTTPHostname              = null,
@@ -557,7 +549,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS.WebAPI
 
         {
 
-            this.HTTPAPI               = HTTPAPI;
+            this.NTSServer             = NTSServer;
 
             this.HTTPRealm             = HTTPRealm.IsNotNullOrEmpty() ? HTTPRealm : DefaultHTTPRealm;
             this.HTTPLogins            = HTTPLogins ?? [];
@@ -589,27 +581,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS.WebAPI
         #endregion
 
 
-        public Task AddMeasurementRound(MeasurementRound MeasurementRound)
-        {
-
-            measurementRounds.TryAdd(
-                MeasurementRound.Timestamp,
-                MeasurementRound
-            );
-
-            return Task.CompletedTask;
-
-        }
-
-
-
         #region (private) RegisterURLTemplates()
 
         #region Manage HTTP Resources
 
         private readonly Tuple<String, Assembly>[] resourceAssemblies = [
-            new Tuple<String, Assembly>(NTSWebAPI. HTTPRoot, typeof(NTSWebAPI). Assembly),
-            new Tuple<String, Assembly>(HTTPExtAPI.HTTPRoot, typeof(HTTPExtAPI).Assembly)
+            new Tuple<String, Assembly>(NornHTTPAPI.HTTPRoot, typeof(NornHTTPAPI).Assembly),
+            new Tuple<String, Assembly>(HTTPExtAPI. HTTPRoot, typeof(HTTPExtAPI). Assembly)
         ];
 
         #region (protected override) GetResourceStream       (ResourceName)
@@ -720,10 +698,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS.WebAPI
                             AccessControlAllowOrigin   = "*",
                             AccessControlAllowMethods  = [ "OPTIONS", "GET" ],
                             AccessControlAllowHeaders  = [ "Authorization" ],
-                            ContentType                = HTTPContentType.Text.HTML_UTF8,
-                            Content                    = MixWithHTMLTemplate(
-                                                             "index.shtml"
-                                                         ).ToUTF8Bytes(),
+                            ContentType                = HTTPContentType.Text.PLAIN,
+                            Content                    = "Hello world!".ToUTF8Bytes(),
+                                                         //MixWithHTMLTemplate(
+                                                         //    "index.shtml"
+                                                         //).ToUTF8Bytes(),
                             Connection                 = ConnectionType.Close,
                             Vary                       = "Accept"
                         }.AsImmutable)
@@ -760,69 +739,69 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS.WebAPI
 
             #region GET      ~/serverInfos
 
-            HTTPServer.AddMethodCallback(
+//            HTTPServer.AddMethodCallback(
 
-                this,
-                HTTPHostname.Any,
-                HTTPMethod.GET,
-                URLPathPrefix + "serverInfos",
-                HTTPContentType.Application.JSON_UTF8,
-                HTTPRequestLogger:   GETServerInfosHTTPRequest,
-                HTTPResponseLogger:  GETServerInfosHTTPResponse,
-                HTTPDelegate:        request => {
+//                this,
+//                HTTPHostname.Any,
+//                HTTPMethod.GET,
+//                URLPathPrefix + "serverInfos",
+//                HTTPContentType.Application.JSON_UTF8,
+//                HTTPRequestLogger:   GETServerInfosHTTPRequest,
+//                HTTPResponseLogger:  GETServerInfosHTTPResponse,
+//                HTTPDelegate:        request => {
 
-                    #region numberOfRequestedNTSCookies
+//                    #region numberOfRequestedNTSCookies
 
-                    var numberOfRequestedNTSCookies = request.QueryString.GetUInt16("n") ?? 7;
+//                    var numberOfRequestedNTSCookies = request.QueryString.GetUInt16("n") ?? 7;
 
-                    //if (request.ParsedURLParameters.Length < 1)
-                    //    return Task.FromResult(
-                    //               new HTTPResponse.Builder(request) {
-                    //                   HTTPStatusCode             = HTTPStatusCode.BadRequest,
-                    //                   //AccessControlAllowMethods  = [ "OPTIONS", "GET", "POST", "PUT", "DELETE" ],
-                    //                   AccessControlAllowHeaders  = [ "Authorization" ]
-                    //               }.AsImmutable
-                    //           );
+//                    //if (request.ParsedURLParameters.Length < 1)
+//                    //    return Task.FromResult(
+//                    //               new HTTPResponse.Builder(request) {
+//                    //                   HTTPStatusCode             = HTTPStatusCode.BadRequest,
+//                    //                   //AccessControlAllowMethods  = [ "OPTIONS", "GET", "POST", "PUT", "DELETE" ],
+//                    //                   AccessControlAllowHeaders  = [ "Authorization" ]
+//                    //               }.AsImmutable
+//                    //           );
 
-                    //var ocationId = Location_Id.TryParse(Request.ParsedURLParameters[0]);
+//                    //var ocationId = Location_Id.TryParse(Request.ParsedURLParameters[0]);
 
-                    //if (!LocationId.HasValue)
-                    //{
+//                    //if (!LocationId.HasValue)
+//                    //{
 
-                    //    OCPIResponseBuilder = new OCPIResponse.Builder(Request) {
-                    //        StatusCode           = 2001,
-                    //        StatusMessage        = "Invalid location identification!",
-                    //        HTTPResponseBuilder  = new HTTPResponse.Builder(Request.HTTPRequest) {
-                    //            HTTPStatusCode             = HTTPStatusCode.BadRequest,
-                    //            //AccessControlAllowMethods  = [ "OPTIONS", "GET", "POST", "PUT", "DELETE" ],
-                    //            AccessControlAllowHeaders  = [ "Authorization" ]
-                    //        }
-                    //    };
+//                    //    OCPIResponseBuilder = new OCPIResponse.Builder(Request) {
+//                    //        StatusCode           = 2001,
+//                    //        StatusMessage        = "Invalid location identification!",
+//                    //        HTTPResponseBuilder  = new HTTPResponse.Builder(Request.HTTPRequest) {
+//                    //            HTTPStatusCode             = HTTPStatusCode.BadRequest,
+//                    //            //AccessControlAllowMethods  = [ "OPTIONS", "GET", "POST", "PUT", "DELETE" ],
+//                    //            AccessControlAllowHeaders  = [ "Authorization" ]
+//                    //        }
+//                    //    };
 
-                    //    return false;
+//                    //    return false;
 
-                    //}
+//                    //}
 
-                    #endregion
+//                    #endregion
 
-                    return Task.FromResult(
-                               new HTTPResponse.Builder(request) {
-                                   HTTPStatusCode             = HTTPStatusCode.OK,
-                                   Server                     = HTTPServiceName,
-                                   Date                       = Timestamp.Now,
-                                   AccessControlAllowOrigin   = "*",
-                                   AccessControlAllowMethods  = [ "OPTIONS", "GET" ],
-//                                   AccessControlAllowHeaders  = [ "Authorization" ],
-                                   ContentType                = HTTPContentType.Application.JSON_UTF8,
-                                   Content                    = HTTPAPI.NTSServer.GetServerInfos(numberOfRequestedNTSCookies).First().ToJSON().ToUTF8Bytes(),
-                                   Connection                 = ConnectionType.Close,
-                                   Vary                       = "Accept"
-                               }.AsImmutable
-                           );
+//                    return Task.FromResult(
+//                               new HTTPResponse.Builder(request) {
+//                                   HTTPStatusCode             = HTTPStatusCode.OK,
+//                                   Server                     = HTTPServiceName,
+//                                   Date                       = Timestamp.Now,
+//                                   AccessControlAllowOrigin   = "*",
+//                                   AccessControlAllowMethods  = [ "OPTIONS", "GET" ],
+////                                   AccessControlAllowHeaders  = [ "Authorization" ],
+//                                   ContentType                = HTTPContentType.Application.JSON_UTF8,
+//                                   Content                    = NTSServer.GetServerInfos(numberOfRequestedNTSCookies).First().ToJSON().ToUTF8Bytes(),
+//                                   Connection                 = ConnectionType.Close,
+//                                   Vary                       = "Accept"
+//                               }.AsImmutable
+//                           );
 
-                }
+//                }
 
-            );
+//            );
 
             #endregion
 
