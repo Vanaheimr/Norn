@@ -18,7 +18,7 @@
 #region Usings
 
 using NUnit.Framework;
-
+using org.GraphDefined.Vanaheimr.Hermod;
 using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Norn.NTP;
 using org.GraphDefined.Vanaheimr.Norn.NTS;
@@ -119,10 +119,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                                                                                       sans.Contains("DNS-Name=ntpKE1.example.org") &&
                                                                                       sans.Contains("DNS-Name=ntpKE2.example.org"))
                                                                                   {
-                                                                                      return (true, []);
+                                                                                      return TLSValidationResult.Success();
                                                                                   }
 
-                                                                                  return (false, ["Wrong server certificate!"]);
+                                                                                  return TLSValidationResult.Failed("Wrong server certificate!");
 
                                                                               }
                                              );
@@ -227,10 +227,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                                                                                       sans.Contains("DNS-Name=ntpKE1.example.org") &&
                                                                                       sans.Contains("DNS-Name=ntpKE2.example.org"))
                                                                                   {
-                                                                                      return (true, []);
+                                                                                      return TLSValidationResult.Success();
                                                                                   }
 
-                                                                                  return (false, ["Wrong server certificate!"]);
+                                                                                  return TLSValidationResult.Failed("Wrong server certificate!");
 
                                                                               }
                                              );

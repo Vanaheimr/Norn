@@ -26,6 +26,7 @@ using System.Security.Cryptography.X509Certificates;
 using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Norn.NTP;
 using org.GraphDefined.Vanaheimr.Norn.NTS;
+using org.GraphDefined.Vanaheimr.Hermod;
 
 #endregion
 
@@ -283,7 +284,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                                     // Accept the certificate (standard chain validation is done by Norn)
                                     // We could do custom validation here too, but for monitoring
                                     // we want to capture info even if the cert has issues.
-                                    return (true, []);
+                                    return TLSValidationResult.Success();
 
                                 },
                                 Timeout: config.NTSKETimeout

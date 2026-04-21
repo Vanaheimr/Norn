@@ -40,7 +40,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS.WebAPI
         /// <summary>
         /// The Norn WebAPI logger.
         /// </summary>
-        public class WebAPILogger : HTTPServerLogger
+        public class WebAPILogger : HTTPServerLoggerX
         {
 
             #region Data
@@ -134,7 +134,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS.WebAPI
 
                                 LogfileCreatorDelegate?      LogFileCreator              = null)
 
-                : base(WebAPI.HTTPServer,
+                : base(WebAPI.HTTPBaseAPI.HTTPBaseAPI.HTTPServer,
                        LoggingPath,
                        Context,
 
@@ -165,15 +165,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS.WebAPI
                                handler => WebAPI.OnGETServerInfosHTTPRequest  += handler,
                                handler => WebAPI.OnGETServerInfosHTTPRequest -= handler,
                                "GETServerInfos", "Request",  "All").
-                    RegisterDefaultConsoleLogTarget(this).
-                    RegisterDefaultDiscLogTarget(this);
+                    RegisterDefaultConsoleLogTargetX(this).
+                    RegisterDefaultDiscLogTargetX(this);
 
                 RegisterEvent2("OnGETServerInfosHTTPResponse",
                                handler => WebAPI.OnGETServerInfosHTTPResponse += handler,
                                handler => WebAPI.OnGETServerInfosHTTPResponse -= handler,
                                "GETServerInfos", "Response", "All").
-                    RegisterDefaultConsoleLogTarget(this).
-                    RegisterDefaultDiscLogTarget(this);
+                    RegisterDefaultConsoleLogTargetX(this).
+                    RegisterDefaultDiscLogTargetX(this);
 
                 #endregion
 

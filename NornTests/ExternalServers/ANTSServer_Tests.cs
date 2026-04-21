@@ -18,7 +18,7 @@
 #region Usings
 
 using NUnit.Framework;
-
+using org.GraphDefined.Vanaheimr.Hermod;
 using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Norn.NTP;
 using org.GraphDefined.Vanaheimr.Norn.NTS;
@@ -225,10 +225,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                                                                                   if (serverCertificate?.Subject.Contains(ServerName) == true &&
                                                                                       sans.Contains($"DNS-Name={ServerName}"))
                                                                                   {
-                                                                                      return (true, []);
+                                                                                      return TLSValidationResult.Success();
                                                                                   }
 
-                                                                                  return (false, [ "Wrong server certificate!" ]);
+                                                                                  return TLSValidationResult.Failed("Wrong server certificate!");
 
                                                                               },
 
@@ -328,7 +328,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                                                                               certificateChain,
                                                                               ntsKETLSClient,
                                                                               sslPolicyErrors) => {
-                                                                                  return (false, [ "Wrong server certificate!" ]);
+                                                                                  return TLSValidationResult.Failed("Wrong server certificate!");
                                                                               },
 
                                                  Timeout:  Timeout

@@ -191,15 +191,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 var x509Certificates = certList.Select(cert => X509CertificateLoader.LoadCertificate(cert.GetEncoded())).ToArray();
 
                 // Validate the certificate using the provided delegate
-                var (isValid, errors) = remoteCertificateValidator(
-                                            this,
-                                            remoteCertificate,
-                                            chain,
-                                            NTSKETLSClient,
-                                            SslPolicyErrors.None
-                                        );
+                var tlsValidationResult = remoteCertificateValidator(
+                                              this,
+                                              remoteCertificate,
+                                              chain,
+                                              NTSKETLSClient,
+                                              SslPolicyErrors.None
+                                          );
 
-                if (!isValid)
+                if (!tlsValidationResult.IsValid)
                 {
                     throw new TlsFatalAlert(AlertDescription.certificate_unknown);
                 }

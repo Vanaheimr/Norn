@@ -17,6 +17,8 @@
 
 #region Usings
 
+using System.Reflection;
+using System.Collections.Concurrent;
 using System.Security.Authentication;
 
 using Newtonsoft.Json.Linq;
@@ -24,16 +26,15 @@ using Newtonsoft.Json.Linq;
 using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Hermod;
 using org.GraphDefined.Vanaheimr.Hermod.DNS;
+using org.GraphDefined.Vanaheimr.Hermod.TCP;
 using org.GraphDefined.Vanaheimr.Hermod.HTTP;
 using org.GraphDefined.Vanaheimr.Hermod.Mail;
 using org.GraphDefined.Vanaheimr.Hermod.SMTP;
 using org.GraphDefined.Vanaheimr.Hermod.Logging;
 using org.GraphDefined.Vanaheimr.Hermod.Sockets;
-using org.GraphDefined.Vanaheimr.Hermod.Sockets.TCP;
-using org.GraphDefined.Vanaheimr.Norn.Monitoring;
-using System.Collections.Concurrent;
+
 using org.GraphDefined.Vanaheimr.Norn.NTS;
-using System.Reflection;
+using org.GraphDefined.Vanaheimr.Norn.Monitoring;
 
 #endregion
 
@@ -140,7 +141,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.HTTPAPI
     /// <summary>
     /// A HTTP API to configure and access a Norn drone.
     /// </summary>
-    public partial class NornHTTPAPI : HTTPExtAPI
+    public partial class NornHTTPAPI : AHTTPExtAPIExtension1<HTTPExtAPI>
     {
 
         #region Data
@@ -233,6 +234,64 @@ namespace org.GraphDefined.Vanaheimr.Norn.HTTPAPI
         #endregion
 
 
+        #region (protected internal) GetRootRequest      (Request)
+
+        /// <summary>
+        /// An event sent whenever a GET / request was received.
+        /// </summary>
+        public HTTPRequestLogEvent OnGetRootRequest = new();
+
+        /// <summary>
+        /// An event sent whenever a GET / request was received.
+        /// </summary>
+        /// <param name="Timestamp">The timestamp of the request.</param>
+        /// <param name="API">The Common API.</param>
+        /// <param name="Request">A HTTP request.</param>
+        protected internal Task GetRootRequest(DateTimeOffset       Timestamp,
+                                               Hermod.HTTP.HTTPAPI  API,
+                                               HTTPRequest          Request,
+                                               CancellationToken    CancellationToken)
+
+            => OnGetRootRequest.WhenAll(
+                   Timestamp,
+                   API,
+                   Request,
+                   CancellationToken
+               );
+
+        #endregion
+
+        #region (protected internal) GetRootResponse     (Response)
+
+        /// <summary>
+        /// An event sent whenever a GET / response was sent.
+        /// </summary>
+        public HTTPResponseLogEvent OnGetRootResponse = new();
+
+        /// <summary>
+        /// An event sent whenever a GET / response was sent.
+        /// </summary>
+        /// <param name="Timestamp">The timestamp of the request.</param>
+        /// <param name="API">The Common API.</param>
+        /// <param name="Request">A HTTP request.</param>
+        /// <param name="Response">A HTTP response.</param>
+        protected internal Task GetRootResponse(DateTimeOffset       Timestamp,
+                                                Hermod.HTTP.HTTPAPI  API,
+                                                HTTPRequest          Request,
+                                                HTTPResponse         Response,
+                                                CancellationToken    CancellationToken)
+
+            => OnGetRootResponse.WhenAll(
+                   Timestamp,
+                   API,
+                   Request,
+                   Response,
+                   CancellationToken
+               );
+
+        #endregion
+
+
         #region (protected internal) GETServerInfosHTTPRequest  (Request)
 
         /// <summary>
@@ -248,12 +307,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.HTTPAPI
         /// <param name="Request">A HTTP request.</param>
         protected internal Task GETServerInfosHTTPRequest(DateTimeOffset       Timestamp,
                                                           Hermod.HTTP.HTTPAPI  API,
-                                                          HTTPRequest          Request)
+                                                          HTTPRequest          Request,
+                                                          CancellationToken    CancellationToken = default)
 
             => OnGETServerInfosHTTPRequest.WhenAll(
                    Timestamp,
-                   API ?? this,
-                   Request
+                   API,
+                   Request,
+                   CancellationToken
                );
 
         #endregion
@@ -275,13 +336,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.HTTPAPI
         protected internal Task GETServerInfosHTTPResponse(DateTimeOffset       Timestamp,
                                                            Hermod.HTTP.HTTPAPI  API,
                                                            HTTPRequest          Request,
-                                                           HTTPResponse         Response)
+                                                           HTTPResponse         Response,
+                                                           CancellationToken    CancellationToken = default)
 
             => OnGETServerInfosHTTPResponse.WhenAll(
                    Timestamp,
-                   API ?? this,
+                   API,
                    Request,
-                   Response
+                   Response,
+                   CancellationToken
                );
 
         #endregion
@@ -290,162 +353,79 @@ namespace org.GraphDefined.Vanaheimr.Norn.HTTPAPI
 
         #region Constructor(s)
 
-        static NornHTTPAPI()
-        {
-            // Using static variables within normal constructors seems to
-            // have a problem setting them up to their expected values!
-        }
-
-        #region NornHTTPAPI(NTSServer, HTTPHostname, ...)
-
         /// <summary>
         /// Attach the Norn HTTPAPI to the given HTTP server.
         /// </summary>
         /// <param name="NTSServer">The NTS server.</param>
-        public NornHTTPAPI(NTSServer                                                  NTSServer,
+        public NornHTTPAPI(NTSServer                      NTSServer,
+                           HTTPExtAPI                     HTTPAPI,
 
-                           HTTPHostname                                               HTTPHostname,
-                           String?                                                    ExternalDNSName                  = null,
-                           IPPort?                                                    HTTPServerPort                   = null,
-                           HTTPPath?                                                  BasePath                         = null,
-                           String?                                                    HTTPServerName                   = DefaultHTTPServerName,
+                           IEnumerable<HTTPHostname>?     Hostnames                 = null,
+                           HTTPPath?                      RootPath                  = null,
+                           IEnumerable<HTTPContentType>?  HTTPContentTypes          = null,
+                           I18NString?                    Description               = null,
 
-                           HTTPPath?                                                  URLPathPrefix                    = null,
-                           String?                                                    HTTPServiceName                  = DefaultHTTPServiceName,
-                           String?                                                    HTMLTemplate                     = null,
-                           JObject?                                                   APIVersionHashes                 = null,
+                           HTTPPath?                      BasePath                  = null,  // For URL prefixes in HTML!
 
-                           ServerCertificateSelectorDelegate?                         ServerCertificateSelector        = null,
-                           RemoteTLSClientCertificateValidationHandler<IHTTPServer>?  ClientCertificateValidator       = null,
-                           LocalCertificateSelectionHandler?                          LocalCertificateSelector         = null,
-                           SslProtocols?                                              AllowedTLSProtocols              = null,
-                           Boolean?                                                   ClientCertificateRequired        = null,
-                           Boolean?                                                   CheckCertificateRevocation       = null,
+                           String?                        ExternalDNSName           = null,
+                           String?                        HTTPServerName            = DefaultHTTPServerName,
+                           String?                        HTTPServiceName           = DefaultHTTPServiceName,
+                           String?                        APIVersionHash            = null,
+                           JObject?                       APIVersionHashes          = null,
 
-                           ServerThreadNameCreatorDelegate?                           ServerThreadNameCreator          = null,
-                           ServerThreadPriorityDelegate?                              ServerThreadPrioritySetter       = null,
-                           Boolean?                                                   ServerThreadIsBackground         = null,
-                           ConnectionIdBuilder?                                       ConnectionIdBuilder              = null,
-                           TimeSpan?                                                  ConnectionTimeout                = null,
-                           UInt32?                                                    MaxClientConnections             = null,
+                           EMailAddress?                  APIRobotEMailAddress      = null,
+                           String?                        APIRobotGPGPassphrase     = null,
+                           ISMTPClient?                   SMTPClient                = null,
 
-                           Organization_Id?                                           AdminOrganizationId              = null,
-                           EMailAddress?                                              APIRobotEMailAddress             = null,
-                           String?                                                    APIRobotGPGPassphrase            = null,
-                           ISMTPClient?                                               SMTPClient                       = null,
+                           HTTPPath?                      AdditionalURLPathPrefix   = null,
+                           Boolean?                       LocationsAsOpenData       = null,
+                           Boolean?                       TariffsAsOpenData         = null,
+                           Boolean?                       AllowDowngrades           = null,
 
-                           PasswordQualityCheckDelegate?                              PasswordQualityCheck             = null,
-                           HTTPCookieName?                                            CookieName                       = null,
-                           Boolean                                                    UseSecureCookies                 = true,
-                           TimeSpan?                                                  MaxSignInSessionLifetime         = null,
-                           Languages?                                                 DefaultLanguage                  = null,
-                           Byte?                                                      MinUserIdLength                  = null,
-                           Byte?                                                      MinRealmLength                   = null,
-                           Byte?                                                      MinUserNameLength                = null,
-                           Byte?                                                      MinUserGroupIdLength             = null,
-                           UInt16?                                                    MinAPIKeyLength                  = null,
-                           Byte?                                                      MinMessageIdLength               = null,
-                           Byte?                                                      MinOrganizationIdLength          = null,
-                           Byte?                                                      MinOrganizationGroupIdLength     = null,
-                           Byte?                                                      MinNotificationMessageIdLength   = null,
-                           Byte?                                                      MinNewsPostingIdLength           = null,
-                           Byte?                                                      MinNewsBannerIdLength            = null,
-                           Byte?                                                      MinFAQIdLength                   = null,
+                           String?                        RemotePartyDBFileName     = null,
 
-                           Boolean?                                                   DisableMaintenanceTasks          = null,
-                           TimeSpan?                                                  MaintenanceInitialDelay          = null,
-                           TimeSpan?                                                  MaintenanceEvery                 = null,
+                           Boolean?                       IsDevelopment             = null,
+                           IEnumerable<String>?           DevelopmentServers        = null,
+                           //Boolean?                       SkipURLTemplates          = false,
+                           String?                        DatabaseFileName          = null,//DefaultAssetsDBFileName,
+                           Boolean?                       DisableNotifications      = false,
 
-                           Boolean?                                                   DisableWardenTasks               = null,
-                           TimeSpan?                                                  WardenInitialDelay               = null,
-                           TimeSpan?                                                  WardenCheckEvery                 = null,
+                           Boolean?                       DisableLogging            = null,
+                           String?                        LoggingContext            = null,
+                           String?                        LoggingPath               = null,
+                           String?                        LogfileName               = null,
+                           LogfileCreatorDelegate?        LogfileCreator            = null)
 
-                           IEnumerable<URLWithAPIKey>?                                RemoteAuthServers                = null,
-                           IEnumerable<APIKey_Id>?                                    RemoteAuthAPIKeys                = null,
-
-                           Boolean?                                                   IsDevelopment                    = null,
-                           IEnumerable<String>?                                       DevelopmentServers               = null,
-                           Boolean                                                    SkipURLTemplates                 = false,
-                           String?                                                    DatabaseFileName                 = DefaultHTTPExtAPI_DatabaseFileName,
-                           Boolean                                                    DisableNotifications             = false,
-                           Boolean                                                    DisableLogging                   = false,
-                           String?                                                    LoggingPath                      = null,
-                           String?                                                    LogfileName                      = DefaultHTTPExtAPI_LogfileName,
-                           LogfileCreatorDelegate?                                    LogfileCreator                   = null,
-                           DNSClient?                                                 DNSClient                        = null,
-                           Boolean                                                    AutoStart                        = false)
-
-            : base(HTTPHostname,
-                   ExternalDNSName,
-                   HTTPServerPort,
+            : base(Description ?? I18NString.Create("Norn HTTP API"),
+                   HTTPAPI,
+                   RootPath,
                    BasePath,
+
+                   ExternalDNSName,
                    HTTPServerName,
-
-                   URLPathPrefix,
                    HTTPServiceName,
-                   HTMLTemplate,
+                   APIVersionHash,
                    APIVersionHashes,
-
-                   ServerCertificateSelector,
-                   ClientCertificateValidator,
-                   LocalCertificateSelector,
-                   AllowedTLSProtocols,
-                   ClientCertificateRequired,
-                   CheckCertificateRevocation,
-
-                   ServerThreadNameCreator,
-                   ServerThreadPrioritySetter,
-                   ServerThreadIsBackground,
-                   ConnectionIdBuilder,
-                   ConnectionTimeout,
-                   MaxClientConnections,
-
-                   AdminOrganizationId,
-                   APIRobotEMailAddress,
-                   APIRobotGPGPassphrase,
-                   SMTPClient,
-
-                   PasswordQualityCheck,
-                   CookieName,
-                   UseSecureCookies,
-                   MaxSignInSessionLifetime,
-                   DefaultLanguage,
-                   MinUserIdLength,
-                   MinRealmLength,
-                   MinUserNameLength,
-                   MinUserGroupIdLength,
-                   MinAPIKeyLength,
-                   MinMessageIdLength,
-                   MinOrganizationIdLength,
-                   MinOrganizationGroupIdLength,
-                   MinNotificationMessageIdLength,
-                   MinNewsPostingIdLength,
-                   MinNewsBannerIdLength,
-                   MinFAQIdLength,
-
-                   DisableMaintenanceTasks,
-                   MaintenanceInitialDelay,
-                   MaintenanceEvery,
-
-                   DisableWardenTasks,
-                   WardenInitialDelay,
-                   WardenCheckEvery,
-
-                   RemoteAuthServers,
-                   RemoteAuthAPIKeys,
 
                    IsDevelopment,
                    DevelopmentServers,
-                   SkipURLTemplates,
-                   DatabaseFileName,
-                   DisableNotifications,
                    DisableLogging,
                    LoggingPath,
-                   LogfileName,
-                   LogfileCreator,
-                   DNSClient ?? NTSServer.DNSClient,
-
-                   AutoStart: false)
+                   LogfileName
+                   //LogfileCreator is not null
+                   //    ? (loggingPath, context, logfileName) => LogfileCreator(loggingPath, null, context, logfileName)
+                   //    : (loggingPath, context, logfileName) => String.Concat(
+                   //                                                 loggingPath + Path.DirectorySeparatorChar,
+                   //                                              //   remoteParty is not null
+                   //                                              //       ? remoteParty.Id.ToString() + Path.DirectorySeparatorChar
+                   //                                              //       : null,
+                   //                                                 context is not null ? context + "_" : "",
+                   //                                                 logfileName, "_",
+                   //                                                 Timestamp.Now.Year, "-",
+                   //                                                 Timestamp.Now.Month.ToString("D2"),
+                   //                                                 ".log"
+                   //                                             )
+                   )
 
         {
 
@@ -455,9 +435,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.HTTPAPI
             this.HTTPLogins            = HTTPLogins ?? [];
 
             // Link HTTP events...
-            HTTPServer.RequestLog     += (HTTPProcessor, ServerTimestamp, Request)                                 => RequestLog. WhenAll(HTTPProcessor, ServerTimestamp, Request);
-            HTTPServer.ResponseLog    += (HTTPProcessor, ServerTimestamp, Request, Response)                       => ResponseLog.WhenAll(HTTPProcessor, ServerTimestamp, Request, Response);
-            HTTPServer.ErrorLog       += (HTTPProcessor, ServerTimestamp, Request, Response, Error, LastException) => ErrorLog.   WhenAll(HTTPProcessor, ServerTimestamp, Request, Response, Error, LastException);
+            //HTTPServer.RequestLog     += (HTTPProcessor, ServerTimestamp, Request)                                 => RequestLog. WhenAll(HTTPProcessor, ServerTimestamp, Request);
+            //HTTPServer.ResponseLog    += (HTTPProcessor, ServerTimestamp, Request, Response)                       => ResponseLog.WhenAll(HTTPProcessor, ServerTimestamp, Request, Response);
+            //HTTPServer.ErrorLog       += (HTTPProcessor, ServerTimestamp, Request, Response, Error, LastException) => ErrorLog.   WhenAll(HTTPProcessor, ServerTimestamp, Request, Response, Error, LastException);
 
             //var LogfilePrefix          = "HTTPSSEs" + Path.DirectorySeparatorChar;
 
@@ -475,108 +455,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.HTTPAPI
             //this.RequestTimeout        = RequestTimeout;
 
         }
-
-        #endregion
-
-        #region NornHTTPAPI(NTSServer, HTTPServer,   ...)
-
-        /// <summary>
-        /// Attach the Norn HTTPAPI to the given HTTP server.
-        /// </summary>
-        /// <param name="NTSServer">The NTS server.</param>
-        public NornHTTPAPI(NTSServer                                   NTSServer,
-
-                         HTTPServer                                  HTTPServer,
-                         HTTPHostname?                               HTTPHostname              = null,
-                         String?                                     ExternalDNSName           = "",
-                         String?                                     HTTPServiceName           = DefaultHTTPServiceName,
-
-                         HTTPPath?                                   BasePath                  = null,
-
-                         String                                      HTTPRealm                 = DefaultHTTPRealm,
-                         IEnumerable<KeyValuePair<String, String>>?  HTTPLogins                = null,
-
-                         HTTPPath?                                   URLPathPrefix             = null,
-                         String?                                     HTMLTemplate              = null,
-                         JObject?                                    APIVersionHashes          = null,
-
-                         Boolean?                                    DisableMaintenanceTasks   = false,
-                         TimeSpan?                                   MaintenanceInitialDelay   = null,
-                         TimeSpan?                                   MaintenanceEvery          = null,
-
-                         Boolean?                                    DisableWardenTasks        = false,
-                         TimeSpan?                                   WardenInitialDelay        = null,
-                         TimeSpan?                                   WardenCheckEvery          = null,
-
-                         //Boolean                                     SkipURLTemplates          = true,
-
-                         Boolean?                                    IsDevelopment             = false,
-                         IEnumerable<String>?                        DevelopmentServers        = null,
-                         Boolean?                                    DisableLogging            = false,
-                         String?                                     LoggingPath               = null,
-                         String?                                     LogfileName               = null,
-                         LogfileCreatorDelegate?                     LogfileCreator            = null
-
-                         //TimeSpan?                                   RequestTimeout            = null
-                        )
-
-            : base(HTTPServer,
-                   HTTPHostname,
-                   ExternalDNSName,
-                   HTTPServiceName,
-                   BasePath,
-
-                   URLPathPrefix,
-                   HTMLTemplate,
-                   APIVersionHashes,
-
-                   DisableMaintenanceTasks,
-                   MaintenanceInitialDelay,
-                   MaintenanceEvery,
-
-                   DisableWardenTasks,
-                   WardenInitialDelay,
-                   WardenCheckEvery,
-
-                   IsDevelopment,
-                   DevelopmentServers,
-                   DisableLogging,
-                   LoggingPath,
-                   LogfileName,
-                   LogfileCreator,
-
-                   AutoStart: false)
-
-        {
-
-            this.NTSServer             = NTSServer;
-
-            this.HTTPRealm             = HTTPRealm.IsNotNullOrEmpty() ? HTTPRealm : DefaultHTTPRealm;
-            this.HTTPLogins            = HTTPLogins ?? [];
-
-            // Link HTTP events...
-            HTTPServer.RequestLog     += (HTTPProcessor, ServerTimestamp, Request)                                 => RequestLog. WhenAll(HTTPProcessor, ServerTimestamp, Request);
-            HTTPServer.ResponseLog    += (HTTPProcessor, ServerTimestamp, Request, Response)                       => ResponseLog.WhenAll(HTTPProcessor, ServerTimestamp, Request, Response);
-            HTTPServer.ErrorLog       += (HTTPProcessor, ServerTimestamp, Request, Response, Error, LastException) => ErrorLog.   WhenAll(HTTPProcessor, ServerTimestamp, Request, Response, Error, LastException);
-
-            //var LogfilePrefix          = "HTTPSSEs" + Path.DirectorySeparatorChar;
-
-            //this.DebugLog              = this.AddJSONEventSource(
-            //                                 EventIdentification:      DebugLogId,
-            //                                 URLTemplate:              this.URLPathPrefix + "debugLog",
-            //                                 MaxNumberOfCachedEvents:  10000,
-            //                                 RetryInterval:            TimeSpan.FromSeconds(5),
-            //                                 EnableLogging:            true,
-            //                                 LogfilePrefix:            LogfilePrefix
-            //                             );
-
-            RegisterURLTemplates();
-
-            //this.RequestTimeout        = RequestTimeout;
-
-        }
-
-        #endregion
 
         #endregion
 
@@ -669,26 +547,52 @@ namespace org.GraphDefined.Vanaheimr.Norn.HTTPAPI
 
             #region / (HTTPRoot)
 
-            this.MapResourceAssemblyFolder(
-                HTTPHostname.Any,
-                URLPathPrefix,
-                HTTPRoot,
-                DefaultFilename: "index.html"
-            );
+            //this.MapResourceAssemblyFolder(
+            //    HTTPHostname.Any,
+            //    URLPathPrefix,
+            //    HTTPRoot,
+            //    DefaultFilename: "index.html"
+            //);
 
             #endregion
 
 
-            #region GET ~/
+            #region ~/
 
-            HTTPServer.AddMethodCallback(
+            #region OPTIONS  ~/
 
-                this,
-                HTTPHostname.Any,
+            HTTPBaseAPI.AddHandler(
+
+                HTTPMethod.OPTIONS,
+                URLPathPrefix,
+                request =>
+
+                    Task.FromResult(
+                        new HTTPResponse.Builder(request) {
+                            HTTPStatusCode             = HTTPStatusCode.OK,
+                            Server                     = HTTPServiceName,
+                            Date                       = Timestamp.Now,
+                            AccessControlAllowOrigin   = "*",
+                            AccessControlAllowMethods  = [ "OPTIONS", "GET" ],
+                            Allow                      = [ HTTPMethod.OPTIONS, HTTPMethod.GET ],
+                            AccessControlAllowHeaders  = [ "Authorization" ],
+                            Connection                 = ConnectionType.KeepAlive
+                        }.AsImmutable)
+
+            );
+
+            #endregion
+
+            #region GET      ~/
+
+            HTTPBaseAPI.AddHandler(
+
                 HTTPMethod.GET,
                 HTTPPath.Root,
                 HTTPContentType.Text.HTML_UTF8,
-                HTTPDelegate: request =>
+                HTTPRequestLogger:   GetRootRequest,
+                HTTPResponseLogger:  GetRootResponse,
+                HTTPDelegate:        request =>
 
                     Task.FromResult(
                         new HTTPResponse.Builder(request) {
@@ -711,27 +615,30 @@ namespace org.GraphDefined.Vanaheimr.Norn.HTTPAPI
 
             #endregion
 
+            #endregion
+
 
             #region ~/serverInfos
 
             #region OPTIONS  ~/serverInfos
 
-            HTTPServer.AddMethodCallback(
+            HTTPBaseAPI.AddHandler(
 
-                this,
-                HTTPHostname.Any,
                 HTTPMethod.OPTIONS,
-                URLPathPrefix + "serverInfos",
-                HTTPDelegate: request =>
+                URLPathPrefix,
+                request =>
 
                     Task.FromResult(
                         new HTTPResponse.Builder(request) {
                             HTTPStatusCode             = HTTPStatusCode.OK,
-                            Allow                      = [ HTTPMethod.OPTIONS, HTTPMethod.GET ],
+                            Server                     = HTTPServiceName,
+                            Date                       = Timestamp.Now,
+                            AccessControlAllowOrigin   = "*",
                             AccessControlAllowMethods  = [ "OPTIONS", "GET" ],
-                            AccessControlAllowHeaders  = [ "Authorization" ]
-                        }.AsImmutable
-                    )
+                            Allow                      = [ HTTPMethod.OPTIONS, HTTPMethod.GET ],
+                            AccessControlAllowHeaders  = [ "Authorization" ],
+                            Connection                 = ConnectionType.KeepAlive
+                        }.AsImmutable)
 
             );
 

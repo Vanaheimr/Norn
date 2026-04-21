@@ -17,8 +17,8 @@
 
 #region Usings
 
+using System.Reflection;
 using System.Collections.Concurrent;
-using System.Security.Authentication;
 
 using Newtonsoft.Json.Linq;
 
@@ -26,16 +26,14 @@ using org.GraphDefined.Vanaheimr.Illias;
 
 using org.GraphDefined.Vanaheimr.Hermod;
 using org.GraphDefined.Vanaheimr.Hermod.DNS;
+using org.GraphDefined.Vanaheimr.Hermod.TCP;
 using org.GraphDefined.Vanaheimr.Hermod.HTTP;
 using org.GraphDefined.Vanaheimr.Hermod.Mail;
 using org.GraphDefined.Vanaheimr.Hermod.SMTP;
 using org.GraphDefined.Vanaheimr.Hermod.Logging;
 using org.GraphDefined.Vanaheimr.Hermod.Sockets;
-using org.GraphDefined.Vanaheimr.Hermod.Sockets.TCP;
 
 using org.GraphDefined.Vanaheimr.Norn.Monitoring;
-using System.Reflection;
-using org.GraphDefined.Vanaheimr.Hermod.HTTPTest;
 
 #endregion
 
@@ -142,7 +140,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Drone.HTTPAPI
     /// <summary>
     /// A HTTP API to configure and access a Norn drone.
     /// </summary>
-    public partial class NornDroneHTTPAPI : AHTTPExtAPIXExtension<HTTPExtAPIX>
+    public partial class NornDroneHTTPAPI : AHTTPExtAPIExtension1<HTTPExtAPI>
     {
 
         #region Data
@@ -218,7 +216,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Drone.HTTPAPI
         /// <summary>
         /// An event sent whenever a GET / request was received.
         /// </summary>
-        public HTTPRequestLogEventX OnGetRootRequest = new();
+        public HTTPRequestLogEvent OnGetRootRequest = new();
 
         /// <summary>
         /// An event sent whenever a GET / request was received.
@@ -226,10 +224,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.Drone.HTTPAPI
         /// <param name="Timestamp">The timestamp of the request.</param>
         /// <param name="API">The Common API.</param>
         /// <param name="Request">A HTTP request.</param>
-        protected internal Task GetRootRequest(DateTimeOffset     Timestamp,
-                                               HTTPAPIX           API,
-                                               HTTPRequest        Request,
-                                               CancellationToken  CancellationToken)
+        protected internal Task GetRootRequest(DateTimeOffset       Timestamp,
+                                               Hermod.HTTP.HTTPAPI  API,
+                                               HTTPRequest          Request,
+                                               CancellationToken    CancellationToken)
 
             => OnGetRootRequest.WhenAll(
                    Timestamp,
@@ -245,7 +243,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Drone.HTTPAPI
         /// <summary>
         /// An event sent whenever a GET / response was sent.
         /// </summary>
-        public HTTPResponseLogEventX OnGetRootResponse = new();
+        public HTTPResponseLogEvent OnGetRootResponse = new();
 
         /// <summary>
         /// An event sent whenever a GET / response was sent.
@@ -254,11 +252,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.Drone.HTTPAPI
         /// <param name="API">The Common API.</param>
         /// <param name="Request">A HTTP request.</param>
         /// <param name="Response">A HTTP response.</param>
-        protected internal Task GetRootResponse(DateTimeOffset     Timestamp,
-                                                HTTPAPIX           API,
-                                                HTTPRequest        Request,
-                                                HTTPResponse       Response,
-                                                CancellationToken  CancellationToken)
+        protected internal Task GetRootResponse(DateTimeOffset       Timestamp,
+                                                Hermod.HTTP.HTTPAPI  API,
+                                                HTTPRequest          Request,
+                                                HTTPResponse         Response,
+                                                CancellationToken    CancellationToken)
 
             => OnGetRootResponse.WhenAll(
                    Timestamp,
@@ -276,7 +274,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Drone.HTTPAPI
         /// <summary>
         /// An event sent whenever a GETServerInfos request was received.
         /// </summary>
-        public HTTPRequestLogEventX OnGETServerInfosHTTPRequest = new ();
+        public HTTPRequestLogEvent OnGETServerInfosHTTPRequest = new ();
 
         /// <summary>
         /// An event sent whenever a GETServerInfos request was received.
@@ -284,10 +282,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.Drone.HTTPAPI
         /// <param name="Timestamp">The timestamp of the request.</param>
         /// <param name="API">The HTTP API.</param>
         /// <param name="Request">A HTTP request.</param>
-        protected internal Task GETServerInfosHTTPRequest(DateTimeOffset     Timestamp,
-                                                          HTTPAPIX           API,
-                                                          HTTPRequest        Request,
-                                                          CancellationToken  CancellationToken)
+        protected internal Task GETServerInfosHTTPRequest(DateTimeOffset       Timestamp,
+                                                          Hermod.HTTP.HTTPAPI  API,
+                                                          HTTPRequest          Request,
+                                                          CancellationToken    CancellationToken)
 
             => OnGETServerInfosHTTPRequest.WhenAll(
                    Timestamp,
@@ -303,7 +301,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Drone.HTTPAPI
         /// <summary>
         /// An event sent whenever a GETServerInfos response was sent.
         /// </summary>
-        public HTTPResponseLogEventX OnGETServerInfosHTTPResponse = new ();
+        public HTTPResponseLogEvent OnGETServerInfosHTTPResponse = new ();
 
         /// <summary>
         /// An event sent whenever a GETServerInfos response was sent.
@@ -312,11 +310,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.Drone.HTTPAPI
         /// <param name="API">The HTTP API.</param>
         /// <param name="Request">A HTTP request.</param>
         /// <param name="Response">A HTTP response.</param>
-        protected internal Task GETServerInfosHTTPResponse(DateTimeOffset     Timestamp,
-                                                           HTTPAPIX           API,
-                                                           HTTPRequest        Request,
-                                                           HTTPResponse       Response,
-                                                           CancellationToken  CancellationToken)
+        protected internal Task GETServerInfosHTTPResponse(DateTimeOffset       Timestamp,
+                                                           Hermod.HTTP.HTTPAPI  API,
+                                                           HTTPRequest          Request,
+                                                           HTTPResponse         Response,
+                                                           CancellationToken    CancellationToken)
 
             => OnGETServerInfosHTTPResponse.WhenAll(
                    Timestamp,
@@ -335,7 +333,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Drone.HTTPAPI
         /// <summary>
         /// Attach the Norn HTTP API to the given HTTP server.
         /// </summary>
-        public NornDroneHTTPAPI(HTTPExtAPIX                    HTTPAPI,
+        public NornDroneHTTPAPI(HTTPExtAPI                     HTTPAPI,
 
                                 IEnumerable<HTTPHostname>?     Hostnames                 = null,
                                 HTTPPath?                      RootPath                  = null,
@@ -353,13 +351,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.Drone.HTTPAPI
                                 EMailAddress?                  APIRobotEMailAddress      = null,
                                 String?                        APIRobotGPGPassphrase     = null,
                                 ISMTPClient?                   SMTPClient                = null,
-
-                                HTTPPath?                      AdditionalURLPathPrefix   = null,
-                                Boolean?                       LocationsAsOpenData       = null,
-                                Boolean?                       TariffsAsOpenData         = null,
-                                Boolean?                       AllowDowngrades           = null,
-
-                                String?                        RemotePartyDBFileName     = null,
 
                                 Boolean?                       IsDevelopment             = null,
                                 IEnumerable<String>?           DevelopmentServers        = null,
