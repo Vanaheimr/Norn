@@ -42,17 +42,19 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #region Data
 
-        public const    UInt16   DefaultNTSKE_Port  = 4460;
-        public const    UInt16   DefaultNTP_Port    = 123;
-        public readonly TimeSpan DefaultTimeout     = TimeSpan.FromSeconds(3);
+        public static readonly IPPort            DefaultNTSKE_Port  = IPPort.          Parse      (4460);
+        public static readonly IPPort            DefaultNTP_Port    = IPPort.          Parse      ( 123);
+        public        readonly TimeSpan          DefaultTimeout     = TimeSpan.        FromSeconds(   3);
+
+        public static readonly PercentageDouble  DefaultJitter      = PercentageDouble.Parse      (0.25);
 
         #endregion
 
         #region Properties
         public UInt16                                                         Id                            { get; }
-        public String                                                         Host                          { get; }
-        public UInt16                                                         NTSKE_Port                    { get; }
-        public UInt16                                                         NTP_Port                      { get; }
+        public DomainName                                                     Hostname                      { get; }
+        public IPPort                                                         NTSKE_Port                    { get; }
+        public IPPort                                                         NTP_Port                      { get; }
         public RemoteTLSServerCertificateValidationHandler<NTSKE_TLSClient>?  RemoteCertificateValidator    { get; }
         public TimeSpan?                                                      Timeout                       { get; set; }
         public Byte[]                                                         C2S_Key                       { get; set; } = [];
@@ -66,29 +68,29 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <summary>
         /// Create a new NTS client.
         /// </summary>
-        /// <param name="Host">The hostname or IP address of the NTS server.</param>
+        /// <param name="Hostname">The hostname or IP address of the NTS server.</param>
         /// <param name="NTSKE_Port">An optional NTS-KE port (default: 4460).</param>
         /// <param name="NTP_Port">An optional NTP port (default: 123).</param>
         /// <param name="Id">An optional unique identifier for the client.</param>
         /// <param name="RemoteCertificateValidator">An optional remote certificate validator.</param>
         /// <param name="Timeout">An optional timeout for the NTS-KE/NTS requests.</param>
         /// <param name="DNSClient">An optional DNS client to use.</param>
-        public NTSClient(String                                                         Host,
-                         UInt16                                                         NTSKE_Port                   = NTSClient.DefaultNTSKE_Port,
-                         UInt16                                                         NTP_Port                     = NTSClient.DefaultNTP_Port,
+        public NTSClient(DomainName                                                     Hostname,
+                         IPPort?                                                        NTSKE_Port                   = null,
+                         IPPort?                                                        NTP_Port                     = null,
                          UInt16?                                                        Id                           = null,
                          RemoteTLSServerCertificateValidationHandler<NTSKE_TLSClient>?  RemoteCertificateValidator   = null,
                          DNSClient?                                                     DNSClient                    = null,
                          TimeSpan?                                                      Timeout                      = null)
         {
 
-            this.Id                          = Id      ?? RandomExtensions.RandomUInt16();
-            this.Host                        = Host;
-            this.NTSKE_Port                  = NTSKE_Port;
-            this.NTP_Port                    = NTP_Port;
+            this.Id                          = Id         ?? RandomExtensions.RandomUInt16();
+            this.Hostname                    = Hostname;
+            this.NTSKE_Port                  = NTSKE_Port ?? DefaultNTSKE_Port;
+            this.NTP_Port                    = NTP_Port   ?? DefaultNTP_Port;
             this.RemoteCertificateValidator  = RemoteCertificateValidator;
-            this.Timeout                     = Timeout ?? DefaultTimeout;
-            this.DNSClient                   = DNSClient ?? new DNSClient();
+            this.Timeout                     = Timeout    ?? DefaultTimeout;
+            this.DNSClient                   = DNSClient  ?? new DNSClient();
 
         }
 
@@ -135,7 +137,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                 var timeout              = Timeout ?? this.Timeout ?? DefaultTimeout;
 
-                using var tcpClient      = new TcpClient(Host, NTSKE_Port) {
+                using var tcpClient      = new TcpClient(Hostname.ToString(), NTSKE_Port.ToUInt16()) {
                                                ReceiveTimeout = (Int32) timeout.TotalMilliseconds
                                            };
 
@@ -175,7 +177,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 }
                 else
                 {
-                    return new NTSKE_Response($"No response received from {Host}!");
+                    return new NTSKE_Response($"No response received from {Hostname}!");
                 }
 
             }
@@ -315,8 +317,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                     await udpClient.SendAsync(
                               requestData,
-                              Host,
-                              NTP_Port,
+                              Hostname.ToString(),
+                              NTP_Port.ToUInt16(),
                               CancellationToken
                           );
 
@@ -475,6 +477,72 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             var ciphertextMatch           = receivedCiphertext.IsEqualTo(computedCiphertext);
 
             return nonceMatch && ciphertextMatch;
+
+        }
+
+        #endregion
+
+
+        #region GetNextPollInterval(MinPollInterval, MaxPollInterval, RandomizationMode, JitterFactor)
+
+        /// <summary>
+        /// Gets the next poll interval for NTP requests.
+        /// </summary>
+        /// <param name="MinPollInterval">The minimum poll interval (e.g. 64 seconds).</param>
+        /// <param name="MaxPollInterval">The maximum poll interval (e.g. 1024 seconds).</param>
+        /// <param name="RandomizationMode">The randomization mode to apply to the poll interval (e.g. None, Uniform, Jitter, Poisson).</param>
+        /// <param name="JitterFactor">The jitter factor to apply when using Jitter randomization mode (e.g. 0.25 for ±25% jitter).</param>
+        public static TimeSpan GetNextPollInterval(TimeSpan?             MinPollInterval,
+                                                   TimeSpan?             MaxPollInterval,
+                                                   NTPRandomizationMode  RandomizationMode,
+                                                   PercentageDouble?     JitterFactor)
+        {
+
+            if (!MinPollInterval.HasValue || !MaxPollInterval.HasValue)
+                return TimeSpan.FromSeconds(128);
+
+            var minSec         = MinPollInterval.Value.TotalSeconds;
+            var maxSec         = MaxPollInterval.Value.TotalSeconds;
+
+            if (minSec > maxSec)
+                throw new ArgumentException("The minimum poll interval cannot be greater than the maximum poll interval!", nameof(MinPollInterval));
+
+            // BaseIntervall: geometrical mean (works well for powers of 2)
+            var baseSec        = Math.Sqrt(minSec * maxSec);
+            var randomizedSec  = baseSec;
+
+            switch (RandomizationMode)
+            {
+
+                // just the base interval!
+                case NTPRandomizationMode.None:
+                    break;
+
+                case NTPRandomizationMode.Uniform:
+                    randomizedSec  = Random.Shared.NextDouble()
+                                        * (maxSec - minSec) + minSec;
+                    break;
+
+                case NTPRandomizationMode.Jitter:
+                    randomizedSec  = baseSec
+                                        * (1.0 + (Random.Shared.NextDouble() * 2.0 - 1.0)
+                                        * (JitterFactor?.Value ?? DefaultJitter.Value));
+                    break;
+
+                case NTPRandomizationMode.Poisson:
+                    randomizedSec  = - Math.Log(1.0 - Random.Shared.NextDouble())
+                                        / (1.0 / baseSec);
+                    break;
+
+            }
+
+            return TimeSpan.FromSeconds(
+                       Math.Clamp(
+                           randomizedSec,
+                           minSec,
+                           maxSec
+                       )
+                   );
 
         }
 

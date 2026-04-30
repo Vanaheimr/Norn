@@ -18,8 +18,11 @@
 #region Usings
 
 using NUnit.Framework;
-using org.GraphDefined.Vanaheimr.Hermod;
+
 using org.GraphDefined.Vanaheimr.Illias;
+using org.GraphDefined.Vanaheimr.Hermod;
+using org.GraphDefined.Vanaheimr.Hermod.DNS;
+
 using org.GraphDefined.Vanaheimr.Norn.NTP;
 using org.GraphDefined.Vanaheimr.Norn.NTS;
 
@@ -33,8 +36,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
     /// </summary>
     /// <param name="ServerName">The NTS Server DNS Name.</param>
     /// <param name="Timeout">An optional timeout for NTS operations.</param>
-    public abstract class ANTSServer_Tests(String     ServerName,
-                                           TimeSpan?  Timeout   = null)
+    public abstract class ANTSServer_Tests(DomainName  ServerName,
+                                           TimeSpan?   Timeout   = null)
     {
 
         #region Properties
@@ -42,12 +45,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         /// <summary>
         /// The PTB Server Name.
         /// </summary>
-        public String     ServerName    { get; } = ServerName;
+        public DomainName  ServerName    { get; } = ServerName;
 
         /// <summary>
         /// The timeout for NTS operations.
         /// </summary>
-        public TimeSpan?  Timeout       { get; } = Timeout;
+        public TimeSpan?   Timeout       { get; } = Timeout;
 
         #endregion
 
@@ -222,7 +225,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                                                                                                  ? serverCertificate.DecodeSubjectAlternativeNames()
                                                                                                  : [];
 
-                                                                                  if (serverCertificate?.Subject.Contains(ServerName) == true &&
+                                                                                  if (serverCertificate?.Subject.Contains(ServerName.ToString()) == true &&
                                                                                       sans.Contains($"DNS-Name={ServerName}"))
                                                                                   {
                                                                                       return TLSValidationResult.Success();

@@ -104,7 +104,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         {
 
             var ntsClient                  = new NTSClient(
-                                                 "127.0.0.1",
+                                                 Hermod.DNS.DomainName.Localhost,
                                                  RemoteCertificateValidator: (sender,
                                                                               serverCertificate,
                                                                               certificateChain,
@@ -212,7 +212,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         {
 
             var ntsClient                  = new NTSClient(
-                                                 "127.0.0.1",
+                                                 Hermod.DNS.DomainName.Localhost,
                                                  RemoteCertificateValidator: (sender,
                                                                               serverCertificate,
                                                                               certificateChain,
@@ -255,7 +255,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
             Assert.That(ntsResponse,    Is.Not.Null);
 
-            DebugX.Log($"{ntsClient.Host} Serverzeit 1 (UTC): " + NTPPacket.NTPTimestampToDateTime(ntsResponse.TransmitTimestamp.Value).ToString("o"));
+            DebugX.Log($"{ntsClient.Hostname} Serverzeit 1 (UTC): " + NTPPacket.NTPTimestampToDateTime(ntsResponse.TransmitTimestamp.Value).ToString("o"));
 
 
             if (ntsResponse is not null)

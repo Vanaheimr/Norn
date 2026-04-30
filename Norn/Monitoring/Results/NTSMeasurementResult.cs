@@ -20,6 +20,7 @@
 using Newtonsoft.Json.Linq;
 
 using org.GraphDefined.Vanaheimr.Illias;
+using org.GraphDefined.Vanaheimr.Hermod.DNS;
 
 #endregion
 
@@ -45,7 +46,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         /// <summary>
         /// The hostname of the NTS server that was measured.
         /// </summary>
-        public String                        ServerHostname            { get; }
+        public DomainName                    ServerHostname            { get; }
 
         /// <summary>
         /// Timestamp (UTC) when this measurement was initiated.
@@ -109,7 +110,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
         #region Constructor(s)
 
-        public NTSMeasurementResult(String           ServerHostname,
+        public NTSMeasurementResult(DomainName       ServerHostname,
                                     Guid             RoundId,
                                     Guid?            MeasurementId   = null,
                                     DateTimeOffset?  Timestamp       = null)

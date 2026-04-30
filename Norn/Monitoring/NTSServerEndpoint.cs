@@ -15,6 +15,14 @@
  * limitations under the License.
  */
 
+#region Usings
+
+using org.GraphDefined.Vanaheimr.Hermod;
+using org.GraphDefined.Vanaheimr.Hermod.DNS;
+using org.GraphDefined.Vanaheimr.Norn.NTS;
+
+#endregion
+
 namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 {
 
@@ -24,20 +32,20 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
     public class NTSServerEndpoint
     {
 
-        public String   Hostname     { get; set; }
-        public UInt16   NTSKEPort    { get; set; }
-        public UInt16   NTPPort      { get; set; }
-        public Boolean  Enabled      { get; set; }
+        public DomainName  Hostname     { get; set; }
+        public IPPort      NTSKEPort    { get; set; }
+        public IPPort      NTPPort      { get; set; }
+        public Boolean     Enabled      { get; set; }
 
-        public NTSServerEndpoint(String   Hostname,
-                                 UInt16   NTSKEPort   = 4460,
-                                 UInt16   NTPPort     = 123,
-                                 Boolean  Enabled     = true)
+        public NTSServerEndpoint(DomainName  Hostname,
+                                 IPPort?     NTSKEPort   = null,
+                                 IPPort?     NTPPort     = null,
+                                 Boolean     Enabled     = true)
         {
 
             this.Hostname   = Hostname;
-            this.NTSKEPort  = NTSKEPort;
-            this.NTPPort    = NTPPort;
+            this.NTSKEPort  = NTSKEPort ?? NTSClient.DefaultNTSKE_Port;
+            this.NTPPort    = NTPPort   ?? NTSClient.DefaultNTP_Port;
             this.Enabled    = Enabled;
 
         }
@@ -46,7 +54,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         /// Parameterless constructor for JSON deserialization
         /// </summary>
         public NTSServerEndpoint()
-            : this("")
+            : this(DomainName.Empty)
         { }
 
     }

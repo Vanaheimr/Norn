@@ -24,9 +24,11 @@ using System.Collections.Concurrent;
 using System.Security.Cryptography.X509Certificates;
 
 using org.GraphDefined.Vanaheimr.Illias;
+using org.GraphDefined.Vanaheimr.Hermod;
+using org.GraphDefined.Vanaheimr.Hermod.DNS;
+
 using org.GraphDefined.Vanaheimr.Norn.NTP;
 using org.GraphDefined.Vanaheimr.Norn.NTS;
-using org.GraphDefined.Vanaheimr.Hermod;
 
 #endregion
 
@@ -42,8 +44,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
         #region Data
 
-        private readonly ConcurrentDictionary<String, CachedNTSKEState>  ntskeCache  = [];
-        private readonly MonitoringConfig                                config      = Configuration;
+        private readonly ConcurrentDictionary<DomainName, CachedNTSKEState>  ntskeCache  = [];
+        private readonly MonitoringConfig                                    config      = Configuration;
 
         #endregion
 
@@ -93,15 +95,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         /// 2. NTS-KE handshake (if cookies expired or pool exhausted)
         /// 3. NTS-authenticated NTP query with precise T1/T2/T3/T4 timing
         /// </summary>
-        public async Task<NTSMeasurementResult> MeasureSingleServer(NTSServerEndpoint    Server,
-                                                                    Guid              RoundId,
-                                                                    CancellationToken CancellationToken = default)
+        public async Task<NTSMeasurementResult> MeasureSingleServer(NTSServerEndpoint  Server,
+                                                                    Guid               RoundId,
+                                                                    CancellationToken  CancellationToken = default)
         {
 
             var totalStopwatch = Stopwatch.StartNew();
 
-            var result = new NTSMeasurementResult(Server.Hostname, RoundId)
-            {
+            var result = new NTSMeasurementResult(
+                             Server.Hostname,
+                             RoundId
+                         ) {
                 Success = false
             };
 
@@ -198,7 +202,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         /// <summary>
         /// Measure DNS resolution time and get both IPv4 and IPv6 addresses.
         /// </summary>
-        private async Task<DNSResolutionResult> MeasureDNS(String Hostname)
+        private async Task<DNSResolutionResult> MeasureDNS(DomainName Hostname)
         {
 
             var sw = Stopwatch.StartNew();
@@ -206,7 +210,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
             try
             {
 
-                var addresses  = await Dns.GetHostAddressesAsync(Hostname);
+                var addresses  = await Dns.GetHostAddressesAsync(Hostname.ToString());
                 sw.Stop();
 
                 return new DNSResolutionResult {

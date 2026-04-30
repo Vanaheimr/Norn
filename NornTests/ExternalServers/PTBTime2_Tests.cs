@@ -19,6 +19,8 @@
 
 using NUnit.Framework;
 
+using org.GraphDefined.Vanaheimr.Hermod.DNS;
+
 #endregion
 
 namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
@@ -30,7 +32,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
     /// </summary>
     [TestFixture]
     public class PTBTime2_Tests()
-        : ANTSServer_Tests("ptbtime2.ptb.de")
+        : ANTSServer_Tests(DomainName.Parse("ptbtime2.ptb.de"))
     { }
 
 }

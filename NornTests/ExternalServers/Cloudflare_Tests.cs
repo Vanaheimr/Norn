@@ -19,6 +19,8 @@
 
 using NUnit.Framework;
 
+using org.GraphDefined.Vanaheimr.Hermod.DNS;
+
 #endregion
 
 namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
@@ -31,7 +33,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
     public class Cloudflare_Tests()
 
         : ANTSServer_Tests(
-              ServerName: "time.cloudflare.com",
+              ServerName:  DomainName.Parse("time.cloudflare.com"),
               Timeout:     TimeSpan.FromSeconds(15)
           )
 

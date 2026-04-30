@@ -19,6 +19,8 @@
 
 using NUnit.Framework;
 
+using org.GraphDefined.Vanaheimr.Hermod.DNS;
+
 #endregion
 
 namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
@@ -29,7 +31,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
     /// </summary>
     [TestFixture]
     public class OpenChargingCloud1_Tests()
-        : ANTSServer_Tests("time1.charging.cloud")
+        : ANTSServer_Tests(DomainName.Parse("time1.charging.cloud"))
     { }
 
 }
