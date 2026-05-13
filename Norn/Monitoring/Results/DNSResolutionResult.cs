@@ -19,6 +19,9 @@
 
 using Newtonsoft.Json.Linq;
 
+using org.GraphDefined.Vanaheimr.Illias;
+using org.GraphDefined.Vanaheimr.Hermod;
+
 #endregion
 
 namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
@@ -35,44 +38,83 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         /// <summary>
         /// Whether DNS resolution succeeded.
         /// </summary>
-        public Boolean               Success          { get; init; }
+        public Boolean                   Success          { get; }
 
         /// <summary>
-        /// Resolved IPv4 addresses.
+        /// The duration of the DNS resolution.
         /// </summary>
-        public IEnumerable<String>   IPv4Addresses    { get; init; } = [];
+        public TimeSpan                  Duration         { get; }
 
         /// <summary>
-        /// Resolved IPv6 addresses.
+        /// The enumeration of resolved IPv4 addresses.
         /// </summary>
-        public IEnumerable<String>   IPv6Addresses    { get; init; } = [];
+        public IEnumerable<IPv4Address>  IPv4Addresses    { get; } = [];
 
         /// <summary>
-        /// Duration of the DNS resolution.
+        /// The enumeration of resolved IPv6 addresses.
         /// </summary>
-        public TimeSpan              Duration         { get; init; }
+        public IEnumerable<IPv6Address>  IPv6Addresses    { get; } = [];
 
         /// <summary>
-        /// Error if DNS resolution failed.
+        /// An optional warning message if DNS resolution succeeded but with some issues
+        /// (e.g. partial resolution, timeouts, etc.).
         /// </summary>
-        public String?               ErrorMessage     { get; init; }
+        public Warning?                  Warning          { get; }
+
+        /// <summary>
+        /// An optional error message if DNS resolution failed.
+        /// </summary>
+        public Error?                    ErrorMessage     { get; }
 
         #endregion
+
+        #region Constructor(s)
+
+        /// <summary>
+        /// Create a new DNS resolution result.
+        /// </summary>
+        /// <param name="Success">Whether DNS resolution succeeded.</param>
+        /// <param name="Duration">The duration of the DNS resolution.</param>
+        /// <param name="IPv4Addresses">An optional enumeration of resolved IPv4 addresses.</param>
+        /// <param name="IPv6Addresses">An optional enumeration of resolved IPv6 addresses.</param>
+        /// <param name="Warning">An optional warning message if DNS resolution succeeded but with some issues (e.g. partial resolution, timeouts, etc.).</param>
+        /// <param name="ErrorMessage">An optional error message if DNS resolution failed.</param>
+        public DNSResolutionResult(Boolean                    Success,
+                                   TimeSpan                   Duration,
+                                   IEnumerable<IPv4Address>?  IPv4Addresses   = null,
+                                   IEnumerable<IPv6Address>?  IPv6Addresses   = null,
+                                   Warning?                   Warning         = null,
+                                   Error?                     ErrorMessage    = null)
+        {
+
+            this.Success        = Success;
+            this.Duration       = Duration;
+            this.IPv4Addresses  = IPv4Addresses ?? [];
+            this.IPv6Addresses  = IPv6Addresses ?? [];
+            this.ErrorMessage   = ErrorMessage;
+
+        }
+
+        #endregion
+
 
         #region ToJSON()
 
         public JObject ToJSON()
         {
 
-            var json = new JObject(
-                           new JProperty("success",       Success),
-                           new JProperty("durationMs",    Math.Round(Duration.TotalMilliseconds, 3)),
-                           new JProperty("ipv4",          new JArray(IPv4Addresses)),
-                           new JProperty("ipv6",          new JArray(IPv6Addresses))
-                       );
+            var json = JSONObject.Create(
 
-            if (ErrorMessage is not null)
-                json.Add("error", ErrorMessage);
+                                 new JProperty("success",         Success),
+                                 new JProperty("durationMs",      Math.Round(Duration.TotalMilliseconds, 3)),
+                                 new JProperty("ipv4Addresses",   new JArray(IPv4Addresses.Select(ipv4address => ipv4address.ToString()))),
+                                 new JProperty("ipv6Addresses",   new JArray(IPv6Addresses.Select(ipv6address => ipv6address.ToString()))),
+
+                           ErrorMessage is not null
+                               ? new JProperty("error",           ErrorMessage)
+                               : null
+
+                       );
 
             return json;
 

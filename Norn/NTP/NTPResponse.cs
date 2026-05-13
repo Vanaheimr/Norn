@@ -99,7 +99,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
                            NTPRequest?                 Request                = null,
                            Byte[]?                     ResponseBytes          = null,
-                           String?                     ErrorMessage           = null)
+                           String?                     ErrorMessage           = null,
+                           Int64?                      SendStopwatchTimestamp = null,
+                           Int64?                      ReceiveStopwatchTimestamp = null)
 
             : base(LI,
                     VN,
@@ -121,7 +123,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
                     Request,
                     ResponseBytes,
-                    ErrorMessage)
+                    ErrorMessage,
+                    SendStopwatchTimestamp,
+                    ReceiveStopwatchTimestamp)
 
         { }
 
@@ -145,7 +149,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                    NTPPacket.OriginateTimestamp,
                    NTPPacket.ReceiveTimestamp,
                    NTPPacket.TransmitTimestamp,
-                   Extensions)
+                   Extensions,
+                   NTPPacket.KeyId,
+                   NTPPacket.MessageDigest,
+                   NTPPacket.DestinationTimestamp,
+                   NTPPacket.Request as NTPRequest,
+                   NTPPacket.ResponseBytes,
+                   NTPPacket.ErrorMessage,
+                   NTPPacket.SendStopwatchTimestamp,
+                   NTPPacket.ReceiveStopwatchTimestamp)
 
         {
 
@@ -173,7 +185,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                                        [NotNullWhen(false)] out String?       ErrorResponse,
                                        NTPRequest?                            Request            = null,
                                        Byte[]?                                NTSKey             = null,
-                                       Byte[]?                                ExpectedUniqueId   = null)
+                                       Byte[]?                                ExpectedUniqueId   = null,
+                                       UInt64?                                DestinationTimestamp = null,
+                                       Int64?                                 SendStopwatchTimestamp = null,
+                                       Int64?                                 ReceiveStopwatchTimestamp = null)
         {
 
             #region Initial checks
@@ -358,10 +373,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                             Extensions:             extensions,
                             KeyId:                  null,
                             MessageDigest:          null,
-                            DestinationTimestamp:   null,
+                            DestinationTimestamp:   DestinationTimestamp,
 
                             Request:                Request,
-                            ResponseBytes:          Buffer
+                            ResponseBytes:          Buffer,
+                            SendStopwatchTimestamp: SendStopwatchTimestamp,
+                            ReceiveStopwatchTimestamp: ReceiveStopwatchTimestamp
 
                         );
 

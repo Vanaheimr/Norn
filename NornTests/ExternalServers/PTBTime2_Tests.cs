@@ -29,10 +29,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
     /// <summary>
     /// Test the NTS client against public NTS server 'ptbtime2.ptb.de'
     /// of the Physikalisch-Technische Bundesanstalt (PTB) in Braunschweig, Germany.
+    /// https://zeit.ptb.de and https://time.ptb.de/files/ptb-ntp-services.json
     /// </summary>
     [TestFixture]
     public class PTBTime2_Tests()
-        : ANTSServer_Tests(DomainName.Parse("ptbtime2.ptb.de"))
+        : ANTSServer_Tests(
+              ServerName:                   DomainName.Parse("ptbtime2.ptb.de"),
+              ExpectedReferenceIdentifier:  "PTB",
+              ExpectedStratum:              1,
+              Timeout:                      TimeSpan.FromSeconds(15)
+          )
     { }
 
 }

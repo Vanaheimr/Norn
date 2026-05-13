@@ -1,6 +1,6 @@
-﻿/*
+/*
  * Copyright (c) 2010-2026 GraphDefined GmbH <achim.friedland@graphdefined.com>
- * This file is part of Norn <https://www.github.com/Vanaheimr/Norn>
+ * This file is part of Vanaheimr Norn <https://www.github.com/Vanaheimr/Norn>
  *
  * Licensed under the Affero GPL license, Version 3.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,28 +15,26 @@
  * limitations under the License.
  */
 
-#region Usings
-
-using NUnit.Framework;
-
-using org.GraphDefined.Vanaheimr.Hermod.DNS;
-
-#endregion
-
-namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
+namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 {
 
     /// <summary>
-    /// Test the NTS client against public NTS server 'time1.charging.cloud'.
+    /// Structured measurement error category.
     /// </summary>
-    [TestFixture]
-    public class OpenChargingCloud1_Tests()
-        : ANTSServer_Tests(
-              ServerName:                   DomainName.Parse("time1.charging.cloud"),
-              ExpectedReferenceIdentifier:  null,
-              ExpectedStratum:              2,
-              Timeout:                      TimeSpan.FromSeconds(15)
-          )
-    { }
+    public enum MonitoringErrorCategory
+    {
+        None,
+        DNS,
+        TCPConnect,
+        TLSHandshake,
+        TLSCertificate,
+        NTSKEProtocol,
+        NTPTimeout,
+        NTSAuthentication,
+        KissOfDeath,
+        Cache,
+        Exception,
+        Unknown
+    }
 
 }

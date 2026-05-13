@@ -91,6 +91,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             if (C2SKey.Length != S2CKey.Length)
                 throw new ArgumentException("The C2SKey and S2CKey must be of the same length!");
 
+            if (Nonce is not null && Nonce.Length != NonceLength)
+                throw new ArgumentException($"The nonce must be {NonceLength} bytes long!", nameof(Nonce));
+
             #endregion
 
             this.C2SKey         = C2SKey;
@@ -103,12 +106,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             unchecked
             {
 
-                hashCode = this.C2SKey.       GetHashCode() * 13 ^
-                           this.S2CKey.       GetHashCode() * 11 ^
-                           this.MasterKeyId.  GetHashCode() *  7 ^
-                           this.AEADAlgorithm.GetHashCode() *  5 ^
-                           this.Timestamp.    GetHashCode() *  3 ^
-                           this.Nonce.        GetHashCode();
+                var hash = new HashCode();
+
+                hash.AddBytes(this.C2SKey);
+                hash.AddBytes(this.S2CKey);
+                hash.Add     (this.MasterKeyId);
+                hash.Add     (this.AEADAlgorithm);
+                hash.Add     (this.Timestamp.ToUnixTimestamp());
+                hash.AddBytes(this.Nonce);
+
+                hashCode = hash.ToHashCode();
 
             }
 
@@ -346,13 +353,25 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 ErrorResponse  = null;
 
 
-                Int64 timestampInt64   = 0;
-                for (var j = 0; j < 8; j++)
-                    timestampInt64   |= (Int64) (Bytes[OffsetTimestamp   + j] << (56 - 8 * j));
+                if (Bytes.Length < OffsetC2SKey)
+                {
+                    ErrorResponse = $"The given binary representation of a NTS cookie is too short: {Bytes.Length} bytes!";
+                    return false;
+                }
 
-                Int64 masterKeyIdInt64 = 0;
+                UInt64 timestampUInt64 = 0;
                 for (var j = 0; j < 8; j++)
-                    masterKeyIdInt64 |= (Int64) (Bytes[OffsetMasterKeyId + j] << (56 - 8 * j));
+                    timestampUInt64 |= (UInt64) Bytes[OffsetTimestamp + j] << (56 - 8 * j);
+
+                if (timestampUInt64 > Int64.MaxValue)
+                {
+                    ErrorResponse = "The timestamp within the given binary representation of a NTS cookie is too large!";
+                    return false;
+                }
+
+                UInt64 masterKeyIdUInt64 = 0;
+                for (var j = 0; j < 8; j++)
+                    masterKeyIdUInt64 |= (UInt64) Bytes[OffsetMasterKeyId + j] << (56 - 8 * j);
 
 
                 // The following should be **encrypted**!!!
@@ -372,6 +391,20 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                     _ => 0
                                 };
 
+                if (keyLength == 0)
+                {
+                    ErrorResponse = $"Unsupported AEAD algorithm id '{algorithmIdUInt16}' within the given binary representation of a NTS cookie!";
+                    return false;
+                }
+
+                var expectedLength = OffsetC2SKey + 2 * keyLength;
+
+                if (Bytes.Length < expectedLength)
+                {
+                    ErrorResponse = $"The given binary representation of a NTS cookie is too short for {algorithmId}: {Bytes.Length} < {expectedLength} bytes!";
+                    return false;
+                }
+
                 // C2S key
                 var c2sKey = new Byte[keyLength];
                 Array.Copy(Bytes, OffsetC2SKey,           c2sKey, 0, c2sKey.Length);
@@ -382,10 +415,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
 
                 NTSCookie = new NTSCookie(
-                                (UInt64) masterKeyIdInt64,
+                                masterKeyIdUInt64,
                                 c2sKey,
                                 s2cKey,
-                                DateTimeOffsetExtensions.FromUnixTimestamp(timestampInt64),
+                                DateTimeOffsetExtensions.FromUnixTimestamp((Int64) timestampUInt64),
                                 algorithmId,
                                 nonce
                             );
@@ -396,7 +429,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             catch (Exception e)
             {
                 NTSCookie      = default;
-                ErrorResponse  = "The given JSON representation of a NTS cookie is invalid: " + e.Message;
+                ErrorResponse  = "The given binary representation of a NTS cookie is invalid: " + e.Message;
                 return false;
             }
 
@@ -479,8 +512,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             // ToDo: AEAD-Encrypt `cookie` with master key
 
             // Nonce (32 bytes)
-            var nonce = RandomNumberGenerator.GetBytes(32);
-            Buffer.BlockCopy(nonce, 0, cookie, OffsetNonce, nonce.Length);
+            Buffer.BlockCopy(Nonce, 0, cookie, OffsetNonce, Nonce.Length);
 
             // AlgorithmId (Big-Endian)
             var algorithmBytes = AEADAlgorithm.GetBytes();
@@ -724,9 +756,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             => NTSCookie is not null &&
                C2SKey.               SequenceEqual(NTSCookie.C2SKey)                 &&
                S2CKey.               SequenceEqual(NTSCookie.S2CKey)                 &&
-               //MasterKeyId.Equals(NTSCookie.MasterKeyId) &&
+               MasterKeyId.          Equals       (NTSCookie.MasterKeyId)            &&
                AEADAlgorithm.        Equals       (NTSCookie.AEADAlgorithm)          &&
-               Timestamp.ToISO8601().Equals       (NTSCookie.Timestamp.ToISO8601()) &&
+               Timestamp.ToUnixTimestamp().Equals (NTSCookie.Timestamp.ToUnixTimestamp()) &&
                Nonce.                SequenceEqual(NTSCookie.Nonce);
 
         #endregion

@@ -15,6 +15,16 @@
  * limitations under the License.
  */
 
+#region Usings
+
+using System.Text;
+
+using org.GraphDefined.Vanaheimr.Illias;
+using org.GraphDefined.Vanaheimr.Hermod;
+using org.GraphDefined.Vanaheimr.Hermod.DNS;
+
+#endregion
+
 namespace org.GraphDefined.Vanaheimr.Norn.NTS
 {
 
@@ -29,22 +39,42 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <summary>
         /// The enumeration of NTS-KE records.
         /// </summary>
-        public IEnumerable<NTSKE_Record>  NTSKERecords    { get; }
+        public IEnumerable<NTSKE_Record>  NTSKERecords    { get; } = [];
 
         /// <summary>
         /// The TLS client-to-server Key.
         /// </summary>
-        public Byte[]                     C2SKey          { get; }
+        public Byte[]                     C2SKey          { get; } = [];
 
         /// <summary>
         /// The TLS server-to-client Key.
         /// </summary>
-        public Byte[]                     S2CKey          { get; }
+        public Byte[]                     S2CKey          { get; } = [];
 
         /// <summary>
         /// An optional error message.
         /// </summary>
         public String?                    ErrorMessage    { get; }
+
+        /// <summary>
+        /// Optional timing information for the NTS-KE exchange.
+        /// </summary>
+        public NTSKE_TimingInfo?          TimingInfo      { get; }
+
+        /// <summary>
+        /// Optional TLS certificate and handshake information for the NTS-KE exchange.
+        /// </summary>
+        public NTSKE_TLSInfo?             TLSInfo         { get; }
+
+        /// <summary>
+        /// The negotiated NTPv4 server names or IP addresses, if announced by NTS-KE.
+        /// </summary>
+        public IEnumerable<DomainName>    NTPv4Servers    { get; } = [];
+
+        /// <summary>
+        /// The negotiated NTPv4 UDP ports, if announced by NTS-KE.
+        /// </summary>
+        public IEnumerable<IPPort>        NTPv4Ports      { get; } = [];
 
 
         /// <summary>
@@ -70,7 +100,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #region Constructor(s)
 
-        #region NTSKE_Response(NTSKE_Record, C2SKey, S2CKey)
+        #region NTSKE_Response(NTSKE_Record, C2SKey, S2CKey, ...)
 
         /// <summary>
         /// Create a new NTS-KE response.
@@ -81,30 +111,47 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// 
         public NTSKE_Response(IEnumerable<NTSKE_Record>  NTSKERecords,
                               Byte[]                     C2SKey,
-                              Byte[]                     S2CKey)
+                              Byte[]                     S2CKey,
+                              NTSKE_TimingInfo?          TimingInfo   = null,
+                              NTSKE_TLSInfo?             TLSInfo      = null)
         {
 
             this.NTSKERecords  = NTSKERecords;
             this.C2SKey        = C2SKey;
             this.S2CKey        = S2CKey;
+            this.TimingInfo    = TimingInfo;
+            this.TLSInfo       = TLSInfo;
+
+            this.NTPv4Servers  = NTSKERecords.
+                                     Where (ntsKERecord => ntsKERecord.Type == NTSKE_RecordTypes.NTPv4ServerNegotiation).
+                                     Select(ntsKERecord => DomainName.Parse(Encoding.ASCII.GetString(ntsKERecord.Body).TrimEnd('\0'))).
+                                     Where (domainName  => domainName.IsNotNullOrEmpty());
+
+            this.NTPv4Ports    = NTSKERecords.
+                                     Where (ntsKERecord =>  ntsKERecord.Type == NTSKE_RecordTypes.NTPv4PortNegotiation).
+                                     Where (ntsKERecord =>  ntsKERecord.Body.Length == 2).
+                                     Select(ntsKERecord => (UInt16) (ntsKERecord.Body[0] << 8) | ntsKERecord.Body[1]).
+                                     Where (port        =>  port > 0).
+                                     Select(IPPort.Parse);
 
         }
 
         #endregion
 
-        #region NTSKE_Response(ErrorMessage)
+        #region NTSKE_Response(ErrorMessage, ...)
 
         /// <summary>
         /// Create a new NTS-KE error response.
         /// </summary>
         /// <param name="ErrorMessage">The error message.</param>
-        public NTSKE_Response(String ErrorMessage)
+        public NTSKE_Response(String             ErrorMessage,
+                              NTSKE_TimingInfo?  TimingInfo   = null,
+                              NTSKE_TLSInfo?     TLSInfo      = null)
         {
 
-            this.NTSKERecords  = [];
-            this.C2SKey        = [];
-            this.S2CKey        = [];
             this.ErrorMessage  = ErrorMessage;
+            this.TimingInfo    = TimingInfo;
+            this.TLSInfo       = TLSInfo;
 
         }
 
@@ -112,6 +159,42 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #endregion
 
+
+        #region (private) FormatHostnamesAndPorts(Hostnames, Ports)
+
+        private static String FormatHostnamesAndPorts(IEnumerable<DomainName>  Hostnames,
+                                                      IEnumerable<IPPort>      Ports)
+        {
+
+            var results    = new List<String>();
+            var hostnames  = Hostnames.Where(hostname => hostname.IsNotNullOrEmpty()).ToList();
+            var ports      = Ports.                                                   ToList();
+
+            if (ports.Count == 0)
+                ports.Add(IPPort.NTP);
+
+            if (hostnames.Count == 0)
+                return $"NTPv4 Port(s): {ports.Select(port => port.ToString()).AggregateWith(", ")}";
+
+            for (var i=0; i<hostnames.Count; i++)
+            {
+
+                var host = hostnames[i].ToString().TrimEnd('.');
+
+                results.Add(
+                    System.Net.IPAddress.TryParse(host, out var ipAddress) &&
+                    ipAddress.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6
+                        ? $"[{host}]:{ports[Math.Min(i, ports.Count - 1)]}"
+                        : $"{host}:{ports[Math.Min(i, ports.Count - 1)]}"
+                );
+
+            }
+
+            return $"NTPv4 Server(s): {results.AggregateWith(", ")}";
+
+        }
+
+        #endregion
 
         #region (override) ToString()
 
@@ -127,6 +210,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                    : String.Concat(
 
                          $"{NTSKERecords.Count()} NTS-KE records",
+
+                          NTPv4Servers.Any() || NTPv4Ports.Any()
+                              ? $", {FormatHostnamesAndPorts(NTPv4Servers, NTPv4Ports)}"
+                              : "",
 
                          C2SKey.Length > 0
                              ? $", C2S-Key: {BitConverter.ToString(C2SKey)}"

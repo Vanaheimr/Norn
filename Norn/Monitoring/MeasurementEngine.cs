@@ -29,6 +29,7 @@ using org.GraphDefined.Vanaheimr.Hermod.DNS;
 
 using org.GraphDefined.Vanaheimr.Norn.NTP;
 using org.GraphDefined.Vanaheimr.Norn.NTS;
+using IPAddress = org.GraphDefined.Vanaheimr.Hermod.IPAddress;
 
 #endregion
 
@@ -57,7 +58,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         /// This ensures all servers are measured at nearly the same instant,
         /// making inter-server offset comparisons meaningful.
         /// </summary>
-        public async Task<MeasurementRound> MeasureAllServersParallel(CancellationToken CancellationToken = default)
+        public async Task<MeasurementRound> MeasureAllServersParallel(DNSClient          DNSClient, CancellationToken CancellationToken = default)
         {
 
             var roundId          = UUIDv7.Generate();
@@ -66,7 +67,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
             // Launch all server measurements simultaneously
             var enabledServers   = config.Servers.Where(s => s.Enabled).ToList();
-            var tasks            = enabledServers.Select(server => MeasureSingleServer(server, roundId, CancellationToken)).ToArray();
+            var tasks            = enabledServers.Select(server => MeasureSingleServer(server, roundId, DNSClient, CancellationToken)).ToArray();
             var results          = await Task.WhenAll(tasks);
 
             roundStopwatch.Stop();
@@ -87,7 +88,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
         #endregion
 
-        #region MeasureSingleServer       (Server, RoundId, CancellationToken)
+        #region MeasureSingleServer       (Server, RoundId, DNSClient, CancellationToken)
 
         /// <summary>
         /// Complete measurement of a single NTS server:
@@ -97,23 +98,27 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         /// </summary>
         public async Task<NTSMeasurementResult> MeasureSingleServer(NTSServerEndpoint  Server,
                                                                     Guid               RoundId,
+                                                                    DNSClient          DNSClient,
                                                                     CancellationToken  CancellationToken = default)
         {
 
-            var totalStopwatch = Stopwatch.StartNew();
+            var totalStopwatch  = Stopwatch.StartNew();
 
-            var result = new NTSMeasurementResult(
-                             Server.Hostname,
-                             RoundId
-                         ) {
-                Success = false
-            };
+            var result          = new NTSMeasurementResult(
+                                      Server.Hostname,
+                                      RoundId
+                                  ) {
+                                        Success = false
+                                    };
 
             try
             {
 
                 // ──── Step 1: DNS Resolution ────
-                var dnsResult = await MeasureDNS(Server.Hostname);
+                var dnsResult = await MeasureDNS(
+                                          DNSClient,
+                                          Server.Hostname
+                                      );
 
                 // ──── Step 2: NTS-KE (cached or fresh) ────
                 var ntskeFromCache  = true;
@@ -137,7 +142,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                                    NTSKE           = ntskeMeasurement,
                                    NTSKEFromCache  = false,
                                    Success         = false,
-                                   ErrorMessage    = $"NTS-KE failed: {ntskeMeasurement.ErrorMessage}",
+                                   ErrorMessage    = Error.Create($"NTS-KE failed: {ntskeMeasurement.ErrorMessage}"),
+                                   ErrorCategory   = ntskeMeasurement.ErrorCategory,
                                    TotalDuration   = totalStopwatch.Elapsed
                                };
 
@@ -157,7 +163,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                                NTSKE           = ntskeMeasurement,
                                NTSKEFromCache  = ntskeFromCache,
                                Success         = false,
-                               ErrorMessage    = "No NTS-KE state available",
+                               ErrorMessage    = Error.Create("No NTS-KE state available"),
+                               ErrorCategory   = MonitoringErrorCategory.Cache,
                                TotalDuration   = totalStopwatch.Elapsed
                            };
 
@@ -175,6 +182,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                            NTP             = ntpResult,
                            Success         = ntpResult.Success,
                            ErrorMessage    = ntpResult.ErrorMessage,
+                           ErrorCategory   = ntpResult.ErrorCategory,
                            TotalDuration   = totalStopwatch.Elapsed
                        };
 
@@ -186,7 +194,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
                 return new NTSMeasurementResult(Server.Hostname, RoundId) {
                            Success        = false,
-                           ErrorMessage   = $"Unhandled exception: {e.Message}",
+                           ErrorMessage   = Error.Create(e),
+                           ErrorCategory  = MonitoringErrorCategory.Exception,
                            TotalDuration  = totalStopwatch.Elapsed
                        };
 
@@ -197,12 +206,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         #endregion
 
 
-        #region (private) MeasureDNS   (Hostname)
+        #region (private) MeasureDNS   (DNSClient, Hostname)
 
         /// <summary>
         /// Measure DNS resolution time and get both IPv4 and IPv6 addresses.
         /// </summary>
-        private async Task<DNSResolutionResult> MeasureDNS(DomainName Hostname)
+        private async Task<DNSResolutionResult> MeasureDNS(DNSClient   DNSClient,
+                                                           DomainName  Hostname)
         {
 
             var sw = Stopwatch.StartNew();
@@ -210,15 +220,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
             try
             {
 
-                var addresses  = await Dns.GetHostAddressesAsync(Hostname.ToString());
+                var addresses = (await DNSClient.Query_IPAddresses(Hostname)).ToArray();
                 sw.Stop();
 
-                return new DNSResolutionResult {
-                           Success        = addresses.Length > 0,
-                           IPv4Addresses  = addresses.Where(a => a.AddressFamily == AddressFamily.InterNetwork).  Select(ipAddress => ipAddress.ToString()),
-                           IPv6Addresses  = addresses.Where(a => a.AddressFamily == AddressFamily.InterNetworkV6).Select(ipAddress => ipAddress.ToString()),
-                           Duration       = sw.Elapsed
-                       };
+                return new DNSResolutionResult(
+                           Success:        addresses.Length > 0,
+                           Duration:       sw.Elapsed,
+                           IPv4Addresses:  addresses.Where(ipAddress => ipAddress is IPv4Address).Cast<IPv4Address>(),
+                           IPv6Addresses:  addresses.Where(ipAddress => ipAddress is IPv6Address).Cast<IPv6Address>()
+                       );
 
             }
             catch (Exception e)
@@ -226,11 +236,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
                 sw.Stop();
 
-                return new DNSResolutionResult {
-                           Success       = false,
-                           ErrorMessage  = e. Message,
-                           Duration      = sw.Elapsed
-                       };
+                return new DNSResolutionResult(
+                           Success:       false,
+                           Duration:      sw.Elapsed,
+                           ErrorMessage:  Error.Create(e)
+                       );
 
             }
 
@@ -243,97 +253,198 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         /// <summary>
         /// Perform a full NTS-KE handshake and capture all timing information.
         ///
-        /// NOTE: This wraps Norn's NTSClient.GetNTSKERecords() but adds detailed
-        /// timing and certificate capture.
-        ///
-        /// TODO/Weakness: Norn's GetNTSKERecords() is synchronous and doesn't expose
-        /// individual phase timing or certificate details. We measure the total duration
-        /// externally and extract cert info via a custom RemoteCertificateValidator.
-        /// Ideally Norn should be refactored to expose these phases individually.
+        /// NOTE: Norn exposes phase timings and TLS information directly on the
+        /// NTS-KE response, so monitoring does not need a certificate-capturing
+        /// validator workaround here.
         /// </summary>
         private async Task<NTSKEMeasurementResult> MeasureNTSKE(NTSServerEndpoint  Server,
                                                                 CancellationToken  CancellationToken = default)
         {
 
-            TLSCertificateInfo? capturedCertInfo = null;
-
             var ntsClient = new NTSClient(
                                 Server.Hostname,
                                 Server.NTSKEPort,
                                 Server.NTPPort,
-                                RemoteCertificateValidator: (sender, remoteCert, chain, client, sslErrors) => {
-
-                                    // Capture certificate info during handshake
-                                    if (remoteCert is not null)
-                                    {
-
-                                        var x509 = new X509Certificate2(remoteCert);
-
-                                        capturedCertInfo = new TLSCertificateInfo {
-                                                               Subject             = x509.Subject,
-                                                               Issuer              = x509.Issuer,
-                                                               NotBefore           = x509.NotBefore.ToUniversalTime(),
-                                                               NotAfter            = x509.NotAfter. ToUniversalTime(),
-                                                               DaysUntilExpiry     = (Int32) (x509.NotAfter.ToUniversalTime() - Timestamp.Now).TotalDays,
-                                                               SerialNumber        = x509.SerialNumber,
-                                                               Thumbprint          = x509.Thumbprint,
-                                                               SignatureAlgorithm  = x509.SignatureAlgorithm.FriendlyName,
-                                                               PublicKeyAlgorithm  = x509.PublicKey.Oid.FriendlyName,
-                                                               PublicKeySize       = x509.PublicKey.GetRSAPublicKey()?.KeySize ??
-                                                                                     x509.PublicKey.GetECDsaPublicKey()?.KeySize
-                                                           };
-
-                                    }
-
-                                    // Accept the certificate (standard chain validation is done by Norn)
-                                    // We could do custom validation here too, but for monitoring
-                                    // we want to capture info even if the cert has issues.
-                                    return TLSValidationResult.Success();
-
-                                },
                                 Timeout: config.NTSKETimeout
                             );
 
-            // Currently GetNTSKERecords is synchronous (see weakness analysis).
-            // Run it on a thread pool thread to avoid blocking.
             var sw = Stopwatch.StartNew();
 
-            var ntskeResponse = await Task.Run(() => ntsClient.GetNTSKERecords(), CancellationToken);
+            var ntskeResponse = await ntsClient.GetNTSKERecordsAsync(
+                                     Timeout:            config.NTSKETimeout,
+                                     CancellationToken:  CancellationToken
+                                 );
 
             sw.Stop();
 
+            var timingInfo      = ntskeResponse.TimingInfo;
+            var tlsInfo         = ntskeResponse.TLSInfo;
+            var certificateInfo = BuildCertificateInfo(tlsInfo);
+            var totalDuration   = timingInfo?.TotalDuration          ?? sw.Elapsed;
+            var tcpDuration     = timingInfo?.TCPConnectDuration     ?? TimeSpan.Zero;
+            var tlsDuration     = timingInfo?.TLSHandshakeDuration   ?? TimeSpan.Zero;
+            var ntskeDuration   = timingInfo?.NTSKEProtocolDuration  ?? TimeSpan.Zero;
+            var resolvedIPs     = timingInfo?.ResolvedIPAddresses.Select(ipAddress => ipAddress.ToString()) ?? [];
+            var connectedIP     = timingInfo?.ConnectedIPAddress?.ToString();
+            var tlsCompliance   = EvaluateTLSCompliance(certificateInfo, tlsInfo);
+
             if (ntskeResponse.ErrorMessage is not null)
             {
+
+                var errorCategory = ClassifyNTSKEError(ntskeResponse.ErrorMessage);
+
                 return new NTSKEMeasurementResult {
-                           Success          = false,
-                           TotalDuration    = sw.Elapsed,
-                           ErrorMessage     = ntskeResponse.ErrorMessage,
-                           CertificateInfo  = capturedCertInfo
+                           Success                 = false,
+                           TotalDuration           = totalDuration,
+                           TCPConnectDuration      = tcpDuration,
+                           TLSHandshakeDuration    = tlsDuration,
+                           NTSKEProtocolDuration   = ntskeDuration,
+                           ErrorMessage            = Error.Create(ntskeResponse.ErrorMessage),
+                           CertificateInfo         = certificateInfo,
+                           TLSCipherSuite          = tlsInfo?.NegotiatedCipherSuite,
+                           TLSVersion              = tlsInfo?.NegotiatedTLSVersion,
+                           TLSApplicationProtocol  = tlsInfo?.NegotiatedApplicationProtocol,
+                           TLSCompliance           = tlsCompliance,
+                           ResolvedIPAddresses     = resolvedIPs,
+                           ConnectedIPAddress      = connectedIP,
+                           ErrorCategory           = errorCategory
                        };
+
             }
+
+            ntsClient.SeedCookies(ntskeResponse);
 
             // Cache the NTS-KE state
             ntskeCache[Server.Hostname] = new CachedNTSKEState {
                                               NTSKEResponse     = ntskeResponse,
                                               NTSClient         = ntsClient,
                                               LastRefreshed     = Timestamp.Now,
-                                              RemainingCookies  = (Byte) ntskeResponse.Cookies.Count()
+                                              RemainingCookies  = ToByteCookieCount(ntsClient.AvailableCookieCount)
                                           };
 
             return new NTSKEMeasurementResult {
-                       Success                = true,
-                       TotalDuration          = sw.Elapsed,
-                       // Note: We can't distinguish TCP/TLS/NTS-KE phases with current Norn API.
-                       // This is a known weakness. For now, report total only.
-                       TCPConnectDuration     = TimeSpan.Zero,
-                       TLSHandshakeDuration   = TimeSpan.Zero,
-                       NTSKEProtocolDuration  = TimeSpan.Zero,
-                       NumberOfCookies        = (UInt16) ntskeResponse.Cookies.Count(),
-                       AEADAlgorithm          = "AES-SIV-CMAC-256",    // Currently only option in Norn
-                       CertificateInfo        = capturedCertInfo
+                       Success                 = true,
+                       TotalDuration           = totalDuration,
+                       TCPConnectDuration      = tcpDuration,
+                       TLSHandshakeDuration    = tlsDuration,
+                       NTSKEProtocolDuration   = ntskeDuration,
+                       NumberOfCookies         = (UInt16) ntskeResponse.Cookies.Count(),
+                       AEADAlgorithm           = "AES-SIV-CMAC-256",    // Currently only option in Norn
+                       NTPServerNegotiated     = ntskeResponse.NTPv4Servers.FirstOrDefault(),
+                       NTPPortNegotiated       = ntskeResponse.NTPv4Ports.  FirstOrDefault(),
+                       ResolvedIPAddresses     = resolvedIPs,
+                       ConnectedIPAddress      = connectedIP,
+                       CookiePoolSize          = ntsClient.AvailableCookieCount,
+                       CertificateInfo         = certificateInfo,
+                       TLSCipherSuite          = tlsInfo?.NegotiatedCipherSuite,
+                       TLSVersion              = tlsInfo?.NegotiatedTLSVersion,
+                       TLSApplicationProtocol  = tlsInfo?.NegotiatedApplicationProtocol,
+                       TLSCompliance           = tlsCompliance
                    };
 
         }
+
+        #endregion
+
+        #region (private static) BuildCertificateInfo(TLSInfo)
+
+        private static TLSCertificateInfo? BuildCertificateInfo(NTSKE_TLSInfo? TLSInfo)
+        {
+
+            var certificate = TLSInfo?.ServerCertificate;
+
+            if (certificate is null)
+                return null;
+
+            return new TLSCertificateInfo {
+                       Subject                  = certificate.Subject,
+                       Issuer                   = certificate.Issuer,
+                       NotBefore                = certificate.NotBefore.ToUniversalTime(),
+                       NotAfter                 = certificate.NotAfter. ToUniversalTime(),
+                       DaysUntilExpiry          = (Int32) (certificate.NotAfter.ToUniversalTime() - Timestamp.Now).TotalDays,
+                       SerialNumber             = certificate.SerialNumber,
+                       Thumbprint               = certificate.Thumbprint,
+                       SignatureAlgorithm       = certificate.SignatureAlgorithm.FriendlyName,
+                       PublicKeyAlgorithm       = certificate.PublicKey.Oid.FriendlyName,
+                       PublicKeySize            = certificate.PublicKey.GetRSAPublicKey()?.KeySize ??
+                                                  certificate.PublicKey.GetECDsaPublicKey()?.KeySize,
+                       SubjectAlternativeNames  = certificate.DecodeSubjectAlternativeNames(),
+                       PolicyErrors             = TLSInfo?.CertificatePolicyErrors?.ToString()
+                   };
+
+        }
+
+        #endregion
+
+        #region (private) EvaluateTLSCompliance(CertificateInfo, TLSInfo)
+
+        private TLSComplianceResult EvaluateTLSCompliance(TLSCertificateInfo? CertificateInfo,
+                                                          NTSKE_TLSInfo?      TLSInfo)
+        {
+
+            var warnings = new List<String>();
+            var errors   = new List<String>();
+
+            if (CertificateInfo is null)
+                warnings.Add("TLS server certificate information was not captured.");
+            else
+            {
+
+                if (CertificateInfo.PolicyErrors.IsNotNullOrEmpty() &&
+                    CertificateInfo.PolicyErrors != "None")
+                    errors.Add($"TLS certificate policy errors: {CertificateInfo.PolicyErrors}");
+
+                if (CertificateInfo.DaysUntilExpiry.HasValue)
+                {
+
+                    if (CertificateInfo.DaysUntilExpiry.Value <= config.Alerts.CertExpiryCriticalDays)
+                        errors.Add($"TLS certificate expires in {CertificateInfo.DaysUntilExpiry.Value} day(s).");
+
+                    else if (CertificateInfo.DaysUntilExpiry.Value <= config.Alerts.CertExpiryWarningDays)
+                        warnings.Add($"TLS certificate expires in {CertificateInfo.DaysUntilExpiry.Value} day(s).");
+
+                }
+
+                if (CertificateInfo.PublicKeyAlgorithm?.Contains("RSA", StringComparison.OrdinalIgnoreCase) == true &&
+                    CertificateInfo.PublicKeySize.HasValue &&
+                    CertificateInfo.PublicKeySize.Value < 2048)
+                    errors.Add($"RSA public key is too small: {CertificateInfo.PublicKeySize.Value} bit.");
+
+                if (CertificateInfo.PublicKeyAlgorithm?.Contains("ECC", StringComparison.OrdinalIgnoreCase) == true &&
+                    CertificateInfo.PublicKeySize.HasValue &&
+                    CertificateInfo.PublicKeySize.Value < 256)
+                    errors.Add($"ECDSA public key is too small: {CertificateInfo.PublicKeySize.Value} bit.");
+
+            }
+
+            if (TLSInfo?.NegotiatedTLSVersion != "TLS 1.3")
+                errors.Add($"Unexpected TLS version: {TLSInfo?.NegotiatedTLSVersion ?? "unknown"}.");
+
+            if (TLSInfo?.NegotiatedCipherSuite is null)
+                warnings.Add("TLS cipher suite information was not captured.");
+
+            else if (!IsRecommendedTLS13CipherSuite(TLSInfo.NegotiatedCipherSuite))
+                warnings.Add($"TLS cipher suite is not in the recommended TLS 1.3 set: {TLSInfo.NegotiatedCipherSuite}.");
+
+            return new TLSComplianceResult {
+                       Status    = errors.Count   > 0 ? MonitoringStatus.Critical :
+                                   warnings.Count > 0 ? MonitoringStatus.Warning  :
+                                                        MonitoringStatus.OK,
+                       Warnings  = warnings,
+                       Errors    = errors
+                   };
+
+        }
+
+        #endregion
+
+        #region (private static) IsRecommendedTLS13CipherSuite(CipherSuite)
+
+        private static Boolean IsRecommendedTLS13CipherSuite(String CipherSuite)
+
+            => CipherSuite.Equals("TLS_AES_256_GCM_SHA384",       StringComparison.OrdinalIgnoreCase) ||
+               CipherSuite.Equals("TLS_CHACHA20_POLY1305_SHA256", StringComparison.OrdinalIgnoreCase) ||
+               CipherSuite.Equals("TLS_AES_128_GCM_SHA256",       StringComparison.OrdinalIgnoreCase);
 
         #endregion
 
@@ -367,12 +478,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                 var t1_stopwatch_ticks = sw.ElapsedTicks;
 
                 var ntsClient  = CachedState.NTSClient;
+                var remoteInfo = GetNTPRemoteInfo(Server, CachedState);
 
                 if (ntsClient is null)
                     return new NTPMeasurementResult {
-                        Success      = false,
-                        ErrorMessage = "NTS client not available from cache"
-                    };
+                               Success                 = false,
+                               ErrorMessage            = Error.Create("NTS client not available from cache"),
+                               ErrorCategory           = MonitoringErrorCategory.Cache,
+                               RemoteHost              = remoteInfo.Host,
+                               RemoteAddress           = remoteInfo.Address,
+                               RemotePort              = remoteInfo.Port
+                           };
 
                 var ntpResponse = await ntsClient.QueryTime(
                                             Timeout:            config.NTPTimeout,
@@ -386,27 +502,37 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                 sw.Stop();
                 var stopwatchRTT = StopwatchTicksToTimeSpan(t4_stopwatch_ticks - t1_stopwatch_ticks);
 
-                // Decrement cookie count
-                if (CachedState.RemainingCookies > 0)
-                    CachedState.RemainingCookies--;
+                CachedState.RemainingCookies = ToByteCookieCount(ntsClient.AvailableCookieCount);
 
 
                 if (ntpResponse is null)
                     return new NTPMeasurementResult {
-                               Success       = false,
-                               StopwatchRTT  = stopwatchRTT,
-                               ErrorMessage  = "No NTP response (null)"
+                               Success                     = false,
+                               StopwatchRTT                = stopwatchRTT,
+                               ErrorMessage                = Error.Create("No NTP response (null)"),
+                               ErrorCategory               = MonitoringErrorCategory.NTPTimeout,
+                               RemoteHost                  = remoteInfo.Host,
+                               RemoteAddress               = remoteInfo.Address,
+                               RemotePort                  = remoteInfo.Port,
+                               RemainingCookiesAfterQuery  = CachedState.RemainingCookies
                            };
 
                 if (ntpResponse.ErrorMessage is not null)
                     return new NTPMeasurementResult {
                                Success          = false,
                                StopwatchRTT     = stopwatchRTT,
-                               ErrorMessage     = ntpResponse.ErrorMessage,
+                               ErrorMessage     = Error.Create(ntpResponse.ErrorMessage),
                                KissOfDeath      = ntpResponse.Stratum == 0,
                                KissOfDeathCode  = ntpResponse.Stratum == 0
-                                                      ? ntpResponse.ReferenceIdentifier.ToString()
-                                                      : null
+                                                      ? ntpResponse.ReferenceIdentifier.ToString(ntpResponse.Stratum)
+                                                      : null,
+                               ErrorCategory    = ntpResponse.Stratum == 0
+                                                      ? MonitoringErrorCategory.KissOfDeath
+                                                      : ClassifyNTPError(ntpResponse.ErrorMessage),
+                               RemoteHost       = remoteInfo.Host,
+                               RemoteAddress    = remoteInfo.Address,
+                               RemotePort       = remoteInfo.Port,
+                               RemainingCookiesAfterQuery = CachedState.RemainingCookies
                            };
 
 
@@ -425,7 +551,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                 var t1      = NTPPacket.NTPTimestampToDateTime(ntpResponse.OriginateTimestamp);
                 var t2      = NTPPacket.NTPTimestampToDateTime(ntpResponse.ReceiveTimestamp);
                 var t3      = NTPPacket.NTPTimestampToDateTime(ntpResponse.TransmitTimestamp ?? 0);
-                var t4      = t1.Add(stopwatchRTT);
+                var t4      = ntpResponse.DestinationTimestamp.HasValue
+                                  ? NTPPacket.NTPTimestampToDateTime(ntpResponse.DestinationTimestamp.Value)
+                                  : t1.Add(stopwatchRTT);
 
                 // NOTE: t4 includes overhead from:
                 //  - Request side:  NTS request building (AEAD encrypt, ~0.1-1ms)
@@ -435,12 +563,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
                 // ──── Compute RFC 5905 offset and delay ────
                 // θ = ((T2 - T1) + (T3 - T4)) / 2
-                var offset  = TimeSpan.FromTicks(
+                var offset  = ntpResponse.ClockOffset ??
+                              TimeSpan.FromTicks(
                                   ((t2 - t1).Ticks + (t3 - t4).Ticks) / 2
                               );
 
                 // δ = (T4 - T1) - (T3 - T2)
-                var delay   = (t4 - t1) - (t3 - t2);
+                var delay   = ntpResponse.RoundTripDelay ?? ((t4 - t1) - (t3 - t2));
 
 
                 // ──── Check NTS extensions ────
@@ -448,38 +577,39 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                 var newCookieReceived = ntpResponse.Extensions.Any(e => e is NTSCookieExtension { Encrypted: true });
 
                 // If we got a new cookie, update the cache
-                if (newCookieReceived)
-                    CachedState.RemainingCookies++;
+                CachedState.RemainingCookies = ToByteCookieCount(ntsClient.AvailableCookieCount);
 
 
                 return new NTPMeasurementResult {
 
-                           Success                 = true,
-                           NTSAuthenticationValid  = true,     // If we got here, Norn validated it
-                           UniqueIdMatched         = uniqueIdMatched,
+                           Success                     = true,
+                           NTSAuthenticationValid      = true,     // If we got here, Norn validated it
+                           UniqueIdMatched             = uniqueIdMatched,
 
-                           T1_ClientSend           = t1,
-                           T2_ServerReceive        = t2,
-                           T3_ServerTransmit       = t3,
-                           T4_ClientReceive        = t4,
+                           T1_ClientSend               = t1,
+                           T2_ServerReceive            = t2,
+                           T3_ServerTransmit           = t3,
+                           T4_ClientReceive            = t4,
 
-                           Offset                  = offset,
-                           RoundTripDelay          = delay,
-                           StopwatchRTT            = stopwatchRTT,
+                           Offset                      = offset,
+                           RoundTripDelay              = delay,
+                           StopwatchRTT                = stopwatchRTT,
+                           RemoteHost                  = remoteInfo.Host,
+                           RemoteAddress               = remoteInfo.Address,
+                           RemotePort                  = remoteInfo.Port,
 
-                           LeapIndicator           = ntpResponse.LI,
-                           Stratum                 = ntpResponse.Stratum,
-                           Poll                    = ntpResponse.Poll,
-                           Precision               = ntpResponse.Precision,
-                           RootDelaySeconds        = ntpResponse.RootDelay      / 65536.0,   // 16.16 fixed-point → seconds
-                           RootDispersionSeconds   = ntpResponse.RootDispersion / 65536.0,
-                           ReferenceId             = ntpResponse.Stratum <= 1
-                                                         ? ntpResponse.ReferenceIdentifier.AsASCII  // Stratum 0/1: always ASCII (RFC 5905, zero-padded)
-                                                         : ntpResponse.ReferenceIdentifier.ToString() ?? "",
-                           ReferenceTimestamp      = NTPPacket.NTPTimestampToDateTime(ntpResponse.ReferenceTimestamp),
+                           LeapIndicator               = ntpResponse.LI,
+                           Stratum                     = ntpResponse.Stratum,
+                           Poll                        = ntpResponse.Poll,
+                           Precision                   = ntpResponse.Precision,
+                           RootDelaySeconds            = ntpResponse.RootDelay      / 65536.0,   // 16.16 fixed-point → seconds
+                           RootDispersionSeconds       = ntpResponse.RootDispersion / 65536.0,
+                           ReferenceId                 = ntpResponse.ReferenceIdentifier.ToString(ntpResponse.Stratum),
+                           ReferenceTimestamp          = NTPPacket.NTPTimestampToDateTime(ntpResponse.ReferenceTimestamp),
 
-                           NewCookieReceived       = newCookieReceived,
-                           KissOfDeath             = false
+                           NewCookieReceived           = newCookieReceived,
+                           RemainingCookiesAfterQuery  = CachedState.RemainingCookies,
+                           KissOfDeath                 = false
 
                        };
 
@@ -490,10 +620,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                 sw.Stop();
 
                 return new NTPMeasurementResult {
-                           Success       = false,
-                           ErrorMessage  = $"NTP exception: {e.Message}",
-                           StopwatchRTT  = sw.Elapsed
-                       };
+                           Success        = false,
+                           ErrorMessage   = Error.Create($"NTP exception: {e.Message}"),
+                           ErrorCategory  = MonitoringErrorCategory.Exception,
+                           StopwatchRTT   = sw.Elapsed
+                        };
 
             }
 
@@ -514,6 +645,113 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
             }
 
             return null;
+
+        }
+
+        #endregion
+
+
+        #region (private static) ToByteCookieCount(CookieCount)
+
+        private static Byte ToByteCookieCount(Int32 CookieCount)
+
+            => (Byte) Math.Clamp(CookieCount, Byte.MinValue, Byte.MaxValue);
+
+        #endregion
+
+
+        #region (private static) ClassifyNTSKEError(ErrorMessage)
+
+        private static MonitoringErrorCategory ClassifyNTSKEError(String? ErrorMessage)
+        {
+
+            if (ErrorMessage is null)
+                return MonitoringErrorCategory.Unknown;
+
+            if (ErrorMessage.Contains("No IP address", StringComparison.OrdinalIgnoreCase) ||
+                ErrorMessage.Contains("Name or service not known", StringComparison.OrdinalIgnoreCase) ||
+                ErrorMessage.Contains("nodename", StringComparison.OrdinalIgnoreCase))
+                return MonitoringErrorCategory.DNS;
+
+            if (ErrorMessage.Contains("connect", StringComparison.OrdinalIgnoreCase))
+                return MonitoringErrorCategory.TCPConnect;
+
+            if (ErrorMessage.Contains("certificate", StringComparison.OrdinalIgnoreCase))
+                return MonitoringErrorCategory.TLSCertificate;
+
+            if (ErrorMessage.Contains("TLS", StringComparison.OrdinalIgnoreCase) ||
+                ErrorMessage.Contains("handshake", StringComparison.OrdinalIgnoreCase))
+                return MonitoringErrorCategory.TLSHandshake;
+
+            if (ErrorMessage.Contains("parse", StringComparison.OrdinalIgnoreCase) ||
+                ErrorMessage.Contains("NTS-KE", StringComparison.OrdinalIgnoreCase) ||
+                ErrorMessage.Contains("Read operation timed out", StringComparison.OrdinalIgnoreCase))
+                return MonitoringErrorCategory.NTSKEProtocol;
+
+            return MonitoringErrorCategory.Unknown;
+
+        }
+
+        #endregion
+
+
+        #region (private static) ClassifyNTPError(ErrorMessage)
+
+        private static MonitoringErrorCategory ClassifyNTPError(String? ErrorMessage)
+        {
+
+            if (ErrorMessage is null)
+                return MonitoringErrorCategory.Unknown;
+
+            if (ErrorMessage.Contains("timeout", StringComparison.OrdinalIgnoreCase) ||
+                ErrorMessage.Contains("No 1st NTP response", StringComparison.OrdinalIgnoreCase) ||
+                ErrorMessage.Contains("No 2nd NTP response", StringComparison.OrdinalIgnoreCase))
+                return MonitoringErrorCategory.NTPTimeout;
+
+            if (ErrorMessage.Contains("SIV", StringComparison.OrdinalIgnoreCase) ||
+                ErrorMessage.Contains("Unique", StringComparison.OrdinalIgnoreCase) ||
+                ErrorMessage.Contains("decrypt", StringComparison.OrdinalIgnoreCase) ||
+                ErrorMessage.Contains("auth", StringComparison.OrdinalIgnoreCase))
+                return MonitoringErrorCategory.NTSAuthentication;
+
+            if (ErrorMessage.Contains("KoD", StringComparison.OrdinalIgnoreCase) ||
+                ErrorMessage.Contains("Kiss", StringComparison.OrdinalIgnoreCase))
+                return MonitoringErrorCategory.KissOfDeath;
+
+            return MonitoringErrorCategory.Unknown;
+
+        }
+
+        #endregion
+
+
+        #region (private static) GetNTPRemoteInfo(Server, CachedState)
+
+        private static (DomainName   Host,
+                        IIPAddress?  Address,
+                        IPPort       Port)
+
+            GetNTPRemoteInfo(NTSServerEndpoint  Server,
+                             CachedNTSKEState   CachedState)
+
+        {
+
+            var ntskeResponse  = CachedState.NTSKEResponse;
+            var host           = ntskeResponse?.NTPv4Servers.FirstOrDefault() ?? Server.Hostname;
+            var port           = ntskeResponse?.NTPv4Ports.  FirstOrDefault() ?? Server.NTPPort;
+            var normalized     = host.ToString().TrimEnd('.');
+
+            if (IPAddress.TryParse(normalized, out var ipAddress))
+            { }
+
+            else if ((ntskeResponse?.NTPv4Servers.Any() != true ||
+                      String.Equals(normalized,
+                                    Server.Hostname.ToString().TrimEnd('.'),
+                                    StringComparison.OrdinalIgnoreCase)) &&
+                            ntskeResponse?.TimingInfo?.ConnectedIPAddress is not null)
+                ipAddress = ntskeResponse. TimingInfo. ConnectedIPAddress;
+
+            return (host, ipAddress, port);
 
         }
 

@@ -88,6 +88,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         public readonly UInt64   Length
             => (UInt64) AsASCII.Length;
 
+        /// <summary>
+        /// The reference identifier as a network byte order 32-bit integer.
+        /// </summary>
+        public readonly UInt32   NetworkInteger
+
+            => ((UInt32) byte0 << 24) |
+               ((UInt32) byte1 << 16) |
+               ((UInt32) byte2 <<  8) |
+                         byte3;
+
         #endregion
 
         #region Constructor(s)
@@ -121,6 +131,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         /// The reference identifier as an array of bytes.
         /// </summary>
         public readonly Byte[] AsBytes
+
             => [ byte0, byte1, byte2, byte3 ];
 
         #endregion
@@ -131,7 +142,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         /// The reference identifier as an integer.
         /// </summary>
         public readonly UInt32 Integer
-            => rawValue;
+
+            => NetworkInteger;
 
         #endregion
 
@@ -142,16 +154,40 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         /// </summary>
         public readonly Boolean IsASCII
 
-            => byte0 >= 32 && byte0 <= 126 &&
-               byte1 >= 32 && byte1 <= 126 &&
-               byte2 >= 32 && byte2 <= 126 &&
-               byte3 >= 32 && byte3 <= 126;
+            => IsLeftJustifiedZeroPaddedASCII;
+
+        /// <summary>
+        /// Whether the reference identifier is a left-justified ASCII string
+        /// padded with zero bytes, as used for stratum 0 and 1.
+        /// </summary>
+        public readonly Boolean IsLeftJustifiedZeroPaddedASCII
+        {
+            get
+            {
+
+                var bytes            = AsBytes;
+                var zeroPaddingStart = Array.IndexOf(bytes, (Byte) 0);
+
+                if (zeroPaddingStart < 0)
+                    return bytes.All(IsPrintableASCII);
+
+                if (zeroPaddingStart == 0)
+                    return false;
+
+                return bytes.Take(zeroPaddingStart).All(IsPrintableASCII) &&
+                       bytes.Skip(zeroPaddingStart).All(value => value == 0);
+
+            }
+        }
 
         /// <summary>
         /// The reference identifier as an ASCII string.
         /// </summary>
         public readonly String AsASCII
-            => Encoding.ASCII.GetString([byte0, byte1, byte2, byte3]).TrimEnd('\0');
+
+            => Encoding.ASCII.GetString(
+                   [byte0, byte1, byte2, byte3]
+               ).TrimEnd('\0');
 
         #endregion
 
@@ -260,7 +296,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         /// The reference identifier as an IPv4 address.
         /// </summary>
         public readonly IPv4Address? AsIPv4Address
+
             => new IPv4Address([ byte0, byte1, byte2, byte3 ]);
+
+        #endregion
+
+        #region (private static) IsPrintableASCII(ByteValue)
+
+        private static Boolean IsPrintableASCII(Byte ByteValue)
+
+            => ByteValue >= 32 && ByteValue <= 126;
 
         #endregion
 
@@ -382,7 +427,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         public static Boolean operator < (ReferenceIdentifier ReferenceIdentifier1,
                                           ReferenceIdentifier ReferenceIdentifier2)
 
-            => ReferenceIdentifier1.rawValue < ReferenceIdentifier2.rawValue;
+            => ReferenceIdentifier1.NetworkInteger < ReferenceIdentifier2.NetworkInteger;
 
         #endregion
 
@@ -397,7 +442,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         public static Boolean operator <= (ReferenceIdentifier ReferenceIdentifier1,
                                            ReferenceIdentifier ReferenceIdentifier2)
 
-            => ReferenceIdentifier1.rawValue <= ReferenceIdentifier2.rawValue;
+            => ReferenceIdentifier1.NetworkInteger <= ReferenceIdentifier2.NetworkInteger;
 
         #endregion
 
@@ -412,7 +457,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         public static Boolean operator > (ReferenceIdentifier ReferenceIdentifier1,
                                           ReferenceIdentifier ReferenceIdentifier2)
 
-            => ReferenceIdentifier1.rawValue > ReferenceIdentifier2.rawValue;
+            => ReferenceIdentifier1.NetworkInteger > ReferenceIdentifier2.NetworkInteger;
 
         #endregion
 
@@ -427,7 +472,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         public static Boolean operator >= (ReferenceIdentifier ReferenceIdentifier1,
                                            ReferenceIdentifier ReferenceIdentifier2)
 
-            => ReferenceIdentifier1.rawValue >= ReferenceIdentifier2.rawValue;
+            => ReferenceIdentifier1.NetworkInteger >= ReferenceIdentifier2.NetworkInteger;
 
         #endregion
 
@@ -458,7 +503,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         /// <param name="ReferenceIdentifier">A reference identifier to compare with.</param>
         public readonly Int32 CompareTo(ReferenceIdentifier other)
 
-            => rawValue.CompareTo(other.rawValue);
+            => NetworkInteger.CompareTo(other.NetworkInteger);
 
         #endregion
 
@@ -487,7 +532,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         /// <param name="ReferenceIdentifier">A reference identifier to compare with.</param>
         public readonly Boolean Equals(ReferenceIdentifier ReferenceIdentifier)
 
-            => rawValue == ReferenceIdentifier.rawValue;
+            => byte0 == ReferenceIdentifier.byte0 &&
+               byte1 == ReferenceIdentifier.byte1 &&
+               byte2 == ReferenceIdentifier.byte2 &&
+               byte3 == ReferenceIdentifier.byte3;
 
         #endregion
 
@@ -500,11 +548,27 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         /// </summary>
         public override Int32 GetHashCode()
 
-            => rawValue.GetHashCode();
+            => HashCode.Combine(byte0, byte1, byte2, byte3);
 
         #endregion
 
         #region (override) ToString()
+
+        /// <summary>
+        /// Return a stratum-aware text representation of this reference identifier.
+        /// </summary>
+        public readonly String ToString(Byte Stratum)
+        {
+
+            if (Stratum == 0)
+                return ErrorString ?? AsASCII;
+
+            if (Stratum == 1)
+                return TimeSource ?? AsASCII;
+
+            return $"IPv4/Hash: {AsIPv4Address} (0x{NetworkInteger:X8})";
+
+        }
 
         /// <summary>
         /// Return a text representation of this object.
@@ -522,7 +586,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
             }
 
-            return $"IPv4/Raw: {AsIPv4Address} (0x{rawValue:X8})";
+            return $"IPv4/Raw: {AsIPv4Address} (0x{NetworkInteger:X8})";
 
         }
 

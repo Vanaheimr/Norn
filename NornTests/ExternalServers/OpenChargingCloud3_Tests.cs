@@ -31,7 +31,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
     /// </summary>
     [TestFixture]
     public class OpenChargingCloud3_Tests()
-        : ANTSServer_Tests(DomainName.Parse("time3.charging.cloud"))
+        : ANTSServer_Tests(
+              ServerName:                   DomainName.Parse("time3.charging.cloud"),
+              ExpectedReferenceIdentifier:  null,
+              ExpectedStratum:              2,
+              Timeout:                      TimeSpan.FromSeconds(15)
+          )
     { }
 
 }

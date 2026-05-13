@@ -19,6 +19,8 @@
 
 using Newtonsoft.Json.Linq;
 
+using org.GraphDefined.Vanaheimr.Illias;
+
 #endregion
 
 namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
@@ -32,36 +34,78 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
         #region Properties
 
-        public String?    Subject             { get; init; }
-        public String?    Issuer              { get; init; }
-        public DateTime?  NotBefore           { get; init; }
-        public DateTime?  NotAfter            { get; init; }
-        public Int32?     DaysUntilExpiry     { get; init; }
-        public String?    SerialNumber        { get; init; }
-        public String?    Thumbprint          { get; init; }
-        public String?    SignatureAlgorithm  { get; init; }
-        public String?    PublicKeyAlgorithm  { get; init; }
-        public Int32?     PublicKeySize       { get; init; }
+        public String?              Subject                    { get; init; }
+        public String?              Issuer                     { get; init; }
+        public DateTimeOffset?      NotBefore                  { get; init; }
+        public DateTimeOffset?      NotAfter                   { get; init; }
+        public Int32?               DaysUntilExpiry            { get; init; }
+        public String?              SerialNumber               { get; init; }
+        public String?              Thumbprint                 { get; init; }
+        public String?              SignatureAlgorithm         { get; init; }
+        public String?              PublicKeyAlgorithm         { get; init; }
+        public Int32?               PublicKeySize              { get; init; }
+        public IEnumerable<String>  SubjectAlternativeNames    { get; init; } = [];
+        public String?              PolicyErrors               { get; init; }
 
         #endregion
+
 
         #region ToJSON()
 
         public JObject ToJSON()
         {
 
-            var json = new JObject();
+            var json = JSONObject.Create(
 
-            if (Subject            is not null) json.Add("subject",            Subject);
-            if (Issuer             is not null) json.Add("issuer",             Issuer);
-            if (NotBefore.  HasValue)          json.Add("notBefore",          NotBefore. Value.ToString("o"));
-            if (NotAfter.   HasValue)          json.Add("notAfter",           NotAfter.  Value.ToString("o"));
-            if (DaysUntilExpiry.HasValue)      json.Add("daysUntilExpiry",    DaysUntilExpiry.Value);
-            if (SerialNumber   is not null)    json.Add("serialNumber",       SerialNumber);
-            if (Thumbprint     is not null)    json.Add("thumbprint",         Thumbprint);
-            if (SignatureAlgorithm is not null) json.Add("signatureAlgorithm", SignatureAlgorithm);
-            if (PublicKeyAlgorithm is not null) json.Add("publicKeyAlgorithm", PublicKeyAlgorithm);
-            if (PublicKeySize.HasValue)        json.Add("publicKeySize",      PublicKeySize.Value);
+                           Subject.                IsNotNullOrEmpty()
+                               ? new JProperty("subject",                   Subject)
+                               : null,
+
+                           Issuer.                 IsNotNullOrEmpty()
+                               ? new JProperty("issuer",                    Issuer)
+                               : null,
+
+                           NotBefore.              HasValue
+                               ? new JProperty("notBefore",                 NotBefore. Value.ToISO8601())
+                               : null,
+
+                           NotAfter.               HasValue
+                               ? new JProperty("notAfter",                  NotAfter.  Value.ToISO8601())
+                               : null,
+
+                           DaysUntilExpiry.        HasValue
+                               ? new JProperty("daysUntilExpiry",           DaysUntilExpiry.Value)
+                               : null,
+
+                           SerialNumber.           IsNotNullOrEmpty()
+                               ? new JProperty("serialNumber",              SerialNumber)
+                               : null,
+
+                           Thumbprint.             IsNotNullOrEmpty()
+                               ? new JProperty("thumbprint",                Thumbprint)
+                               : null,
+
+                           SignatureAlgorithm.     IsNotNullOrEmpty()
+                               ? new JProperty("signatureAlgorithm",        SignatureAlgorithm)
+                               : null,
+
+                           PublicKeyAlgorithm.     IsNotNullOrEmpty()
+                               ? new JProperty("publicKeyAlgorithm",        PublicKeyAlgorithm)
+                               : null,
+
+                           PublicKeySize.          HasValue
+                               ? new JProperty("publicKeySize",             PublicKeySize.Value)
+                               : null,
+
+                           SubjectAlternativeNames.Any()
+                               ? new JProperty("subjectAlternativeNames",   new JArray(SubjectAlternativeNames))
+                               : null,
+
+                           PolicyErrors is not null
+                               ? new JProperty("policyErrors",              PolicyErrors)
+                               : null
+
+            );
 
             return json;
 

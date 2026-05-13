@@ -60,7 +60,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
             // Use reflection...
             var methodInfo     = typeof(NTSClient).GetMethod("BuildNTSRequest", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
             Assert.That(methodInfo,  Is.Not.Null, "The method 'BuildNTSRequest' could not be reflected!");
-            var requestPacket  = methodInfo?.Invoke(null, [ ntsKEResponse, uniqueId, plaintext, SignedResponseMode.None, (UInt16) 0 ]) as NTPRequest;
+            var requestPacket  = methodInfo?.Invoke(null, [ ntsKEResponse, cookie, uniqueId, plaintext, SignedResponseMode.None, (UInt16) 0, null ]) as NTPRequest;
 
             var isValid        = NTPRequest.TryParse(requestPacket?.ToByteArray() ?? [], out var ntpPacket, out var errorRequest, ntsKEResponse.C2SKey);
             var uniqueId2      = (ntpPacket?.Extensions.FirstOrDefault(extension => extension.Type == ExtensionTypes.UniqueIdentifier) as UniqueIdentifierExtension)?.Value;
@@ -78,6 +78,54 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
             Assert.That(debugMessages[1].Authenticated,  Is.True);
             Assert.That(debugMessages[1].Encrypted,      Is.True);
             Assert.That(debugMessages[1].Text,           Is.EqualTo(message2));
+
+        }
+
+        #endregion
+
+        #region CookiePool_ConsumesSeededCookiesOnlyOnce()
+
+        [Test]
+        public void CookiePool_ConsumesSeededCookiesOnlyOnce()
+        {
+
+            var cookie1        = Enumerable.Range( 0, 100).Select(value => (Byte) value).ToArray();
+            var cookie2        = Enumerable.Range(10, 100).Select(value => (Byte) value).ToArray();
+            var key            = new Byte[32];
+            var ntsKEResponse  = new NTSKE_Response(
+                                     [
+                                         new Norn.NTS.NTSKERecords.NewCookieForNTPv4(true, cookie1),
+                                         new Norn.NTS.NTSKERecords.NewCookieForNTPv4(true, cookie2)
+                                     ],
+                                     key,
+                                     key
+                                 );
+            var ntsClient      = new NTSClient(Hermod.DNS.DomainName.Localhost);
+            var methodInfo     = typeof(NTSClient).GetMethod("TryTakeCookie", BindingFlags.Instance | BindingFlags.NonPublic);
+
+            Assert.That(methodInfo, Is.Not.Null, "The method 'TryTakeCookie' could not be reflected!");
+            Assert.That(ntsClient.AvailableCookieCount, Is.EqualTo(0));
+
+            ntsClient.SeedCookies(ntsKEResponse);
+            Assert.That(ntsClient.AvailableCookieCount, Is.EqualTo(2));
+
+            var arguments1     = new Object?[] { ntsKEResponse, null };
+            var result1        = methodInfo!.Invoke(ntsClient, arguments1);
+            Assert.That(ntsClient.AvailableCookieCount, Is.EqualTo(1));
+
+            var arguments2     = new Object?[] { ntsKEResponse, null };
+            var result2        = methodInfo!.Invoke(ntsClient, arguments2);
+            Assert.That(ntsClient.AvailableCookieCount, Is.EqualTo(0));
+
+            var arguments3     = new Object?[] { ntsKEResponse, null };
+            var result3        = methodInfo!.Invoke(ntsClient, arguments3);
+
+            Assert.That(result1,       Is.EqualTo(true));
+            Assert.That(result2,       Is.EqualTo(true));
+            Assert.That(result3,       Is.EqualTo(false));
+            Assert.That(arguments1[1], Is.EqualTo(cookie1));
+            Assert.That(arguments2[1], Is.EqualTo(cookie2));
+            Assert.That(arguments3[1], Is.Null);
 
         }
 

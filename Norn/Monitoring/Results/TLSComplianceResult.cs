@@ -17,8 +17,7 @@
 
 #region Usings
 
-using org.GraphDefined.Vanaheimr.Illias;
-using org.GraphDefined.Vanaheimr.Norn.NTS;
+using Newtonsoft.Json.Linq;
 
 #endregion
 
@@ -26,25 +25,39 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 {
 
     /// <summary>
-    /// Cached NTS-KE state for a server. Stores the keys, cookies, and client instance
-    /// to avoid repeated TLS handshakes for every NTP query.
+    /// TLS compliance evaluation result.
     /// </summary>
-    public class CachedNTSKEState
+    public class TLSComplianceResult
     {
 
-        public NTSKE_Response?  NTSKEResponse      { get; set; }
-        public NTSClient?       NTSClient          { get; set; }
-        public DateTimeOffset   LastRefreshed      { get; set; }
-        public Byte             RemainingCookies   { get; set; }
+        #region Properties
 
+        public MonitoringStatus       Status    { get; init; } = MonitoringStatus.Unknown;
+        public IEnumerable<String>    Warnings  { get; init; } = [];
+        public IEnumerable<String>    Errors    { get; init; } = [];
 
-        /// <summary>
-        /// Whether this cache entry needs a refresh
-        /// (too old or cookies exhausted).
-        /// </summary>
-        public Boolean NeedsRefresh(TimeSpan MaxAge)
+        #endregion
 
-            => (Timestamp.Now - LastRefreshed) > MaxAge || RemainingCookies <= 1;  // Keep 1 cookie in reserve
+        #region ToJSON()
+
+        public JObject ToJSON()
+        {
+
+            var json = new JObject(
+                           new JProperty("status", Status.ToString())
+                       );
+
+            if (Warnings.Any())
+                json.Add("warnings", new JArray(Warnings));
+
+            if (Errors.Any())
+                json.Add("errors", new JArray(Errors));
+
+            return json;
+
+        }
+
+        #endregion
 
     }
 

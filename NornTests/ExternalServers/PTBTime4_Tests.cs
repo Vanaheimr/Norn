@@ -27,14 +27,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 {
 
     /// <summary>
-    /// Test the NTS client against public NTS server 'time1.charging.cloud'.
+    /// Test the NTS client against public NTS server 'ptbtime4.ptb.de'
+    /// of the Physikalisch-Technische Bundesanstalt (PTB) in Berlin, Germany.
+    /// https://zeit.ptb.de and https://time.ptb.de/files/ptb-ntp-services.json
     /// </summary>
     [TestFixture]
-    public class OpenChargingCloud1_Tests()
+    public class PTBTime4_Tests()
         : ANTSServer_Tests(
-              ServerName:                   DomainName.Parse("time1.charging.cloud"),
-              ExpectedReferenceIdentifier:  null,
-              ExpectedStratum:              2,
+              ServerName:                   DomainName.Parse("ptbtime4.ptb.de"),
+              ExpectedReferenceIdentifier:  "PTB",
+              ExpectedStratum:              1,
               Timeout:                      TimeSpan.FromSeconds(15)
           )
     { }

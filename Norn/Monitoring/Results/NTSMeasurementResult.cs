@@ -99,7 +99,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         /// <summary>
         /// Overall error message if something failed.
         /// </summary>
-        public String?                       ErrorMessage              { get; init; }
+        public Error?                        ErrorMessage              { get; init; }
+
+        /// <summary>
+        /// Structured overall error category if the measurement failed.
+        /// </summary>
+        public MonitoringErrorCategory       ErrorCategory             { get; init; } = MonitoringErrorCategory.None;
 
         /// <summary>
         /// Total wall-clock duration of the entire measurement against this server.
@@ -133,10 +138,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
             var json = JSONObject.Create(
 
-                                 new JProperty("measurementId",     MeasurementId.ToString()),
-                                 new JProperty("serverHostname",    ServerHostname),
-                                 new JProperty("timestamp",         Timestamp.    ToString("o")),
-                                 new JProperty("roundId",           RoundId.      ToString()),
+                                 new JProperty("measurementId",     MeasurementId. ToString()),
+                                 new JProperty("serverHostname",    ServerHostname.ToString()),
+                                 new JProperty("timestamp",         Timestamp.     ToString("o")),
+                                 new JProperty("roundId",           RoundId.       ToString()),
                                  new JProperty("success",           Success),
                                  new JProperty("totalDurationMs",   Math.Round(TotalDuration.TotalMilliseconds, 3)),
 
@@ -144,18 +149,22 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                                ? new JProperty("errorMessage",      ErrorMessage)
                                : null,
 
+                           ErrorCategory != MonitoringErrorCategory.None
+                               ? new JProperty("errorCategory",     ErrorCategory.ToString())
+                               : null,
+
                            DNS          is not null
-                               ? new JProperty("dns",               DNS.          ToJSON())
+                               ? new JProperty("dns",               DNS.           ToJSON())
                                : null,
 
                            NTSKE        is not null
-                               ? new JProperty("ntsKE",             NTSKE.        ToJSON())
+                               ? new JProperty("ntsKE",             NTSKE.         ToJSON())
                                : null,
 
                                  new JProperty("ntsKEFromCache",    NTSKEFromCache),
 
                            NTP          is not null
-                               ? new JProperty("ntp",               NTP.          ToJSON())
+                               ? new JProperty("ntp",               NTP.           ToJSON())
                                : null
 
                        );

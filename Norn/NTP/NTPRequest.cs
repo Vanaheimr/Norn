@@ -242,8 +242,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                             //encryptedCookie.MasterKeyId.HasValue &&
                             MasterKeys is not null &&
                             MasterKeys.TryGetValue(encryptedCookie.MasterKeyId, out var masterKey) &&
-                            encryptedCookie.Timestamp >= masterKey.NotBefore &&
-                            encryptedCookie.Timestamp <  masterKey.NotAfter)
+                            encryptedCookie.Timestamp.ToUnixTimestamp() >= masterKey.NotBefore.ToUnixTimestamp() &&
+                            encryptedCookie.Timestamp.ToUnixTimestamp() <  masterKey.NotAfter. ToUnixTimestamp())
                         {
 
                             var ntsCookie = encryptedCookie.Decrypt(masterKey);

@@ -18,6 +18,7 @@
 #region Usings
 
 using NUnit.Framework;
+
 using org.GraphDefined.Vanaheimr.Hermod;
 using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Norn.NTP;
@@ -125,7 +126,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                                                                                   return TLSValidationResult.Failed("Wrong server certificate!");
 
                                                                               }
-                                             );
+                                              );
 
             var ntsKEResponse              = ntsClient.GetNTSKERecords(RequestNTSPublicKeys: false);
 
@@ -135,6 +136,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
             Assert.That(ntsKEResponse.S2CKey,               Is.Not.Null);
             Assert.That(ntsKEResponse.S2CKey.Length,        Is.GreaterThan(0));
             Assert.That(ntsKEResponse.Cookies.   Count(),   Is.GreaterThan(0));
+            Assert.That(ntsKEResponse.TimingInfo,                             Is.Not.Null);
+            Assert.That(ntsKEResponse.TimingInfo?.DNSLookupDuration,          Is.Not.Null);
+            Assert.That(ntsKEResponse.TimingInfo?.TCPConnectDuration,         Is.Not.Null);
+            Assert.That(ntsKEResponse.TimingInfo?.TLSHandshakeDuration,       Is.Not.Null);
+            Assert.That(ntsKEResponse.TimingInfo?.NTSKEProtocolDuration,      Is.Not.Null);
+            Assert.That(ntsKEResponse.TimingInfo?.TotalDuration,              Is.Not.Null);
+            Assert.That(ntsKEResponse.TimingInfo?.ResolvedIPAddresses.Any(),  Is.True);
+            Assert.That(ntsKEResponse.TimingInfo?.ConnectedIPAddress,         Is.Not.Null);
+            Assert.That(ntsKEResponse.TLSInfo,                                Is.Not.Null);
+            Assert.That(ntsKEResponse.TLSInfo?.ServerCertificate,             Is.Not.Null);
+            Assert.That(ntsKEResponse.TLSInfo?.NegotiatedCipherSuite,         Is.Not.Null);
+            Assert.That(ntsKEResponse.TLSInfo?.NegotiatedTLSVersion,          Is.EqualTo("TLS 1.3"));
 
             var ntsResponse                = await ntsClient.QueryTime(NTSKEResponse:  ntsKEResponse,
                                                                        Timeout:        TimeSpan.FromMinutes(1));
@@ -233,17 +246,20 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                                                                                   return TLSValidationResult.Failed("Wrong server certificate!");
 
                                                                               }
-                                             );
+                                              );
 
-            var ntsKEResponse              = ntsClient.GetNTSKERecords(RequestNTSPublicKeys: true);
+            var ntsKEResponse              = await ntsClient.GetNTSKERecordsAsync(RequestNTSPublicKeys: true);
 
-            Assert.That(ntsKEResponse,                      Is.Not.Null);
-            Assert.That(ntsKEResponse.C2SKey,               Is.Not.Null);
-            Assert.That(ntsKEResponse.C2SKey.Length,        Is.GreaterThan(0));
-            Assert.That(ntsKEResponse.S2CKey,               Is.Not.Null);
-            Assert.That(ntsKEResponse.S2CKey.Length,        Is.GreaterThan(0));
-            Assert.That(ntsKEResponse.Cookies.   Count(),   Is.GreaterThan(0));
-            Assert.That(ntsKEResponse.PublicKeys.Count(),   Is.GreaterThan(0));
+            Assert.That(ntsKEResponse,                                    Is.Not.Null);
+            Assert.That(ntsKEResponse.C2SKey,                             Is.Not.Null);
+            Assert.That(ntsKEResponse.C2SKey.Length,                      Is.GreaterThan(0));
+            Assert.That(ntsKEResponse.S2CKey,                             Is.Not.Null);
+            Assert.That(ntsKEResponse.S2CKey.Length,                      Is.GreaterThan(0));
+            Assert.That(ntsKEResponse.Cookies.   Count(),                 Is.GreaterThan(0));
+            Assert.That(ntsKEResponse.PublicKeys.Count(),                 Is.GreaterThan(0));
+            Assert.That(ntsKEResponse.TimingInfo,                         Is.Not.Null);
+            Assert.That(ntsKEResponse.TimingInfo?.TLSHandshakeDuration,   Is.Not.Null);
+            Assert.That(ntsKEResponse.TimingInfo?.NTSKEProtocolDuration,  Is.Not.Null);
 
             var publicKey                  = ntsKEResponse.PublicKeys.First();
 
@@ -255,7 +271,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
             Assert.That(ntsResponse,    Is.Not.Null);
 
-            DebugX.Log($"{ntsClient.Hostname} Serverzeit 1 (UTC): " + NTPPacket.NTPTimestampToDateTime(ntsResponse.TransmitTimestamp.Value).ToString("o"));
+            if (ntsResponse?.TransmitTimestamp is not null)
+                DebugX.Log($"{ntsClient.Hostname} Serverzeit 1 (UTC): " + NTPPacket.NTPTimestampToDateTime(ntsResponse.TransmitTimestamp.Value).ToString("o"));
 
 
             if (ntsResponse is not null)

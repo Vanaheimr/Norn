@@ -33,8 +33,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
     public class Cloudflare_Tests()
 
         : ANTSServer_Tests(
-              ServerName:  DomainName.Parse("time.cloudflare.com"),
-              Timeout:     TimeSpan.FromSeconds(15)
+              ServerName:                   DomainName.Parse("time.cloudflare.com"),
+              ExpectedReferenceIdentifier:  null,
+              ExpectedStratum:              3,
+              Timeout:                      TimeSpan.FromSeconds(15)
           )
 
     { }

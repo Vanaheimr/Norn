@@ -37,7 +37,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
     /// <param name="ServerName">The NTS Server DNS Name.</param>
     /// <param name="Timeout">An optional timeout for NTS operations.</param>
     public abstract class ANTSServer_Tests(DomainName  ServerName,
-                                           TimeSpan?   Timeout   = null)
+                                           String?     ExpectedReferenceIdentifier   = null,
+                                           Byte?       ExpectedStratum               = null,
+                                           TimeSpan?   Timeout                       = null)
     {
 
         #region Properties
@@ -55,6 +57,113 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         #endregion
 
 
+        #region TestNTSKE()
+
+        /// <summary>
+        /// Test the NTS-KE client against the public NTS server.
+        /// </summary>
+        [Test]
+        public async Task TestNTSKE()
+        {
+
+            var ntsClient      = new NTSClient(
+                                     ServerName,
+                                     Timeout:  Timeout
+                                 );
+
+            var ntsKEResponse  = ntsClient.GetNTSKERecords();
+
+            Assert.That(ntsKEResponse,                   Is.Not.Null,          "No NTS-KE response received!");
+            Assert.That(ntsKEResponse.C2SKey,            Is.Not.Null,          "No C2S key received in NTS-KE response!");
+            Assert.That(ntsKEResponse.C2SKey.Length,     Is.GreaterThan(0));
+            Assert.That(ntsKEResponse.S2CKey,            Is.Not.Null,          "No S2C key received in NTS-KE response!");
+            Assert.That(ntsKEResponse.S2CKey.Length,     Is.GreaterThan(0));
+            Assert.That(ntsKEResponse.Cookies.Count(),   Is.GreaterThan(0),    "No cookies received in NTS-KE response!");
+
+        }
+
+        #endregion
+
+        #region TestNTP()
+
+        /// <summary>
+        /// Test the NTP client against the public NTP server.
+        /// </summary>
+        [Test]
+        public async Task TestNTP()
+        {
+
+            var ntsClient      = new NTSClient(
+                                     ServerName,
+                                     Timeout:    Timeout,
+                                     DNSClient:  new DNSClient(SearchForIPv6DNSServers: false)
+                                 );
+
+            var ntpResponse    = await ntsClient.QueryTime();
+
+            Assert.That(ntpResponse,  Is.Not.Null, "No NTP response received!");
+
+            if (ntpResponse is not null)
+            {
+
+                //Assert.That(ntpResponse,  Is.Not.Null,  ntpResponse.ErrorMessage);
+
+                if (ExpectedReferenceIdentifier is not null)
+                    Assert.That(ntpResponse.ReferenceIdentifier.AsASCII,   Is.EqualTo(ExpectedReferenceIdentifier));
+
+                if (ExpectedStratum             is not null)
+                    Assert.That(ntpResponse.Stratum,                       Is.EqualTo(ExpectedStratum));
+
+                    //Assert.That(ntpPacket.    UniqueIdentifier(),                                          Is.Not.Null);
+                    //Assert.That(ntpResponse.UniqueIdentifier(),                                          Is.Not.Null);
+                    //Assert.That(ntpResponse.UniqueIdentifier()?.ToHexString(),                           Is.EqualTo(ntpPacket.UniqueIdentifier()?.ToHexString()));
+
+                    //Assert.That(ntpPacket.Extensions.Count(),                                              Is.EqualTo(3));
+                    //Assert.That(ntpPacket.Extensions.ElementAt(0) is UniqueIdentifierExtension,            Is.True);
+                    //Assert.That(ntpPacket.Extensions.ElementAt(1) is NTSCookieExtension,                   Is.True);
+                    //Assert.That(ntpPacket.Extensions.ElementAt(2) is AuthenticatorAndEncryptedExtension,   Is.True);
+
+
+                //// Initially 2, but +1 decrypted extension
+                //Assert.That(ntpResponse.Extensions.Count(),  Is.EqualTo(3));
+
+
+                //// 1. Check Unique Identifier Extension
+                //if (ntpResponse.Extensions.ElementAt(0) is UniqueIdentifierExtension uniqueIdentifierExtension)
+                //{
+                //    Assert.That(uniqueIdentifierExtension.Authenticated,                          Is.True);
+                //    Assert.That(uniqueIdentifierExtension.Encrypted,                              Is.False);
+                //}
+                //else
+                //    Assert.Fail("Unique Identifier Extension is invalid!");
+
+
+                //// 2. Check NTS Authenticator and Encrypted Extension
+                //if (ntpResponse.Extensions.ElementAt(1) is AuthenticatorAndEncryptedExtension authenticatorAndEncryptedExtension)
+                //{
+                //    Assert.That(authenticatorAndEncryptedExtension.Authenticated,                 Is.False);
+                //    Assert.That(authenticatorAndEncryptedExtension.Encrypted,                     Is.False);
+                //    Assert.That(authenticatorAndEncryptedExtension.EncryptedExtensions.Count(),   Is.EqualTo(1));
+                //}
+                //else
+                //    Assert.Fail("NTS Authenticator and Encrypted Extension is invalid!");
+
+
+                //// 3. Check NTS Cookie Extension
+                //if (ntpResponse.Extensions.ElementAt(2) is NTSCookieExtension cookieExtension)
+                //{
+                //    Assert.That(cookieExtension.Authenticated,                                    Is.True);
+                //    Assert.That(cookieExtension.Encrypted,                                        Is.True);
+                //}
+                //else
+                //    Assert.Fail("NTS Cookie Extension is invalid!");
+
+            }
+
+        }
+
+        #endregion
+
         #region TestNTS()
 
         /// <summary>
@@ -64,24 +173,25 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         public async Task TestNTS()
         {
 
-            var ntsClient                  = new NTSClient(
-                                                 ServerName,
-                                                 Timeout:  Timeout
-                                             );
+            var ntsClient      = new NTSClient(
+                                     ServerName,
+                                     Timeout:    Timeout,
+                                     DNSClient:  new DNSClient(SearchForIPv6DNSServers: false)
+                                 );
 
-            var ntsKEResponse              = ntsClient.GetNTSKERecords();
+            var ntsKEResponse  = ntsClient.GetNTSKERecords();
 
-            Assert.That(ntsKEResponse,                   Is.Not.Null);
-            Assert.That(ntsKEResponse.C2SKey,            Is.Not.Null);
+            Assert.That(ntsKEResponse,                   Is.Not.Null,          "No NTS-KE response received!");
+            Assert.That(ntsKEResponse.C2SKey,            Is.Not.Null,          "No C2S key received in NTS-KE response!");
             Assert.That(ntsKEResponse.C2SKey.Length,     Is.GreaterThan(0));
-            Assert.That(ntsKEResponse.S2CKey,            Is.Not.Null);
+            Assert.That(ntsKEResponse.S2CKey,            Is.Not.Null,          "No S2C key received in NTS-KE response!");
             Assert.That(ntsKEResponse.S2CKey.Length,     Is.GreaterThan(0));
-            Assert.That(ntsKEResponse.Cookies.Count(),   Is.GreaterThan(0));
+            Assert.That(ntsKEResponse.Cookies.Count(),   Is.GreaterThan(0),    "No cookies received in NTS-KE response!");
 
 
-            var ntsResponse                = await ntsClient.QueryTime(NTSKEResponse: ntsKEResponse);
+            var ntsResponse    = await ntsClient.QueryTime(NTSKEResponse: ntsKEResponse);
 
-            Assert.That(ntsResponse,  Is.Not.Null);
+            Assert.That(ntsResponse,  Is.Not.Null, "No NTP+NTS response received!");
 
             if (ntsResponse is not null)
             {
@@ -145,12 +255,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
         #endregion
 
-        #region TestNTS_RandomBitError()      <<<<<<<<<<<<< It seem's that this will not ALWAYS FAIL!?!
+        #region TestNTS_RandomBitError()
 
         /// <summary>
         /// Test the NTS client against the public NTS server,
-        /// but add a random bit error to the response and check if the response
-        /// is still valid.
+        /// but add a bit error to the authenticated ciphertext and check if the response
+        /// is still accepted.
         /// </summary>
         [Test]
         public async Task TestNTS_RandomBitError()
@@ -158,7 +268,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
             var ntsClient      = new NTSClient(
                                      ServerName,
-                                     Timeout:  Timeout
+                                     Timeout:    Timeout,
+                                     DNSClient:  new DNSClient(SearchForIPv6DNSServers: false)
                                  );
 
             var ntsKEResponse  = ntsClient.GetNTSKERecords();
@@ -183,15 +294,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                 {
 
                     var fakeNTSResponseBytes = ntsResponse.ResponseBytes?.ToHexString().FromHEX() ?? [];
-                    if (fakeNTSResponseBytes.Length > 0)
-                    {
-                        var randomIndex = RandomExtensions.RandomUInt32(fakeNTSResponseBytes.Length);
-                        var randomBit   = (Byte) (1 << RandomExtensions.RandomInt32(8));
-                        fakeNTSResponseBytes[randomIndex] ^= randomBit;
-                    }
+
+                    Assert.That(fakeNTSResponseBytes,                                             Is.Not.Empty);
+                    Assert.That(FlipAuthenticatorAndEncryptedCiphertextBit(fakeNTSResponseBytes),  Is.True);
 
                     if (!NTPResponse.TryParse(fakeNTSResponseBytes, out _, out var error, NTSKey: ntsKEResponse.S2CKey))
-                        Assert.That(error, Is.EqualTo("Authentication failed: SIV mismatch!"));
+                        Assert.That(error, Does.Contain("SIV"));
                     else
                         Assert.Fail("Parsing the fake NTS response should have failed!");
 
@@ -225,8 +333,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                                                                                                  ? serverCertificate.DecodeSubjectAlternativeNames()
                                                                                                  : [];
 
-                                                                                  if (serverCertificate?.Subject.Contains(ServerName.ToString()) == true &&
-                                                                                      sans.Contains($"DNS-Name={ServerName}"))
+                                                                                  if (serverCertificate?.Subject.Contains(ServerName.Trimmed) == true &&
+                                                                                      sans.Contains($"DNS-Name={ServerName.Trimmed}"))
                                                                                   {
                                                                                       return TLSValidationResult.Success();
                                                                                   }
@@ -235,7 +343,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
                                                                               },
 
-                                                 Timeout:  Timeout
+                                                 Timeout:    Timeout,
+                                                 DNSClient:  new DNSClient(SearchForIPv6DNSServers: false)
 
                                              );
 
@@ -334,7 +443,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                                                                                   return TLSValidationResult.Failed("Wrong server certificate!");
                                                                               },
 
-                                                 Timeout:  Timeout
+                                                 Timeout:    Timeout,
+                                                 DNSClient:  new DNSClient(SearchForIPv6DNSServers: false)
 
                                              );
 
@@ -365,7 +475,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
             var ntsClient                  = new NTSClient(
                                                  ServerName,
-                                                 Timeout:  Timeout
+                                                 Timeout:    Timeout,
+                                                 DNSClient:  new DNSClient(SearchForIPv6DNSServers: false)
                                              );
 
             var ntsKEResponse              = ntsClient.GetNTSKERecords();
@@ -447,6 +558,53 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         }
 
         #endregion
+
+
+        private static Boolean FlipAuthenticatorAndEncryptedCiphertextBit(Byte[] Packet)
+        {
+
+            var offset = 48;
+
+            while (offset + 4 <= Packet.Length)
+            {
+
+                var type   = (ExtensionTypes) ((Packet[offset]     << 8) | Packet[offset + 1]);
+                var length = (UInt16)         ((Packet[offset + 2] << 8) | Packet[offset + 3]);
+
+                if (length < 4 || offset + length > Packet.Length)
+                    return false;
+
+                if (type == ExtensionTypes.AuthenticatorAndEncrypted)
+                {
+
+                    var valueOffset       = offset + 4;
+
+                    if (valueOffset + 4 > Packet.Length)
+                        return false;
+
+                    var nonceLength       = (UInt16) ((Packet[valueOffset]     << 8) | Packet[valueOffset + 1]);
+                    var ciphertextLength  = (UInt16) ((Packet[valueOffset + 2] << 8) | Packet[valueOffset + 3]);
+                    var paddedNonceLength = (nonceLength + 3) & ~3;
+                    var ciphertextOffset  = valueOffset + 4 + paddedNonceLength;
+
+                    if (ciphertextLength == 0 ||
+                        ciphertextOffset + ciphertextLength > Packet.Length)
+                    {
+                        return false;
+                    }
+
+                    Packet[ciphertextOffset + ciphertextLength - 1] ^= 0x01;
+                    return true;
+
+                }
+
+                offset += length;
+
+            }
+
+            return false;
+
+        }
 
 
     }

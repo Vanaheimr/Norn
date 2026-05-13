@@ -17,7 +17,11 @@
 
 #region Usings
 
+using System.Diagnostics;
+using System.Security.Cryptography;
+
 using org.GraphDefined.Vanaheimr.Illias;
+using org.GraphDefined.Vanaheimr.Hermod;
 using org.GraphDefined.Vanaheimr.Norn.NTS;
 
 #endregion
@@ -64,6 +68,24 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         public static NTSSignedResponseExtension?              NTSSignedResponse             (this NTPPacket NTPPacket)
             => NTPPacket.Extensions.FirstOrDefault(extension => extension.Type == ExtensionTypes.NTSSignedResponse)             as NTSSignedResponseExtension;
 
+
+
+
+        /// <summary>
+        /// Calculates the 32-bit NTP Peer Id for IPv6 addresses, e.g. ED11CC5F.
+        /// </summary>
+        /// <param name="IPv6Address">An IPv6 address.</param>
+        public static Span<Byte> GetNTPPeerId(IPv6Address IPv6Address)
+
+            => new (
+                   MD5.HashData(
+                       IPv6Address.GetBytes()
+                   ),
+                   0,
+                   4
+               );
+
+
     }
 
 
@@ -95,27 +117,29 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
     /// 
     /// <param name="Request"></param>
     /// <param name="ResponseBytes"></param>
-    public class NTPPacket(Byte?                       LI                     = null,
-                           Byte?                       VN                     = null,
-                           Byte?                       Mode                   = null,
-                           Byte?                       Stratum                = null,
-                           Byte?                       Poll                   = null,
-                           SByte?                      Precision              = null,
-                           UInt32?                     RootDelay              = null,
-                           UInt32?                     RootDispersion         = null,
-                           ReferenceIdentifier?        ReferenceIdentifier    = null,
-                           UInt64?                     ReferenceTimestamp     = null,
-                           UInt64?                     OriginateTimestamp     = null,
-                           UInt64?                     ReceiveTimestamp       = null,
-                           UInt64?                     TransmitTimestamp      = null,
-                           IEnumerable<NTPExtension>?  Extensions             = null,
-                           Int32?                      KeyId                  = null,
-                           Byte[]?                     MessageDigest          = null,
-                           UInt64?                     DestinationTimestamp   = null,
+    public class NTPPacket(Byte?                       LI                          = null,
+                           Byte?                       VN                          = null,
+                           Byte?                       Mode                        = null,
+                           Byte?                       Stratum                     = null,
+                           Byte?                       Poll                        = null,
+                           SByte?                      Precision                   = null,
+                           UInt32?                     RootDelay                   = null,
+                           UInt32?                     RootDispersion              = null,
+                           ReferenceIdentifier?        ReferenceIdentifier         = null,
+                           UInt64?                     ReferenceTimestamp          = null,
+                           UInt64?                     OriginateTimestamp          = null,
+                           UInt64?                     ReceiveTimestamp            = null,
+                           UInt64?                     TransmitTimestamp           = null,
+                           IEnumerable<NTPExtension>?  Extensions                  = null,
+                           Int32?                      KeyId                       = null,
+                           Byte[]?                     MessageDigest               = null,
+                           UInt64?                     DestinationTimestamp        = null,
 
-                           NTPPacket?                  Request                = null,
-                           Byte[]?                     ResponseBytes          = null,
-                           String?                     ErrorMessage           = null)
+                           NTPPacket?                  Request                     = null,
+                           Byte[]?                     ResponseBytes               = null,
+                           String?                     ErrorMessage                = null,
+                           Int64?                      SendStopwatchTimestamp      = null,
+                           Int64?                      ReceiveStopwatchTimestamp   = null)
 
     {
 
@@ -213,6 +237,90 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         public UInt64?                     DestinationTimestamp   { get; } = DestinationTimestamp;
 
         /// <summary>
+        /// High-resolution Stopwatch timestamp captured immediately before sending the request.
+        /// </summary>
+        public Int64?                      SendStopwatchTimestamp { get; } = SendStopwatchTimestamp;
+
+        /// <summary>
+        /// High-resolution Stopwatch timestamp captured immediately after receiving the response.
+        /// </summary>
+        public Int64?                      ReceiveStopwatchTimestamp { get; } = ReceiveStopwatchTimestamp;
+
+        /// <summary>
+        /// High-resolution round-trip time measured via Stopwatch.
+        /// </summary>
+        public TimeSpan?                   StopwatchRoundTripTime
+        {
+            get
+            {
+
+                if (!SendStopwatchTimestamp.HasValue ||
+                    !ReceiveStopwatchTimestamp.HasValue)
+                {
+                    return null;
+                }
+
+                return TimeSpan.FromTicks(
+                           (Int64) ((ReceiveStopwatchTimestamp.Value - SendStopwatchTimestamp.Value) *
+                                    ((Double) TimeSpan.TicksPerSecond / Stopwatch.Frequency))
+                       );
+
+            }
+        }
+
+        /// <summary>
+        /// Clock offset according to RFC 5905:
+        /// theta = ((T2 - T1) + (T3 - T4)) / 2.
+        /// </summary>
+        public TimeSpan?                   ClockOffset
+        {
+            get
+            {
+
+                if (!TransmitTimestamp.HasValue ||
+                    !DestinationTimestamp.HasValue)
+                {
+                    return null;
+                }
+
+                var t1 = NTPTimestampToDateTime(OriginateTimestamp);
+                var t2 = NTPTimestampToDateTime(ReceiveTimestamp);
+                var t3 = NTPTimestampToDateTime(TransmitTimestamp.Value);
+                var t4 = NTPTimestampToDateTime(DestinationTimestamp.Value);
+
+                return TimeSpan.FromTicks(
+                           ((t2 - t1).Ticks + (t3 - t4).Ticks) / 2
+                       );
+
+            }
+        }
+
+        /// <summary>
+        /// Round-trip delay according to RFC 5905:
+        /// delta = (T4 - T1) - (T3 - T2).
+        /// </summary>
+        public TimeSpan?                   RoundTripDelay
+        {
+            get
+            {
+
+                if (!TransmitTimestamp.HasValue ||
+                    !DestinationTimestamp.HasValue)
+                {
+                    return null;
+                }
+
+                var t1 = NTPTimestampToDateTime(OriginateTimestamp);
+                var t2 = NTPTimestampToDateTime(ReceiveTimestamp);
+                var t3 = NTPTimestampToDateTime(TransmitTimestamp.Value);
+                var t4 = NTPTimestampToDateTime(DestinationTimestamp.Value);
+
+                return (t4 - t1) - (t3 - t2);
+
+            }
+        }
+
+        /// <summary>
         /// The optional NTP request that led to this response.
         /// </summary>
         public NTPPacket?                  Request                { get; } = Request;
@@ -249,7 +357,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                    NTPPacket.OriginateTimestamp,
                    NTPPacket.ReceiveTimestamp,
                    NTPPacket.TransmitTimestamp,
-                   Extensions)
+                   Extensions,
+                   NTPPacket.KeyId,
+                   NTPPacket.MessageDigest,
+                   NTPPacket.DestinationTimestamp,
+                   NTPPacket.Request,
+                   NTPPacket.ResponseBytes,
+                   NTPPacket.ErrorMessage,
+                   NTPPacket.SendStopwatchTimestamp,
+                   NTPPacket.ReceiveStopwatchTimestamp)
 
         {
 
