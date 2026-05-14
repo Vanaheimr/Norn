@@ -317,13 +317,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
             }
 
             ntsClient.SeedCookies(ntskeResponse);
+            var cookiePoolDiagnostics = ntsClient.CookiePoolDiagnostics;
 
             // Cache the NTS-KE state
             ntskeCache[Server.Hostname] = new CachedNTSKEState {
                                               NTSKEResponse     = ntskeResponse,
                                               NTSClient         = ntsClient,
                                               LastRefreshed     = Timestamp.Now,
-                                              RemainingCookies  = ToByteCookieCount(ntsClient.AvailableCookieCount)
+                                              RemainingCookies  = ToByteCookieCount(cookiePoolDiagnostics.AvailableCookieCount)
                                           };
 
             return new NTSKEMeasurementResult {
@@ -335,10 +336,20 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                        NumberOfCookies         = (UInt16) ntskeResponse.Cookies.Count(),
                        AEADAlgorithm           = "AES-SIV-CMAC-256",    // Currently only option in Norn
                        NTPServerNegotiated     = ntskeResponse.NTPv4Servers.FirstOrDefault(),
-                       NTPPortNegotiated       = ntskeResponse.NTPv4Ports.  FirstOrDefault(),
+                       NTPPortNegotiated       = ntskeResponse.NTPv4Ports.Any()
+                                                     ? ntskeResponse.NTPv4Ports.First()
+                                                     : null,
                        ResolvedIPAddresses     = resolvedIPs,
                        ConnectedIPAddress      = connectedIP,
-                       CookiePoolSize          = ntsClient.AvailableCookieCount,
+                       CookiePoolSize          = cookiePoolDiagnostics.AvailableCookieCount,
+                       CookiePoolMaxSize       = cookiePoolDiagnostics.MaxCookiePoolSize,
+                       CookiePoolLowWatermark  = cookiePoolDiagnostics.LowWatermark,
+                       SeededCookieCount       = cookiePoolDiagnostics.SeededCookieCount,
+                       CookiesReceived         = cookiePoolDiagnostics.CookiesReceived,
+                       CookiesConsumed         = cookiePoolDiagnostics.CookiesConsumed,
+                       DroppedCookieCount      = cookiePoolDiagnostics.DroppedCookieCount,
+                       CookiePoolLow           = cookiePoolDiagnostics.IsLow,
+                       CookiePoolEmpty         = cookiePoolDiagnostics.IsEmpty,
                        CertificateInfo         = certificateInfo,
                        TLSCipherSuite          = tlsInfo?.NegotiatedCipherSuite,
                        TLSVersion              = tlsInfo?.NegotiatedTLSVersion,
@@ -499,7 +510,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                                                  CancellationToken:  CancellationToken
                                              );
 
-                var ntpResponse    = ntsQueryResult.Response;
+                var ntpResponse            = ntsQueryResult.Response;
+                var cookiePoolDiagnostics  = ntsQueryResult.CookiePoolDiagnostics;
 
                 // Fallback T4 around the monitoring call path.
                 var t4_stopwatch_ticks = sw.ElapsedTicks;
@@ -516,7 +528,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                                              ? IPPort.Parse(ntsQueryResult.RemoteEndPoint.Port)
                                              : remoteInfo.Port;
 
-                CachedState.RemainingCookies = ToByteCookieCount(ntsQueryResult.RemainingCookiesAfterQuery);
+                CachedState.RemainingCookies = ToByteCookieCount(cookiePoolDiagnostics?.AvailableCookieCount ??
+                                                                  ntsQueryResult.RemainingCookiesAfterQuery);
 
 
                 if (ntpResponse is null)
@@ -526,10 +539,19 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                                 ErrorMessage                = Error.Create(ntsQueryResult.ErrorMessage ?? "No NTP response (null)"),
                                 ErrorCategory               = MapNTSQueryErrorCategory(ntsQueryResult.ErrorCategory),
                                 RemoteHost                  = remoteInfo.Host,
-                                RemoteAddress               = queryRemoteAddress,
-                                RemotePort                  = queryRemotePort,
-                                RemainingCookiesAfterQuery  = CachedState.RemainingCookies
-                            };
+                                 RemoteAddress               = queryRemoteAddress,
+                                 RemotePort                  = queryRemotePort,
+                                 RemainingCookiesAfterQuery  = CachedState.RemainingCookies,
+                                 CookiePoolSize              = cookiePoolDiagnostics?.AvailableCookieCount,
+                                 CookiePoolMaxSize           = cookiePoolDiagnostics?.MaxCookiePoolSize,
+                                 CookiePoolLowWatermark      = cookiePoolDiagnostics?.LowWatermark,
+                                 SeededCookieCount           = cookiePoolDiagnostics?.SeededCookieCount,
+                                 CookiesReceived             = cookiePoolDiagnostics?.CookiesReceived,
+                                 CookiesConsumed             = cookiePoolDiagnostics?.CookiesConsumed,
+                                 DroppedCookieCount          = cookiePoolDiagnostics?.DroppedCookieCount,
+                                 CookiePoolLow               = cookiePoolDiagnostics?.IsLow,
+                                 CookiePoolEmpty             = cookiePoolDiagnostics?.IsEmpty
+                             };
 
                 if (!ntsQueryResult.Success ||
                     ntpResponse.ErrorMessage is not null)
@@ -547,11 +569,20 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                                 ErrorCategory    = ntpResponse.Stratum == 0
                                                        ? MonitoringErrorCategory.KissOfDeath
                                                        : MapNTSQueryErrorCategory(ntsQueryResult.ErrorCategory),
-                                RemoteHost       = remoteInfo.Host,
-                                RemoteAddress    = queryRemoteAddress,
-                                RemotePort       = queryRemotePort,
-                                RemainingCookiesAfterQuery = CachedState.RemainingCookies
-                            };
+                                 RemoteHost       = remoteInfo.Host,
+                                 RemoteAddress    = queryRemoteAddress,
+                                 RemotePort       = queryRemotePort,
+                                 RemainingCookiesAfterQuery = CachedState.RemainingCookies,
+                                 CookiePoolSize             = cookiePoolDiagnostics?.AvailableCookieCount,
+                                 CookiePoolMaxSize          = cookiePoolDiagnostics?.MaxCookiePoolSize,
+                                 CookiePoolLowWatermark     = cookiePoolDiagnostics?.LowWatermark,
+                                 SeededCookieCount          = cookiePoolDiagnostics?.SeededCookieCount,
+                                 CookiesReceived            = cookiePoolDiagnostics?.CookiesReceived,
+                                 CookiesConsumed            = cookiePoolDiagnostics?.CookiesConsumed,
+                                 DroppedCookieCount         = cookiePoolDiagnostics?.DroppedCookieCount,
+                                 CookiePoolLow              = cookiePoolDiagnostics?.IsLow,
+                                 CookiePoolEmpty            = cookiePoolDiagnostics?.IsEmpty
+                             };
 
                 }
 
@@ -625,6 +656,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
                            NewCookieReceived           = ntsQueryResult.NewCookieReceived,
                            RemainingCookiesAfterQuery  = CachedState.RemainingCookies,
+                           CookiePoolSize              = cookiePoolDiagnostics?.AvailableCookieCount,
+                           CookiePoolMaxSize           = cookiePoolDiagnostics?.MaxCookiePoolSize,
+                           CookiePoolLowWatermark      = cookiePoolDiagnostics?.LowWatermark,
+                           SeededCookieCount           = cookiePoolDiagnostics?.SeededCookieCount,
+                           CookiesReceived             = cookiePoolDiagnostics?.CookiesReceived,
+                           CookiesConsumed             = cookiePoolDiagnostics?.CookiesConsumed,
+                           DroppedCookieCount          = cookiePoolDiagnostics?.DroppedCookieCount,
+                           CookiePoolLow               = cookiePoolDiagnostics?.IsLow,
+                           CookiePoolEmpty             = cookiePoolDiagnostics?.IsEmpty,
                            KissOfDeath                 = false
 
                        };
@@ -704,16 +744,22 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
             => ErrorCategory switch {
 
-                   NTSKEErrorCategory.None            => MonitoringErrorCategory.None,
-                   NTSKEErrorCategory.DNS             => MonitoringErrorCategory.DNS,
-                   NTSKEErrorCategory.TCPConnect      => MonitoringErrorCategory.TCPConnect,
-                   NTSKEErrorCategory.TLSHandshake    => MonitoringErrorCategory.TLSHandshake,
-                   NTSKEErrorCategory.TLSCertificate  => MonitoringErrorCategory.TLSCertificate,
-                   NTSKEErrorCategory.Timeout         => MonitoringErrorCategory.NTSKEProtocol,
-                   NTSKEErrorCategory.Protocol        => MonitoringErrorCategory.NTSKEProtocol,
-                   NTSKEErrorCategory.Canceled        => MonitoringErrorCategory.Canceled,
-                   NTSKEErrorCategory.Exception       => MonitoringErrorCategory.Exception,
-                   _                                  => MonitoringErrorCategory.Unknown
+                   NTSKEErrorCategory.None                   => MonitoringErrorCategory.None,
+                   NTSKEErrorCategory.DNS                    => MonitoringErrorCategory.DNS,
+                   NTSKEErrorCategory.TCPConnect             => MonitoringErrorCategory.TCPConnect,
+                   NTSKEErrorCategory.TLSHandshake           => MonitoringErrorCategory.TLSHandshake,
+                   NTSKEErrorCategory.TLSCertificate         => MonitoringErrorCategory.TLSCertificate,
+                   NTSKEErrorCategory.Timeout                => MonitoringErrorCategory.NTSKEProtocol,
+                   NTSKEErrorCategory.Protocol               => MonitoringErrorCategory.NTSKEProtocol,
+                   NTSKEErrorCategory.UnknownCriticalRecord  => MonitoringErrorCategory.NTSKEProtocol,
+                   NTSKEErrorCategory.ServerError            => MonitoringErrorCategory.NTSKEProtocol,
+                   NTSKEErrorCategory.ServerWarning          => MonitoringErrorCategory.NTSKEProtocol,
+                   NTSKEErrorCategory.MissingRequiredRecord  => MonitoringErrorCategory.NTSKEProtocol,
+                   NTSKEErrorCategory.UnsupportedProtocol    => MonitoringErrorCategory.NTSKEProtocol,
+                   NTSKEErrorCategory.UnsupportedAlgorithm   => MonitoringErrorCategory.NTSKEProtocol,
+                   NTSKEErrorCategory.Canceled               => MonitoringErrorCategory.Canceled,
+                   NTSKEErrorCategory.Exception              => MonitoringErrorCategory.Exception,
+                   _                                         => MonitoringErrorCategory.Unknown
 
                };
 
@@ -732,8 +778,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         {
 
             var ntskeResponse  = CachedState.NTSKEResponse;
-            var host           = ntskeResponse?.NTPv4Servers.FirstOrDefault() ?? Server.Hostname;
-            var port           = ntskeResponse?.NTPv4Ports.  FirstOrDefault() ?? Server.NTPPort;
+            var host           = NTPRemoteEndPointResolver.GetRemoteHost(ntskeResponse, Server.Hostname);
+            var port           = NTPRemoteEndPointResolver.GetRemotePort(ntskeResponse, Server.NTPPort);
             var normalized     = host.ToString().TrimEnd('.');
 
             if (IPAddress.TryParse(normalized, out var ipAddress))

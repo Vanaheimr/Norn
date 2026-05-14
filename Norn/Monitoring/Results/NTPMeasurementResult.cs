@@ -165,6 +165,24 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         /// </summary>
         public Byte?                    RemainingCookiesAfterQuery    { get; init; }
 
+        public Int32?                   CookiePoolSize                { get; init; }
+
+        public Int32?                   CookiePoolMaxSize             { get; init; }
+
+        public Int32?                   CookiePoolLowWatermark        { get; init; }
+
+        public Int64?                   SeededCookieCount             { get; init; }
+
+        public Int64?                   CookiesReceived               { get; init; }
+
+        public Int64?                   CookiesConsumed               { get; init; }
+
+        public Int64?                   DroppedCookieCount            { get; init; }
+
+        public Boolean?                 CookiePoolLow                 { get; init; }
+
+        public Boolean?                 CookiePoolEmpty               { get; init; }
+
         /// <summary>
         /// Whether a Kiss-o'-Death (KoD) packet was received.
         /// </summary>
@@ -285,11 +303,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                                  new JProperty("kissOfDeath",                  KissOfDeath),
 
                            RemoteHost      is not null
-                               ? new JProperty("remoteHost",                   RemoteHost.      ToString())
+                               ? new JProperty("remoteHost",                   RemoteHost.      ToString().TrimEnd('.'))
                                : null,
 
                            RemoteAddress   is not null
-                               ? new JProperty("remoteAddress",                RemoteAddress.   ToString())
+                               ? new JProperty("remoteAddress",                NormalizeIPAddress(RemoteAddress.ToString()))
                                : null,
 
                            RemotePort.HasValue
@@ -298,6 +316,42 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
                            RemainingCookiesAfterQuery.HasValue
                                ? new JProperty("remainingCookiesAfterQuery",   RemainingCookiesAfterQuery.Value)
+                               : null,
+
+                           CookiePoolSize.HasValue
+                               ? new JProperty("cookiePoolSize",               CookiePoolSize.Value)
+                               : null,
+
+                           CookiePoolMaxSize.HasValue
+                               ? new JProperty("cookiePoolMaxSize",            CookiePoolMaxSize.Value)
+                               : null,
+
+                           CookiePoolLowWatermark.HasValue
+                               ? new JProperty("cookiePoolLowWatermark",       CookiePoolLowWatermark.Value)
+                               : null,
+
+                           SeededCookieCount.HasValue
+                               ? new JProperty("seededCookieCount",            SeededCookieCount.Value)
+                               : null,
+
+                           CookiesReceived.HasValue
+                               ? new JProperty("cookiesReceived",              CookiesReceived.Value)
+                               : null,
+
+                           CookiesConsumed.HasValue
+                               ? new JProperty("cookiesConsumed",              CookiesConsumed.Value)
+                               : null,
+
+                           DroppedCookieCount.HasValue
+                               ? new JProperty("droppedCookieCount",           DroppedCookieCount.Value)
+                               : null,
+
+                           CookiePoolLow.HasValue
+                               ? new JProperty("cookiePoolLow",                CookiePoolLow.Value)
+                               : null,
+
+                           CookiePoolEmpty.HasValue
+                               ? new JProperty("cookiePoolEmpty",              CookiePoolEmpty.Value)
                                : null,
 
                            KissOfDeathCode is not null
@@ -318,6 +372,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
             return json;
 
         }
+
+        #endregion
+
+
+        #region (private static) NormalizeIPAddress(Text)
+
+        private static String NormalizeIPAddress(String Text)
+
+            => System.Net.IPAddress.TryParse(Text, out var ipAddress)
+                   ? ipAddress.ToString()
+                   : Text;
 
         #endregion
 

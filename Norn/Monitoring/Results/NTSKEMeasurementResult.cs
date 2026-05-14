@@ -96,6 +96,22 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         /// </summary>
         public Int32?                   CookiePoolSize            { get; init; }
 
+        public Int32?                   CookiePoolMaxSize         { get; init; }
+
+        public Int32?                   CookiePoolLowWatermark    { get; init; }
+
+        public Int64?                   SeededCookieCount         { get; init; }
+
+        public Int64?                   CookiesReceived           { get; init; }
+
+        public Int64?                   CookiesConsumed           { get; init; }
+
+        public Int64?                   DroppedCookieCount        { get; init; }
+
+        public Boolean?                 CookiePoolLow             { get; init; }
+
+        public Boolean?                 CookiePoolEmpty           { get; init; }
+
 
         /// <summary>
         /// TLS certificate details.
@@ -153,7 +169,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                 json.Add("aeadAlgorithm", AEADAlgorithm);
 
             if (NTPServerNegotiated is not null)
-                json.Add("ntpServerNegotiated",   NTPServerNegotiated.    ToString());
+                json.Add("ntpServerNegotiated",   NTPServerNegotiated.    ToString().TrimEnd('.'));
 
             if (NTPPortNegotiated.HasValue)
                 json.Add("ntpPortNegotiated",     NTPPortNegotiated.Value.ToUInt16());
@@ -166,6 +182,30 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
             if (CookiePoolSize.HasValue)
                 json.Add("cookiePoolSize", CookiePoolSize.Value);
+
+            if (CookiePoolMaxSize.HasValue)
+                json.Add("cookiePoolMaxSize", CookiePoolMaxSize.Value);
+
+            if (CookiePoolLowWatermark.HasValue)
+                json.Add("cookiePoolLowWatermark", CookiePoolLowWatermark.Value);
+
+            if (SeededCookieCount.HasValue)
+                json.Add("seededCookieCount", SeededCookieCount.Value);
+
+            if (CookiesReceived.HasValue)
+                json.Add("cookiesReceived", CookiesReceived.Value);
+
+            if (CookiesConsumed.HasValue)
+                json.Add("cookiesConsumed", CookiesConsumed.Value);
+
+            if (DroppedCookieCount.HasValue)
+                json.Add("droppedCookieCount", DroppedCookieCount.Value);
+
+            if (CookiePoolLow.HasValue)
+                json.Add("cookiePoolLow", CookiePoolLow.Value);
+
+            if (CookiePoolEmpty.HasValue)
+                json.Add("cookiePoolEmpty", CookiePoolEmpty.Value);
 
             if (CertificateInfo is not null)
                 json.Add("certificate", CertificateInfo.ToJSON());

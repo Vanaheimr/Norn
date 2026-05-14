@@ -179,10 +179,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                     Assert.That(ntsResponse.UniqueIdentifier(),                                          Is.Not.Null);
                     Assert.That(ntsResponse.UniqueIdentifier()?.ToHexString(),                           Is.EqualTo(request.UniqueIdentifier()?.ToHexString()));
 
-                    Assert.That(request.Extensions.Count(),                                              Is.EqualTo(3));
+                    Assert.That(request.Extensions.Count(),                                              Is.GreaterThanOrEqualTo(3));
                     Assert.That(request.Extensions.ElementAt(0) is UniqueIdentifierExtension,            Is.True);
                     Assert.That(request.Extensions.ElementAt(1) is NTSCookieExtension,                   Is.True);
-                    Assert.That(request.Extensions.ElementAt(2) is AuthenticatorAndEncryptedExtension,   Is.True);
+                    Assert.That(request.Extensions.Last() is AuthenticatorAndEncryptedExtension,         Is.True);
 
                 }
 
@@ -305,11 +305,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                     Assert.That(ntsResponse.UniqueIdentifier(),                                          Is.Not.Null);
                     Assert.That(ntsResponse.UniqueIdentifier()?.ToHexString(),                           Is.EqualTo(request.UniqueIdentifier()?.ToHexString()));
 
-                    Assert.That(request.Extensions.Count(),                                              Is.EqualTo(4));
+                    Assert.That(request.Extensions.Count(),                                              Is.GreaterThanOrEqualTo(4));
                     Assert.That(request.Extensions.ElementAt(0) is UniqueIdentifierExtension,            Is.True);
                     Assert.That(request.Extensions.ElementAt(1) is NTSCookieExtension,                   Is.True);
-                    Assert.That(request.Extensions.ElementAt(2) is NTSRequestSignedResponseExtension,    Is.True);
-                    Assert.That(request.Extensions.ElementAt(3) is AuthenticatorAndEncryptedExtension,   Is.True);
+                    Assert.That(request.Extensions.Any(extension => extension is NTSRequestSignedResponseExtension), Is.True);
+                    Assert.That(request.Extensions.Last() is AuthenticatorAndEncryptedExtension,         Is.True);
 
                 }
 

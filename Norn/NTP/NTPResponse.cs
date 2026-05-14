@@ -245,21 +245,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                         if (!UniqueIdentifierExtension.TryParse(data, out var uniqueIdentifierExtension, out ErrorResponse))
                             return false;
 
-                        var r1  = Request?.UniqueIdentifier();
-
-                        if (r1 is not null && !uniqueIdentifierExtension.Value.SequenceEqual(r1))
-                        {
-                            ErrorResponse = $"Unexpected UniqueIdentifier '{uniqueIdentifierExtension.Value}' != '{r1}'!";
-                            return false;
-                        }
-
-                        if (ExpectedUniqueId is not null &&
-                            !uniqueIdentifierExtension.Value.SequenceEqual(ExpectedUniqueId))
-                        {
-                            ErrorResponse = $"Unexpected UniqueIdentifier '{uniqueIdentifierExtension.Value}' != '{ExpectedUniqueId}'!";
-                            return false;
-                        }
-
                         extensions.Add(uniqueIdentifierExtension);
 
                         break;
@@ -274,7 +259,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
                     case ExtensionTypes.NTSCookiePlaceholder:
                         extensions.Add(
-                            new NTSCookiePlaceholderExtension(100) // Nonsense!
+                            new NTSCookiePlaceholderExtension((UInt16) data.Length)
                         );
                         break;
 
@@ -381,16 +366,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                             ReceiveStopwatchTimestamp: ReceiveStopwatchTimestamp
 
                         );
-
-            #endregion
-
-            #region Parse Kiss-o'-Death
-
-            if (NTPResponse.Stratum == 0)
-            {
-                ErrorResponse = NTPResponse.ReferenceIdentifier.ErrorString ?? "ERR";
-                return false;
-            }
 
             #endregion
 

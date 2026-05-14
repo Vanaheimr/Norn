@@ -120,6 +120,234 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
         #endregion
 
+        #region NTSKERecordValidator_Accepts_Valid_Response()
+
+        [Test]
+        public void NTSKERecordValidator_Accepts_Valid_Response()
+        {
+
+            var records = CreateValidResponseRecords();
+
+            Assert.That(
+                NTSKERecordValidator.ValidateServerResponse(
+                    records,
+                    out var errorMessage,
+                    out var errorCategory
+                ),
+                Is.True,
+                errorMessage
+            );
+
+            Assert.That(errorCategory, Is.EqualTo(NTSKEErrorCategory.None));
+
+        }
+
+        #endregion
+
+        #region NTSKERecordValidator_Rejects_Critical_Unknown_Record()
+
+        [Test]
+        public void NTSKERecordValidator_Rejects_Critical_Unknown_Record()
+        {
+
+            var records = CreateValidResponseRecords(
+                              new NTSKE_Record(
+                                  true,
+                                  (NTSKE_RecordTypes) 32767,
+                                  [ 0x01 ]
+                              )
+                          );
+
+            Assert.That(
+                NTSKERecordValidator.ValidateServerResponse(
+                    records,
+                    out var errorMessage,
+                    out var errorCategory
+                ),
+                Is.False
+            );
+
+            Assert.That(errorMessage,   Does.Contain("unknown critical"));
+            Assert.That(errorCategory,  Is.EqualTo(NTSKEErrorCategory.UnknownCriticalRecord));
+
+        }
+
+        #endregion
+
+        #region NTSKERecordValidator_Rejects_Error_Record()
+
+        [Test]
+        public void NTSKERecordValidator_Rejects_Error_Record()
+        {
+
+            var records = CreateValidResponseRecords(
+                              NTSKE_Record.Error("Server refused request")
+                          );
+
+            Assert.That(
+                NTSKERecordValidator.ValidateServerResponse(
+                    records,
+                    out var errorMessage,
+                    out var errorCategory
+                ),
+                Is.False
+            );
+
+            Assert.That(errorMessage,   Does.Contain("Error record"));
+            Assert.That(errorCategory,  Is.EqualTo(NTSKEErrorCategory.ServerError));
+
+        }
+
+        #endregion
+
+        #region NTSKERecordValidator_Rejects_Warning_Record()
+
+        [Test]
+        public void NTSKERecordValidator_Rejects_Warning_Record()
+        {
+
+            var records = CreateValidResponseRecords(
+                              NTSKE_Record.Warning("Server warning")
+                          );
+
+            Assert.That(
+                NTSKERecordValidator.ValidateServerResponse(
+                    records,
+                    out var errorMessage,
+                    out var errorCategory
+                ),
+                Is.False
+            );
+
+            Assert.That(errorMessage,   Does.Contain("Warning record"));
+            Assert.That(errorCategory,  Is.EqualTo(NTSKEErrorCategory.ServerWarning));
+
+        }
+
+        #endregion
+
+        #region NTSKERecordValidator_Rejects_Missing_AEAD_Negotiation()
+
+        [Test]
+        public void NTSKERecordValidator_Rejects_Missing_AEAD_Negotiation()
+        {
+
+            var records = CreateValidResponseRecords().
+                              Where(record => record.Type != NTSKE_RecordTypes.AEADAlgorithmNegotiation);
+
+            Assert.That(
+                NTSKERecordValidator.ValidateServerResponse(
+                    records,
+                    out var errorMessage,
+                    out var errorCategory
+                ),
+                Is.False
+            );
+
+            Assert.That(errorMessage,   Does.Contain("AEAD"));
+            Assert.That(errorCategory,  Is.EqualTo(NTSKEErrorCategory.MissingRequiredRecord));
+
+        }
+
+        #endregion
+
+        #region NTSKERecordValidator_Rejects_Missing_Cookies()
+
+        [Test]
+        public void NTSKERecordValidator_Rejects_Missing_Cookies()
+        {
+
+            var records = CreateValidResponseRecords().
+                              Where(record => record.Type != NTSKE_RecordTypes.NewCookieForNTPv4);
+
+            Assert.That(
+                NTSKERecordValidator.ValidateServerResponse(
+                    records,
+                    out var errorMessage,
+                    out var errorCategory
+                ),
+                Is.False
+            );
+
+            Assert.That(errorMessage,   Does.Contain("cookies"));
+            Assert.That(errorCategory,  Is.EqualTo(NTSKEErrorCategory.MissingRequiredRecord));
+
+        }
+
+        #endregion
+
+        #region NTSKERecordValidator_Rejects_Wrong_NextProtocol()
+
+        [Test]
+        public void NTSKERecordValidator_Rejects_Wrong_NextProtocol()
+        {
+
+            var records = CreateValidResponseRecords().
+                              Where(record => record.Type != NTSKE_RecordTypes.NTSNextProtocolNegotiation).
+                              Append(new NTSNextProtocolNegotiation(true, [ 0x00, 0x01 ]));
+
+            Assert.That(
+                NTSKERecordValidator.ValidateServerResponse(
+                    records,
+                    out var errorMessage,
+                    out var errorCategory
+                ),
+                Is.False
+            );
+
+            Assert.That(errorMessage,   Does.Contain("unsupported next protocol"));
+            Assert.That(errorCategory,  Is.EqualTo(NTSKEErrorCategory.UnsupportedProtocol));
+
+        }
+
+        #endregion
+
+        #region NTSKERecordValidator_Rejects_Unsupported_AEAD()
+
+        [Test]
+        public void NTSKERecordValidator_Rejects_Unsupported_AEAD()
+        {
+
+            var records = CreateValidResponseRecords().
+                              Where(record => record.Type != NTSKE_RecordTypes.AEADAlgorithmNegotiation).
+                              Append(new AEADAlgorithmNegotiation(true, AEADAlgorithms.AES_128_GCM));
+
+            Assert.That(
+                NTSKERecordValidator.ValidateServerResponse(
+                    records,
+                    out var errorMessage,
+                    out var errorCategory
+                ),
+                Is.False
+            );
+
+            Assert.That(errorMessage,   Does.Contain("unsupported AEAD"));
+            Assert.That(errorCategory,  Is.EqualTo(NTSKEErrorCategory.UnsupportedAlgorithm));
+
+        }
+
+        #endregion
+
+        #region (private static) CreateValidResponseRecords(AdditionalRecords)
+
+        private static IEnumerable<NTSKE_Record> CreateValidResponseRecords(params NTSKE_Record[] AdditionalRecords)
+        {
+
+            var records = new List<NTSKE_Record> {
+                              NTSKE_Record.NTSNextProtocolNegotiation,
+                              NTSKE_Record.AEADAlgorithmNegotiation(),
+                              new NewCookieForNTPv4(false, [ 0x01, 0x02, 0x03 ])
+                          };
+
+            records.AddRange(AdditionalRecords);
+            records.Add(NTSKE_Record.EndOfMessage);
+
+            return records;
+
+        }
+
+        #endregion
+
     }
 
 }

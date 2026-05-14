@@ -158,6 +158,25 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 return NTSKEErrorCategory.Timeout;
 
 
+            if (ErrorMessage.Contains("unknown critical record",     StringComparison.OrdinalIgnoreCase))
+                return NTSKEErrorCategory.UnknownCriticalRecord;
+
+            if (ErrorMessage.Contains("Error record",                StringComparison.OrdinalIgnoreCase))
+                return NTSKEErrorCategory.ServerError;
+
+            if (ErrorMessage.Contains("Warning record",              StringComparison.OrdinalIgnoreCase))
+                return NTSKEErrorCategory.ServerWarning;
+
+            if (ErrorMessage.Contains("did not negotiate",           StringComparison.OrdinalIgnoreCase) ||
+                ErrorMessage.Contains("did not provide",             StringComparison.OrdinalIgnoreCase))
+                return NTSKEErrorCategory.MissingRequiredRecord;
+
+            if (ErrorMessage.Contains("unsupported next protocol",   StringComparison.OrdinalIgnoreCase))
+                return NTSKEErrorCategory.UnsupportedProtocol;
+
+            if (ErrorMessage.Contains("unsupported AEAD",            StringComparison.OrdinalIgnoreCase))
+                return NTSKEErrorCategory.UnsupportedAlgorithm;
+
             if (ErrorMessage.Contains("parse",                      StringComparison.OrdinalIgnoreCase) ||
                 ErrorMessage.Contains("NTS-KE",                     StringComparison.OrdinalIgnoreCase) ||
                 ErrorMessage.Contains("EndOfMessage",               StringComparison.OrdinalIgnoreCase) ||

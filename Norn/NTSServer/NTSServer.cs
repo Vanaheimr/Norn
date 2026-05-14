@@ -664,15 +664,21 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 );
 
 
+            var receiveTimestamp  = NTPPacket.GetCurrentNTPTimestamp();
+            var transmitTimestamp = NTPPacket.GetCurrentNTPTimestamp();
+
             var response1 = new NTPPacket(
 
-                                Mode:                4, // 4 (Server)
-                                Stratum:             2,
-                                Poll:                RequestPacket.Poll,
-                                Precision:           RequestPacket.Precision,
-                                TransmitTimestamp:   NTPPacket.GetCurrentNTPTimestamp()
+                                 Mode:                4, // 4 (Server)
+                                 Stratum:             2,
+                                 Poll:                RequestPacket.Poll,
+                                 Precision:           RequestPacket.Precision,
+                                 ReferenceTimestamp:  transmitTimestamp,
+                                 OriginateTimestamp:  RequestPacket.TransmitTimestamp ?? 0,
+                                 ReceiveTimestamp:    receiveTimestamp,
+                                 TransmitTimestamp:   transmitTimestamp
 
-                            );
+                             );
 
 
             var associatedData = new List<Byte[]>() { response1.ToByteArray(SkipExtensions: true) }.

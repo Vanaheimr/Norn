@@ -31,6 +31,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         TLSCertificate,
         Timeout,
         Protocol,
+        UnknownCriticalRecord,
+        ServerError,
+        ServerWarning,
+        MissingRequiredRecord,
+        UnsupportedProtocol,
+        UnsupportedAlgorithm,
         Canceled,
         Exception,
         Unknown

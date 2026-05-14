@@ -62,6 +62,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         public Boolean                NewCookieReceived            { get; }
 
+        public NTSCookiePoolDiagnostics? CookiePoolDiagnostics     { get; }
+
+        public NTSResponseValidationResult? ResponseValidation      { get; }
+
         #endregion
 
         #region Constructor(s)
@@ -77,8 +81,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                               Int32                  Attempts,
                               Int64?                 SendStopwatchTimestamp      = null,
                               Int64?                 ReceiveStopwatchTimestamp   = null,
-                              UInt64?                DestinationTimestamp        = null,
-                              Boolean                NewCookieReceived           = false)
+                               UInt64?                DestinationTimestamp        = null,
+                               Boolean                NewCookieReceived           = false,
+                               NTSCookiePoolDiagnostics? CookiePoolDiagnostics     = null,
+                               NTSResponseValidationResult? ResponseValidation      = null)
         {
 
             this.Success                     = Success;
@@ -94,6 +100,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             this.ReceiveStopwatchTimestamp   = ReceiveStopwatchTimestamp;
             this.DestinationTimestamp        = DestinationTimestamp;
             this.NewCookieReceived           = NewCookieReceived;
+            this.CookiePoolDiagnostics       = CookiePoolDiagnostics;
+            this.ResponseValidation          = ResponseValidation;
 
             if (SendStopwatchTimestamp.HasValue &&
                 ReceiveStopwatchTimestamp.HasValue)
@@ -115,8 +123,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                    String       RemoteDescription,
                                                    Byte[]?      UsedCookie,
                                                    Int32        RemainingCookiesAfterQuery,
-                                                   Int32        Attempts,
-                                                   Boolean      NewCookieReceived)
+                                                    Int32        Attempts,
+                                                    Boolean      NewCookieReceived,
+                                                    NTSCookiePoolDiagnostics? CookiePoolDiagnostics = null,
+                                                    NTSResponseValidationResult? ResponseValidation  = null)
 
             => new (
                    Success:                     true,
@@ -130,9 +140,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                    Attempts:                    Attempts,
                    SendStopwatchTimestamp:      Response?.SendStopwatchTimestamp,
                    ReceiveStopwatchTimestamp:   Response?.ReceiveStopwatchTimestamp,
-                   DestinationTimestamp:        Response?.DestinationTimestamp,
-                   NewCookieReceived:           NewCookieReceived
-               );
+                    DestinationTimestamp:        Response?.DestinationTimestamp,
+                    NewCookieReceived:           NewCookieReceived,
+                    CookiePoolDiagnostics:       CookiePoolDiagnostics,
+                    ResponseValidation:          ResponseValidation
+                );
 
         #endregion
 
@@ -148,7 +160,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                             NTPPacket?             Response                    = null,
                                             Int64?                 SendStopwatchTimestamp      = null,
                                             Int64?                 ReceiveStopwatchTimestamp   = null,
-                                            UInt64?                DestinationTimestamp        = null)
+                                             UInt64?                DestinationTimestamp        = null,
+                                             NTSCookiePoolDiagnostics? CookiePoolDiagnostics    = null,
+                                             NTSResponseValidationResult? ResponseValidation     = null)
 
             => new (
                    Success:                     false,
@@ -161,24 +175,28 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                    RemainingCookiesAfterQuery:  RemainingCookiesAfterQuery,
                    Attempts:                    Attempts,
                    SendStopwatchTimestamp:      SendStopwatchTimestamp,
-                   ReceiveStopwatchTimestamp:   ReceiveStopwatchTimestamp,
-                   DestinationTimestamp:        DestinationTimestamp
-               );
+                    ReceiveStopwatchTimestamp:   ReceiveStopwatchTimestamp,
+                    DestinationTimestamp:        DestinationTimestamp,
+                    CookiePoolDiagnostics:       CookiePoolDiagnostics,
+                    ResponseValidation:          ResponseValidation
+                );
 
         #endregion
 
-        #region Failed(...)
+        #region FailedWithPacket(...)
 
-        public static NTSQueryResult Failed2(String                 ErrorMessage,
-                                             NTSQueryErrorCategory  ErrorCategory,
-                                             IPEndPoint?            RemoteEndPoint              = null,
-                                             String?                RemoteDescription           = null,
-                                             Byte[]?                UsedCookie                  = null,
-                                             Int32                  RemainingCookiesAfterQuery  = 0,
-                                             Int32                  Attempts                    = 1,
-                                             Int64?                 SendStopwatchTimestamp      = null,
-                                             Int64?                 ReceiveStopwatchTimestamp   = null,
-                                             UInt64?                DestinationTimestamp        = null)
+        public static NTSQueryResult FailedWithPacket(String                 ErrorMessage,
+                                                      NTSQueryErrorCategory  ErrorCategory,
+                                                      IPEndPoint?            RemoteEndPoint              = null,
+                                                      String?                RemoteDescription           = null,
+                                                      Byte[]?                UsedCookie                  = null,
+                                                      Int32                  RemainingCookiesAfterQuery  = 0,
+                                                      Int32                  Attempts                    = 1,
+                                                      Int64?                 SendStopwatchTimestamp      = null,
+                                                      Int64?                 ReceiveStopwatchTimestamp   = null,
+                                                       UInt64?                DestinationTimestamp        = null,
+                                                       NTSCookiePoolDiagnostics? CookiePoolDiagnostics    = null,
+                                                       NTSResponseValidationResult? ResponseValidation     = null)
 
             => new (
                    Success:                     false,
@@ -191,38 +209,45 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                    RemainingCookiesAfterQuery:  RemainingCookiesAfterQuery,
                    Attempts:                    Attempts,
                    SendStopwatchTimestamp:      SendStopwatchTimestamp,
-                   ReceiveStopwatchTimestamp:   ReceiveStopwatchTimestamp,
-                   DestinationTimestamp:        DestinationTimestamp
-               );
+                    ReceiveStopwatchTimestamp:   ReceiveStopwatchTimestamp,
+                    DestinationTimestamp:        DestinationTimestamp,
+                    CookiePoolDiagnostics:       CookiePoolDiagnostics,
+                    ResponseValidation:          ResponseValidation
+                );
 
         #endregion
 
-        #region Failed(...)
+        #region FailedWithClassifiedPacket(...)
 
-        public static NTSQueryResult Failed3(String                 ErrorMessage,
-                                             IPEndPoint?            RemoteEndPoint              = null,
-                                             String?                RemoteDescription           = null,
-                                             Byte[]?                UsedCookie                  = null,
-                                             Int32                  RemainingCookiesAfterQuery  = 0,
-                                             Int32                  Attempts                    = 1,
-                                             Int64?                 SendStopwatchTimestamp      = null,
-                                             Int64?                 ReceiveStopwatchTimestamp   = null,
-                                             UInt64?                DestinationTimestamp        = null)
+        public static NTSQueryResult FailedWithClassifiedPacket(String       ErrorMessage,
+                                                                IPEndPoint?  RemoteEndPoint              = null,
+                                                                String?      RemoteDescription           = null,
+                                                                Byte[]?      UsedCookie                  = null,
+                                                                Int32        RemainingCookiesAfterQuery  = 0,
+                                                                Int32        Attempts                    = 1,
+                                                                 Int64?       SendStopwatchTimestamp      = null,
+                                                                 Int64?       ReceiveStopwatchTimestamp   = null,
+                                                                 UInt64?      DestinationTimestamp        = null,
+                                                                 NTSCookiePoolDiagnostics? CookiePoolDiagnostics = null,
+                                                                 NTPPacket?   Response                    = null,
+                                                                 NTSResponseValidationResult? ResponseValidation = null)
 
             => new (
                    Success:                     false,
-                   Response:                    new NTPPacket(ErrorMessage),
-                   ErrorMessage:                ErrorMessage,
-                   ErrorCategory:               ClassifyNTPError(ErrorMessage),
+                    Response:                    Response ?? new NTPPacket(ErrorMessage),
+                    ErrorMessage:                ErrorMessage,
+                    ErrorCategory:               ClassifyNTPError(ErrorMessage),
                    RemoteEndPoint:              RemoteEndPoint,
                    RemoteDescription:           RemoteDescription,
                    UsedCookie:                  UsedCookie,
                    RemainingCookiesAfterQuery:  RemainingCookiesAfterQuery,
                    Attempts:                    Attempts,
                    SendStopwatchTimestamp:      SendStopwatchTimestamp,
-                   ReceiveStopwatchTimestamp:   ReceiveStopwatchTimestamp,
-                   DestinationTimestamp:        DestinationTimestamp
-               );
+                    ReceiveStopwatchTimestamp:   ReceiveStopwatchTimestamp,
+                    DestinationTimestamp:        DestinationTimestamp,
+                    CookiePoolDiagnostics:       CookiePoolDiagnostics,
+                    ResponseValidation:          ResponseValidation
+                );
 
         #endregion
 

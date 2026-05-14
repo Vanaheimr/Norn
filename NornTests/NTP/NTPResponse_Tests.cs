@@ -191,6 +191,38 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTP
 
         #endregion
 
+        #region TryParse_KeepsKissOfDeathPacket()
+
+        [Test]
+        public void TryParse_KeepsKissOfDeathPacket()
+        {
+
+            var buffer = CreateResponseBytes(1, 0, 0);
+
+            buffer[1]   = 0;
+            buffer[12]  = (Byte) 'R';
+            buffer[13]  = (Byte) 'A';
+            buffer[14]  = (Byte) 'T';
+            buffer[15]  = (Byte) 'E';
+
+            Assert.That(
+                NTPResponse.TryParse(
+                    buffer,
+                    out var response,
+                    out var errorResponse
+                ),
+                Is.True,
+                errorResponse
+            );
+
+            Assert.That(response,          Is.Not.Null);
+            Assert.That(response!.Stratum, Is.EqualTo(0));
+            Assert.That(response.ReferenceIdentifier.ToString(response.Stratum), Does.Contain("RATE"));
+
+        }
+
+        #endregion
+
 
         private static Byte[] CreateResponseBytes(UInt64 OriginateTimestamp,
                                                   UInt64 ReceiveTimestamp,

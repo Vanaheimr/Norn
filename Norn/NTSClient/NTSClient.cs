@@ -47,6 +47,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public static readonly IPPort                   DefaultNTP_Port        = IPPort.          Parse      ( 123);
         public        readonly TimeSpan                 DefaultTimeout         = TimeSpan.        FromSeconds(   3);
         public        readonly Int32                    MaxNTSKEResponseSize   = 64 * 1024;
+        public        readonly Int32                    MaxRecentResponses     = 1024;
 
         public static readonly PercentageDouble         DefaultJitter          = PercentageDouble.Parse      (0.25);
 
@@ -54,6 +55,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         private       readonly Queue<Byte[]>            cookieQueue            = new();
         private       readonly HashSet<String>          knownCookies           = [];
         private       readonly HashSet<NTSKE_Response>  seededNTSKEResponses   = [];
+        private       readonly Lock                     responseHistoryLock    = new();
+        private       readonly Queue<String>            recentResponseQueue    = new();
+        private       readonly HashSet<String>          recentResponses        = [];
+        private                Int64                    seededCookieCount      = 0;
+        private                Int64                    cookiesReceived        = 0;
+        private                Int64                    cookiesConsumed        = 0;
+        private                Int64                    droppedCookieCount     = 0;
 
         #endregion
 
@@ -68,6 +76,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public Byte[]                                                         C2S_Key                       { get; set; } = [];
         public Byte[]                                                         S2C_Key                       { get; set; } = [];
         public DNSClient                                                      DNSClient                     { get; }
+        public NTSCookiePoolPolicy                                            CookiePoolPolicy              { get; }
 
         /// <summary>
         /// The number of currently queued NTS cookies available for future NTP/NTS requests.
@@ -78,6 +87,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             {
                 lock (cookieLock)
                     return cookieQueue.Count;
+            }
+        }
+
+        /// <summary>
+        /// A snapshot of the current NTS cookie pool diagnostics.
+        /// </summary>
+        public NTSCookiePoolDiagnostics CookiePoolDiagnostics
+        {
+            get
+            {
+                lock (cookieLock)
+                    return CreateCookiePoolDiagnosticsLocked();
             }
         }
 
@@ -103,7 +124,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                          RemoteTLSServerCertificateValidationHandler<NTSKE_TLSClient>?  RemoteCertificateValidator   = null,
                          IPVersionPreference?                                           IPVersionPreference          = null,
                          TimeSpan?                                                      Timeout                      = null,
-                         DNSClient?                                                     DNSClient                    = null)
+                         DNSClient?                                                     DNSClient                    = null,
+                         NTSCookiePoolPolicy?                                           CookiePoolPolicy             = null)
         {
 
             this.Id                          = Id                  ?? RandomExtensions.RandomUInt16();
@@ -114,6 +136,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             this.IPVersionPreference         = IPVersionPreference ?? Hermod.IPVersionPreference.PreferIPv6;
             this.Timeout                     = Timeout             ?? DefaultTimeout;
             this.DNSClient                   = DNSClient           ?? new DNSClient();
+            this.CookiePoolPolicy            = (CookiePoolPolicy   ?? new NTSCookiePoolPolicy()).Normalize();
 
         }
 
@@ -159,7 +182,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                   Byte[]?             Plaintext               = null,
                                                   SignedResponseMode  RequestSignedResponse   = SignedResponseMode.None,
                                                   UInt16              SignedResponseKeyId     = 1,
-                                                  UInt64?             TransmitTimestamp       = null)
+                                                  UInt64?             TransmitTimestamp       = null,
+                                                  UInt16              CookiePlaceholderCount  = 0,
+                                                  UInt16              CookiePlaceholderLength = 100)
         {
 
             var ntpPacket1  = new NTPRequest(
@@ -187,8 +212,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 var extensionBytes = new List<Byte[]>() {
                                          ntpPacket1.       ToByteArray(),
                                          uniqueIdExtension.ToByteArray(),
-                                         cookieExtension.  ToByteArray()
-                                     };
+                                          cookieExtension.  ToByteArray()
+                                      };
+
+                for (var i = 0; i < CookiePlaceholderCount; i++)
+                {
+
+                    var cookiePlaceholderExtension = NTPExtension.NTSCookiePlaceholder(CookiePlaceholderLength);
+
+                    extensions.    Add(cookiePlaceholderExtension);
+                    extensionBytes.Add(cookiePlaceholderExtension.ToByteArray());
+
+                }
 
                 if (RequestSignedResponse != SignedResponseMode.None)
                 {
@@ -385,6 +420,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     {
 
                         if (NTSKE_Record.TryParse(readResult.ResponseBytes, out var records, out var errorResponse))
+                        {
+
+                            if (!NTSKERecordValidator.ValidateServerResponse(records, out var validationError, out var validationErrorCategory))
+                                return NTSKEResult.Failed(
+                                           validationError ?? "Invalid NTS-KE response!",
+                                           validationErrorCategory,
+                                           TakeTimingInfoSnapshot(),
+                                           ntsTlsClient.TLSInfo
+                                       );
+
                             return NTSKEResult.SuccessResult(
                                        new NTSKE_Response(
                                            records,
@@ -394,6 +439,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                            ntsTlsClient.TLSInfo
                                        )
                                    );
+
+                        }
 
                         return NTSKEResult.Failed(
                                    errorResponse ?? "Could not parse NTS-KE response!",
@@ -443,21 +490,38 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         #endregion
 
 
-        #region (private) AddCookies(Cookies)
+        #region (private) CreateCookiePoolDiagnosticsLocked()
 
-        private void AddCookies(IEnumerable<Byte[]> Cookies)
+        private NTSCookiePoolDiagnostics CreateCookiePoolDiagnosticsLocked()
+
+            => new (
+                   cookieQueue.Count,
+                   CookiePoolPolicy.MaxCookiePoolSize,
+                   CookiePoolPolicy.LowWatermark,
+                   seededCookieCount,
+                   cookiesReceived,
+                   cookiesConsumed,
+                   droppedCookieCount
+               );
+
+        #endregion
+
+        #region (private) AddReceivedCookies(Cookies)
+
+        private void AddReceivedCookies(IEnumerable<Byte[]> Cookies)
         {
 
             lock (cookieLock)
-                AddCookiesLocked(Cookies);
+                AddCookiesLocked(Cookies, IsSeeded: false);
 
         }
 
         #endregion
 
-        #region (private) AddCookiesLocked(Cookies)
+        #region (private) AddCookiesLocked(Cookies, IsSeeded)
 
-        private void AddCookiesLocked(IEnumerable<Byte[]> Cookies)
+        private void AddCookiesLocked(IEnumerable<Byte[]>  Cookies,
+                                      Boolean              IsSeeded)
         {
 
             foreach (var cookie in Cookies)
@@ -465,10 +529,34 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                 var cookieId = Convert.ToBase64String(cookie);
 
-                if (knownCookies.Add(cookieId))
-                    cookieQueue.Enqueue(cookie);
+                if (!IsSeeded)
+                    cookiesReceived++;
+
+                if (cookie.Length == 0 ||
+                    cookieQueue.Count >= CookiePoolPolicy.MaxCookiePoolSize ||
+                    !knownCookies.Add(cookieId))
+                {
+                    droppedCookieCount++;
+                    continue;
+                }
+
+                cookieQueue.Enqueue(cookie);
+
+                if (IsSeeded)
+                    seededCookieCount++;
 
             }
+
+        }
+
+        #endregion
+
+        #region (private) AddCookies(Cookies)
+
+        private void AddCookies(IEnumerable<Byte[]> Cookies)
+        {
+
+            AddReceivedCookies(Cookies);
 
         }
 
@@ -487,7 +575,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             {
 
                 if (seededNTSKEResponses.Add(NTSKEResponse))
-                    AddCookiesLocked(NTSKEResponse.Cookies);
+                    AddCookiesLocked(NTSKEResponse.Cookies, IsSeeded: true);
 
             }
 
@@ -506,11 +594,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                 if (NTSKEResponse is not null &&
                     seededNTSKEResponses.Add(NTSKEResponse))
-                    AddCookiesLocked(NTSKEResponse.Cookies);
+                    AddCookiesLocked(NTSKEResponse.Cookies, IsSeeded: true);
 
                 if (cookieQueue.TryDequeue(out Cookie))
                 {
                     knownCookies.Remove(Convert.ToBase64String(Cookie));
+                    cookiesConsumed++;
                     return true;
                 }
 
@@ -518,6 +607,27 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             Cookie = null;
             return false;
+
+        }
+
+        #endregion
+
+        #region (private) CalculateCookiePlaceholderCount()
+
+        private UInt16 CalculateCookiePlaceholderCount()
+        {
+
+            lock (cookieLock)
+            {
+
+                var missingCookies = CookiePoolPolicy.TargetCookieCount - cookieQueue.Count - 1;
+                return (UInt16) Math.Clamp(
+                                    missingCookies,
+                                    0,
+                                    CookiePoolPolicy.MaxPlaceholders
+                                );
+
+            }
 
         }
 
@@ -534,6 +644,39 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     Where(cookieExtension => cookieExtension.Encrypted).
                     Select(cookieExtension => cookieExtension.Value)
             );
+
+        }
+
+        #endregion
+
+        #region (private) TryRememberAcceptedResponse(Response, RemoteDescription)
+
+        private Boolean TryRememberAcceptedResponse(NTPResponse Response,
+                                                    String      RemoteDescription)
+        {
+
+            if (!Response.TransmitTimestamp.HasValue)
+                return true;
+
+            var fingerprint = $"{RemoteDescription}|{Response.TransmitTimestamp.Value:X16}";
+
+            lock (responseHistoryLock)
+            {
+
+                if (!recentResponses.Add(fingerprint))
+                    return false;
+
+                recentResponseQueue.Enqueue(fingerprint);
+
+                while (recentResponseQueue.Count > MaxRecentResponses &&
+                       recentResponseQueue.TryDequeue(out var oldFingerprint))
+                {
+                    recentResponses.Remove(oldFingerprint);
+                }
+
+                return true;
+
+            }
 
         }
 
@@ -582,10 +725,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         {
 
             if (NTSKEResponse?.ErrorMessage is not null)
-                return NTSQueryResult.Failed2(
+                return NTSQueryResult.FailedWithPacket(
                            NTSKEResponse.ErrorMessage ?? "Unknown NTS-KE error!",
                            NTSQueryErrorCategory.NTSKE,
-                           RemainingCookiesAfterQuery: AvailableCookieCount
+                           RemainingCookiesAfterQuery: AvailableCookieCount,
+                           CookiePoolDiagnostics:      CookiePoolDiagnostics
                        );
 
             var timeout = Timeout ?? this.Timeout ?? DefaultTimeout;
@@ -606,18 +750,23 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             #endregion
 
             var cookie = default(Byte[]?);
+            var cookiePlaceholderCount = (UInt16) 0;
 
             if (NTSKEResponse is not null &&
                 !TryTakeCookie(NTSKEResponse, out cookie))
             {
 
-                return NTSQueryResult.Failed2(
+                return NTSQueryResult.FailedWithPacket(
                            "No NTS cookie available!",
                            NTSQueryErrorCategory.Cookie,
-                           RemainingCookiesAfterQuery: AvailableCookieCount
+                           RemainingCookiesAfterQuery: AvailableCookieCount,
+                           CookiePoolDiagnostics:      CookiePoolDiagnostics
                        );
 
             }
+
+            if (NTSKEResponse is not null)
+                cookiePlaceholderCount = CalculateCookiePlaceholderCount();
 
             var remoteEndPoint     = await NTPRemoteEndPointResolver.ResolveAsync(
                                                NTSKEResponse,
@@ -643,11 +792,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                          NTSKEResponse,
                                          cookie,
                                          RandomNumberGenerator.GetBytes(32),
-                                         Plaintext:              null,
-                                         RequestSignedResponse:  SignedResponseMode,
-                                         SignedResponseKeyId:    SignedResponseKeyId,
-                                         TransmitTimestamp:      transmitTimestamp
-                                     );
+                                          Plaintext:              null,
+                                          RequestSignedResponse:  SignedResponseMode,
+                                          SignedResponseKeyId:    SignedResponseKeyId,
+                                          TransmitTimestamp:      transmitTimestamp,
+                                          CookiePlaceholderCount: cookiePlaceholderCount,
+                                          CookiePlaceholderLength: (UInt16) Math.Min(UInt16.MaxValue, Math.Max(0, cookie?.Length ?? 100))
+                                      );
 
             var requestData        = requestPacket.ToByteArray();
 
@@ -693,14 +844,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                         receiveResult1WithTimeout.Result is null)
                     {
 
-                        return NTSQueryResult.Failed2(
+                        return NTSQueryResult.FailedWithPacket(
                                    $"No 1st NTP response from {remoteDescription} within {Math.Round(timeout.TotalSeconds, 2)} seconds timeout!",
                                    NTSQueryErrorCategory.NTPTimeout,
                                    remoteEndPoint,
                                    remoteDescription,
                                    cookie,
                                    AvailableCookieCount,
-                                   SendStopwatchTimestamp: sendStopwatchTimestamp
+                                   SendStopwatchTimestamp: sendStopwatchTimestamp,
+                                   CookiePoolDiagnostics:  CookiePoolDiagnostics
                                );
 
                     }
@@ -720,6 +872,32 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                              ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp1))
                     {
 
+                        var validation1 = NTSResponseValidator.Validate(
+                                              ntpResponse1,
+                                              requestPacket,
+                                              requestPacket.UniqueIdentifier(),
+                                              NTSKEResponse?.S2CKey,
+                                              RequireNTS: NTSKEResponse is not null
+                                          );
+
+                        if (!validation1.IsValid)
+                            return NTSQueryResult.Failed(
+                                       validation1.ErrorMessage ?? "NTP/NTS response validation failed.",
+                                       validation1.ErrorCategory,
+                                       remoteEndPoint,
+                                       remoteDescription,
+                                       cookie,
+                                       AvailableCookieCount,
+                                       SendStopwatchTimestamp:     sendStopwatchTimestamp,
+                                       ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp1,
+                                       DestinationTimestamp:       destinationTimestamp1,
+                                       Response:                   ntpResponse1,
+                                       CookiePoolDiagnostics:      CookiePoolDiagnostics,
+                                       ResponseValidation:         validation1
+                                   );
+
+                        NTSResponseValidationResult? replayValidation1 = null;
+
                         #region A 2nd signed response was announced
 
                         if (ntpResponse1.NTSSignedResponseAnnouncement()?.IsScheduled == true)
@@ -735,7 +913,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                 receiveResult2WithTimeout.Result is null)
                             {
 
-                                return NTSQueryResult.Failed2(
+                                return NTSQueryResult.FailedWithPacket(
                                            $"No 2nd NTP response from {remoteDescription} within {Math.Round(timeout.TotalSeconds, 2)} seconds timeout!",
                                            NTSQueryErrorCategory.NTPTimeout,
                                            remoteEndPoint,
@@ -744,7 +922,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                            AvailableCookieCount,
                                            SendStopwatchTimestamp:     sendStopwatchTimestamp,
                                            ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp1,
-                                           DestinationTimestamp:       destinationTimestamp1
+                                           DestinationTimestamp:       destinationTimestamp1,
+                                           CookiePoolDiagnostics:      CookiePoolDiagnostics
                                        );
 
                             }
@@ -756,8 +935,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                             if (!receiveResult1.Buffer.IsPrefixOf(receiveResult2.Buffer))
                             {
 
-                                return NTSQueryResult.Failed2(
-                                           "2nd NTP response is not a prefix of the 1st NTP response!",
+                                return NTSQueryResult.FailedWithPacket(
+                                           "1st NTP response is not a prefix of the 2nd NTP response!",
                                            NTSQueryErrorCategory.Protocol,
                                            remoteEndPoint,
                                            remoteDescription,
@@ -765,7 +944,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                            AvailableCookieCount,
                                            SendStopwatchTimestamp:     sendStopwatchTimestamp,
                                            ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp2,
-                                           DestinationTimestamp:       destinationTimestamp2
+                                           DestinationTimestamp:       destinationTimestamp2,
+                                           CookiePoolDiagnostics:      CookiePoolDiagnostics
                                        );
                             }
 
@@ -780,6 +960,59 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                      ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp2))
                             {
 
+                                var validation2 = NTSResponseValidator.Validate(
+                                                      ntpResponse2,
+                                                      requestPacket,
+                                                      requestPacket.UniqueIdentifier(),
+                                                      NTSKEResponse?.S2CKey,
+                                                      RequireNTS: NTSKEResponse is not null
+                                                  );
+
+                                if (!validation2.IsValid)
+                                    return NTSQueryResult.Failed(
+                                               validation2.ErrorMessage ?? "NTP/NTS 2nd response validation failed.",
+                                               validation2.ErrorCategory,
+                                               remoteEndPoint,
+                                               remoteDescription,
+                                               cookie,
+                                               AvailableCookieCount,
+                                               SendStopwatchTimestamp:     sendStopwatchTimestamp,
+                                               ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp2,
+                                               DestinationTimestamp:       destinationTimestamp2,
+                                               Response:                   ntpResponse2,
+                                               CookiePoolDiagnostics:      CookiePoolDiagnostics,
+                                               ResponseValidation:         validation2
+                                           );
+
+                                if (!TryRememberAcceptedResponse(ntpResponse2, remoteDescription))
+                                {
+
+                                    var replayValidation2 = NTSResponseValidator.Validate(
+                                                                ntpResponse2,
+                                                                requestPacket,
+                                                                requestPacket.UniqueIdentifier(),
+                                                                NTSKEResponse?.S2CKey,
+                                                                RequireNTS:  NTSKEResponse is not null,
+                                                                IsReplay:    true
+                                                            );
+
+                                    return NTSQueryResult.Failed(
+                                               replayValidation2.ErrorMessage ?? "NTP/NTS 2nd response duplicate/replay detected.",
+                                               replayValidation2.ErrorCategory,
+                                               remoteEndPoint,
+                                               remoteDescription,
+                                               cookie,
+                                               AvailableCookieCount,
+                                               SendStopwatchTimestamp:     sendStopwatchTimestamp,
+                                               ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp2,
+                                               DestinationTimestamp:       destinationTimestamp2,
+                                               Response:                   ntpResponse2,
+                                               CookiePoolDiagnostics:      CookiePoolDiagnostics,
+                                               ResponseValidation:         replayValidation2
+                                           );
+
+                                }
+
                                 AddCookies(ntpResponse2);
 
                                 return NTSQueryResult.SuccessResult(
@@ -789,11 +1022,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                            cookie,
                                            AvailableCookieCount,
                                            1,
-                                           ntpResponse2.Extensions.Any(extension => extension is NTSCookieExtension { Encrypted: true })
+                                           ntpResponse2.Extensions.Any(extension => extension is NTSCookieExtension { Encrypted: true }),
+                                           CookiePoolDiagnostics,
+                                           validation2
                                        );
                             }
 
-                            return NTSQueryResult.Failed3(
+                            return NTSQueryResult.FailedWithClassifiedPacket(
                                        "NTP 2nd response error: " + errorResponse2,
                                        remoteEndPoint,
                                        remoteDescription,
@@ -801,12 +1036,42 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                        AvailableCookieCount,
                                        SendStopwatchTimestamp:     sendStopwatchTimestamp,
                                        ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp2,
-                                       DestinationTimestamp:       destinationTimestamp2
+                                       DestinationTimestamp:       destinationTimestamp2,
+                                       CookiePoolDiagnostics:      CookiePoolDiagnostics
                                    );
 
                         }
 
                         #endregion
+
+                        if (!TryRememberAcceptedResponse(ntpResponse1, remoteDescription))
+                        {
+
+                            replayValidation1 = NTSResponseValidator.Validate(
+                                                    ntpResponse1,
+                                                    requestPacket,
+                                                    requestPacket.UniqueIdentifier(),
+                                                    NTSKEResponse?.S2CKey,
+                                                    RequireNTS:  NTSKEResponse is not null,
+                                                    IsReplay:    true
+                                                );
+
+                            return NTSQueryResult.Failed(
+                                       replayValidation1.ErrorMessage ?? "NTP/NTS response duplicate/replay detected.",
+                                       replayValidation1.ErrorCategory,
+                                       remoteEndPoint,
+                                       remoteDescription,
+                                       cookie,
+                                       AvailableCookieCount,
+                                       SendStopwatchTimestamp:     sendStopwatchTimestamp,
+                                       ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp1,
+                                       DestinationTimestamp:       destinationTimestamp1,
+                                       Response:                   ntpResponse1,
+                                       CookiePoolDiagnostics:      CookiePoolDiagnostics,
+                                       ResponseValidation:         replayValidation1
+                                   );
+
+                        }
 
                         AddCookies(ntpResponse1);
 
@@ -817,14 +1082,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                    cookie,
                                    AvailableCookieCount,
                                    1,
-                                   ntpResponse1.Extensions.Any(extension => extension is NTSCookieExtension { Encrypted: true })
+                                   ntpResponse1.Extensions.Any(extension => extension is NTSCookieExtension { Encrypted: true }),
+                                   CookiePoolDiagnostics,
+                                   validation1
                                );
 
                     }
                     else
                     {
 
-                        return NTSQueryResult.Failed3(
+                        return NTSQueryResult.FailedWithClassifiedPacket(
                                    "NTP 1st response error: " + errorResponse1,
                                    remoteEndPoint,
                                    remoteDescription,
@@ -832,31 +1099,35 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                    AvailableCookieCount,
                                    SendStopwatchTimestamp:     sendStopwatchTimestamp,
                                    ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp1,
-                                   DestinationTimestamp:       destinationTimestamp1
-                               );
+                                   DestinationTimestamp:       destinationTimestamp1,
+                                   CookiePoolDiagnostics:      CookiePoolDiagnostics,
+                                   Response:                   ntpResponse1
+                                );
                     }
 
                 }
                 catch (OperationCanceledException)
                 {
-                    return NTSQueryResult.Failed2(
+                    return NTSQueryResult.FailedWithPacket(
                                "NTP query operation canceled.",
                                NTSQueryErrorCategory.Canceled,
                                remoteEndPoint,
                                remoteDescription,
                                cookie,
-                               AvailableCookieCount
+                               AvailableCookieCount,
+                               CookiePoolDiagnostics: CookiePoolDiagnostics
                            );
                 }
                 catch (Exception e)
                 {
-                    return NTSQueryResult.Failed2(
+                    return NTSQueryResult.FailedWithPacket(
                                $"NTP receive exception from {remoteDescription}: {e.Message}",
                                NTSQueryErrorCategory.Exception,
                                remoteEndPoint,
                                remoteDescription,
                                cookie,
-                               AvailableCookieCount
+                               AvailableCookieCount,
+                               CookiePoolDiagnostics: CookiePoolDiagnostics
                            );
                 }
 

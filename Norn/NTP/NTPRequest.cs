@@ -267,7 +267,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
                     case ExtensionTypes.NTSCookiePlaceholder:
                         extensions.Add(
-                            new NTSCookiePlaceholderExtension(100) // Nonsense!
+                            new NTSCookiePlaceholderExtension((UInt16) data.Length)
                         );
                         break;
 

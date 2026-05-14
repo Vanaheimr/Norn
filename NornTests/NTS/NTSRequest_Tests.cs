@@ -60,7 +60,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
             // Use reflection...
             var methodInfo     = typeof(NTSClient).GetMethod("BuildNTSRequest", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
             Assert.That(methodInfo,  Is.Not.Null, "The method 'BuildNTSRequest' could not be reflected!");
-            var requestPacket  = methodInfo?.Invoke(null, [ ntsKEResponse, cookie, uniqueId, plaintext, SignedResponseMode.None, (UInt16) 0, null ]) as NTPRequest;
+            var requestPacket  = methodInfo?.Invoke(null, [ ntsKEResponse, cookie, uniqueId, plaintext, SignedResponseMode.None, (UInt16) 0, null, (UInt16) 2, (UInt16) cookie.Length ]) as NTPRequest;
 
             var isValid        = NTPRequest.TryParse(requestPacket?.ToByteArray() ?? [], out var ntpPacket, out var errorRequest, ntsKEResponse.C2SKey);
             var uniqueId2      = (ntpPacket?.Extensions.FirstOrDefault(extension => extension.Type == ExtensionTypes.UniqueIdentifier) as UniqueIdentifierExtension)?.Value;
@@ -70,6 +70,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
             Assert.That(isValid,                         Is.True);
             Assert.That(uniqueId.ToHexString(),          Is.EqualTo(uniqueId2?.ToHexString()));
             Assert.That(cookie.  ToHexString(),          Is.EqualTo(cookie2?.  ToHexString()));
+            Assert.That(ntpPacket?.Extensions.Count(extension => extension.Type == ExtensionTypes.NTSCookiePlaceholder), Is.EqualTo(2));
 
             Assert.That(debugMessages[0].Authenticated,  Is.True);
             Assert.That(debugMessages[0].Encrypted,      Is.True);
@@ -126,6 +127,85 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
             Assert.That(arguments1[1], Is.EqualTo(cookie1));
             Assert.That(arguments2[1], Is.EqualTo(cookie2));
             Assert.That(arguments3[1], Is.Null);
+
+        }
+
+        #endregion
+
+        #region ResponseHistory_RejectsDuplicateAcceptedResponse()
+
+        [Test]
+        public void ResponseHistory_RejectsDuplicateAcceptedResponse()
+        {
+
+            var ntsClient  = new NTSClient(Hermod.DNS.DomainName.Localhost);
+            var methodInfo = typeof(NTSClient).GetMethod("TryRememberAcceptedResponse", BindingFlags.Instance | BindingFlags.NonPublic);
+            var response   = new NTPResponse(
+                                 TransmitTimestamp: NTPPacket.GetCurrentNTPTimestamp(new DateTime(2026, 01, 01, 00, 00, 02, DateTimeKind.Utc))
+                             );
+
+            Assert.That(methodInfo, Is.Not.Null, "The method 'TryRememberAcceptedResponse' could not be reflected!");
+
+            Assert.That(methodInfo!.Invoke(ntsClient, [ response, "127.0.0.1:123" ]), Is.EqualTo(true));
+            Assert.That(methodInfo.Invoke(ntsClient, [ response, "127.0.0.1:123" ]), Is.EqualTo(false));
+
+        }
+
+        #endregion
+
+        #region CookiePoolPolicy_LimitsPool_And_ExposesDiagnostics()
+
+        [Test]
+        public void CookiePoolPolicy_LimitsPool_And_ExposesDiagnostics()
+        {
+
+            var cookie1        = Enumerable.Range( 0, 100).Select(value => (Byte) value).ToArray();
+            var cookie2        = Enumerable.Range(10, 100).Select(value => (Byte) value).ToArray();
+            var cookie3        = Enumerable.Range(20, 100).Select(value => (Byte) value).ToArray();
+            var key            = new Byte[32];
+            var ntsKEResponse  = new NTSKE_Response(
+                                     [
+                                         new Norn.NTS.NTSKERecords.NewCookieForNTPv4(true, cookie1),
+                                         new Norn.NTS.NTSKERecords.NewCookieForNTPv4(true, cookie2),
+                                         new Norn.NTS.NTSKERecords.NewCookieForNTPv4(true, cookie3)
+                                     ],
+                                     key,
+                                     key
+                                 );
+            var ntsClient      = new NTSClient(
+                                     Hermod.DNS.DomainName.Localhost,
+                                     CookiePoolPolicy: new NTSCookiePoolPolicy {
+                                         MaxCookiePoolSize  = 2,
+                                         LowWatermark       = 1
+                                     }
+                                 );
+            var methodInfo     = typeof(NTSClient).GetMethod("TryTakeCookie", BindingFlags.Instance | BindingFlags.NonPublic);
+
+            Assert.That(methodInfo, Is.Not.Null, "The method 'TryTakeCookie' could not be reflected!");
+
+            ntsClient.SeedCookies(ntsKEResponse);
+            var seededDiagnostics = ntsClient.CookiePoolDiagnostics;
+
+            Assert.That(seededDiagnostics.AvailableCookieCount,  Is.EqualTo(2));
+            Assert.That(seededDiagnostics.MaxCookiePoolSize,     Is.EqualTo(2));
+            Assert.That(seededDiagnostics.LowWatermark,          Is.EqualTo(1));
+            Assert.That(seededDiagnostics.SeededCookieCount,     Is.EqualTo(2));
+            Assert.That(seededDiagnostics.DroppedCookieCount,    Is.EqualTo(1));
+            Assert.That(seededDiagnostics.CookiesConsumed,       Is.EqualTo(0));
+            Assert.That(seededDiagnostics.IsFull,                Is.True);
+            Assert.That(seededDiagnostics.IsLow,                 Is.False);
+
+            var arguments1 = new Object?[] { ntsKEResponse, null };
+            var arguments2 = new Object?[] { ntsKEResponse, null };
+            methodInfo!.Invoke(ntsClient, arguments1);
+            methodInfo!.Invoke(ntsClient, arguments2);
+
+            var consumedDiagnostics = ntsClient.CookiePoolDiagnostics;
+
+            Assert.That(consumedDiagnostics.AvailableCookieCount,  Is.EqualTo(0));
+            Assert.That(consumedDiagnostics.CookiesConsumed,       Is.EqualTo(2));
+            Assert.That(consumedDiagnostics.IsLow,                 Is.True);
+            Assert.That(consumedDiagnostics.IsEmpty,               Is.True);
 
         }
 

@@ -55,6 +55,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.Monitoring
                              ResolvedIPAddresses     = [ "192.0.2.1", "2001:db8::1" ],
                              ConnectedIPAddress      = "2001:db8::1",
                              CookiePoolSize          = 8,
+                             CookiePoolMaxSize       = 32,
+                             CookiePoolLowWatermark  = 4,
+                             SeededCookieCount       = 8,
+                             CookiesReceived         = 0,
+                             CookiesConsumed         = 0,
+                             DroppedCookieCount      = 0,
+                             CookiePoolLow           = false,
+                             CookiePoolEmpty         = false,
                              TLSCipherSuite          = "TLS_AES_256_GCM_SHA384",
                              TLSVersion              = "TLS 1.3",
                              TLSApplicationProtocol  = "ntske/1",
@@ -72,6 +80,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.Monitoring
             Assert.That(json["resolvedIPAddresses"]?.Values<String>().Count(), Is.EqualTo(2));
             Assert.That(json.Value<String>("connectedIPAddress"),        Is.EqualTo("2001:db8::1"));
             Assert.That(json.Value<Int32>("cookiePoolSize"),             Is.EqualTo(8));
+            Assert.That(json.Value<Int32>("cookiePoolMaxSize"),          Is.EqualTo(32));
+            Assert.That(json.Value<Int32>("cookiePoolLowWatermark"),     Is.EqualTo(4));
+            Assert.That(json.Value<Int64>("seededCookieCount"),          Is.EqualTo(8));
+            Assert.That(json.Value<Int64>("cookiesReceived"),            Is.EqualTo(0));
+            Assert.That(json.Value<Int64>("cookiesConsumed"),            Is.EqualTo(0));
+            Assert.That(json.Value<Int64>("droppedCookieCount"),         Is.EqualTo(0));
+            Assert.That(json.Value<Boolean>("cookiePoolLow"),            Is.False);
+            Assert.That(json.Value<Boolean>("cookiePoolEmpty"),          Is.False);
             Assert.That(json.Value<String>("tlsCipherSuite"),            Is.EqualTo("TLS_AES_256_GCM_SHA384"));
             Assert.That(json.Value<String>("tlsVersion"),                Is.EqualTo("TLS 1.3"));
             Assert.That(json.Value<String>("tlsApplicationProtocol"),    Is.EqualTo("ntske/1"));
@@ -107,6 +123,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.Monitoring
                               ReferenceId                 = "IPv4/Hash: 10.165.8.4 (0x0AA50804)",
                               NewCookieReceived           = true,
                               RemainingCookiesAfterQuery  = 7,
+                              CookiePoolSize              = 7,
+                              CookiePoolMaxSize           = 32,
+                              CookiePoolLowWatermark      = 4,
+                              SeededCookieCount           = 8,
+                              CookiesReceived             = 1,
+                              CookiesConsumed             = 2,
+                              DroppedCookieCount          = 0,
+                              CookiePoolLow               = false,
+                              CookiePoolEmpty             = false,
                               ErrorCategory               = MonitoringErrorCategory.None
                           };
 
@@ -116,6 +141,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.Monitoring
             Assert.That(json.Value<String>("remoteAddress"),               Is.EqualTo("2001:db8::1"));
             Assert.That(json.Value<UInt16>("remotePort"),                  Is.EqualTo(123));
             Assert.That(json.Value<Byte>("remainingCookiesAfterQuery"),    Is.EqualTo(7));
+            Assert.That(json.Value<Int32>("cookiePoolSize"),               Is.EqualTo(7));
+            Assert.That(json.Value<Int32>("cookiePoolMaxSize"),            Is.EqualTo(32));
+            Assert.That(json.Value<Int32>("cookiePoolLowWatermark"),       Is.EqualTo(4));
+            Assert.That(json.Value<Int64>("seededCookieCount"),            Is.EqualTo(8));
+            Assert.That(json.Value<Int64>("cookiesReceived"),              Is.EqualTo(1));
+            Assert.That(json.Value<Int64>("cookiesConsumed"),              Is.EqualTo(2));
+            Assert.That(json.Value<Int64>("droppedCookieCount"),           Is.EqualTo(0));
+            Assert.That(json.Value<Boolean>("cookiePoolLow"),              Is.False);
+            Assert.That(json.Value<Boolean>("cookiePoolEmpty"),            Is.False);
             Assert.That(json.Value<String>("referenceId"),                 Is.EqualTo("IPv4/Hash: 10.165.8.4 (0x0AA50804)"));
 
         }
