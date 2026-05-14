@@ -128,8 +128,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                                                                               }
                                               );
 
-            var ntsKEResponse              = ntsClient.GetNTSKERecords(RequestNTSPublicKeys: false);
+            var ntsKEResult                = await ntsClient.GetNTSKERecords(RequestNTSPublicKeys: false);
+            var ntsKEResponse              = ntsKEResult.Response!;
 
+            Assert.That(ntsKEResult.Success,                    Is.True, ntsKEResult.ErrorMessage);
+            Assert.That(ntsKEResult.ErrorCategory,              Is.EqualTo(NTSKEErrorCategory.None));
             Assert.That(ntsKEResponse,                      Is.Not.Null);
             Assert.That(ntsKEResponse.C2SKey,               Is.Not.Null);
             Assert.That(ntsKEResponse.C2SKey.Length,        Is.GreaterThan(0));
@@ -149,8 +152,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
             Assert.That(ntsKEResponse.TLSInfo?.NegotiatedCipherSuite,         Is.Not.Null);
             Assert.That(ntsKEResponse.TLSInfo?.NegotiatedTLSVersion,          Is.EqualTo("TLS 1.3"));
 
-            var ntsResponse                = await ntsClient.QueryTime(NTSKEResponse:  ntsKEResponse,
-                                                                       Timeout:        TimeSpan.FromMinutes(1));
+            var ntsQueryResult             = await ntsClient.QueryTime(NTSKEResponse:  ntsKEResponse,
+                                                                               Timeout:        TimeSpan.FromMinutes(1));
+
+            Assert.That(ntsQueryResult.Success,                    Is.True, ntsQueryResult.ErrorMessage);
+            Assert.That(ntsQueryResult.ErrorCategory,              Is.EqualTo(NTSQueryErrorCategory.None));
+            Assert.That(ntsQueryResult.Response,                   Is.Not.Null);
+            Assert.That(ntsQueryResult.RemoteDescription,          Is.Not.Empty);
+            Assert.That(ntsQueryResult.UsedCookie,                 Is.Not.Null);
+            Assert.That(ntsQueryResult.RemainingCookiesAfterQuery, Is.GreaterThanOrEqualTo(0));
+
+            var ntsResponse                = ntsQueryResult.Response;
             Assert.That(ntsResponse,    Is.Not.Null);
 
             if (ntsResponse is not null)
@@ -248,8 +260,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                                                                               }
                                               );
 
-            var ntsKEResponse              = await ntsClient.GetNTSKERecordsAsync(RequestNTSPublicKeys: true);
+            var ntsKEResult                = await ntsClient.GetNTSKERecords(RequestNTSPublicKeys: true);
+            var ntsKEResponse              = ntsKEResult.Response!;
 
+            Assert.That(ntsKEResult.Success,                              Is.True, ntsKEResult.ErrorMessage);
+            Assert.That(ntsKEResult.ErrorCategory,                        Is.EqualTo(NTSKEErrorCategory.None));
             Assert.That(ntsKEResponse,                                    Is.Not.Null);
             Assert.That(ntsKEResponse.C2SKey,                             Is.Not.Null);
             Assert.That(ntsKEResponse.C2SKey.Length,                      Is.GreaterThan(0));
@@ -263,11 +278,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
             var publicKey                  = ntsKEResponse.PublicKeys.First();
 
-            var ntsResponse                = await ntsClient.QueryTime(
+            var ntsQueryResult             = await ntsClient.QueryTime(
                                                        NTSKEResponse:       ntsKEResponse,
                                                        SignedResponseMode:  SignedResponseMode.Scheduled,
                                                        Timeout:             TimeSpan.FromMinutes(1)
                                                    );
+            var ntsResponse                = ntsQueryResult.Response;
 
             Assert.That(ntsResponse,    Is.Not.Null);
 

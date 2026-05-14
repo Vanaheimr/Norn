@@ -57,6 +57,41 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         #endregion
 
 
+        #region TestNTP()
+
+        /// <summary>
+        /// Test the NTP client against the public NTP server.
+        /// </summary>
+        [Test]
+        public async Task TestNTP()
+        {
+
+            var ntsClient    = new NTSClient(
+                                   ServerName,
+                                   Timeout:    Timeout,
+                                   DNSClient:  new DNSClient(SearchForIPv6DNSServers: false)
+                               );
+
+            var ntpResult    = await ntsClient.QueryTime();
+            var ntpResponse  = ntpResult.Response;
+
+            Assert.That(ntpResponse,  Is.Not.Null, "No NTP response received!");
+
+            if (ntpResponse is not null)
+            {
+
+                if (ExpectedReferenceIdentifier is not null)
+                    Assert.That(ntpResponse.ReferenceIdentifier.AsASCII,   Is.EqualTo(ExpectedReferenceIdentifier));
+
+                if (ExpectedStratum             is not null)
+                    Assert.That(ntpResponse.Stratum,                       Is.EqualTo(ExpectedStratum));
+
+            }
+
+        }
+
+        #endregion
+
         #region TestNTSKE()
 
         /// <summary>
@@ -68,96 +103,26 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
             var ntsClient      = new NTSClient(
                                      ServerName,
-                                     Timeout:  Timeout
-                                 );
-
-            var ntsKEResponse  = ntsClient.GetNTSKERecords();
-
-            Assert.That(ntsKEResponse,                   Is.Not.Null,          "No NTS-KE response received!");
-            Assert.That(ntsKEResponse.C2SKey,            Is.Not.Null,          "No C2S key received in NTS-KE response!");
-            Assert.That(ntsKEResponse.C2SKey.Length,     Is.GreaterThan(0));
-            Assert.That(ntsKEResponse.S2CKey,            Is.Not.Null,          "No S2C key received in NTS-KE response!");
-            Assert.That(ntsKEResponse.S2CKey.Length,     Is.GreaterThan(0));
-            Assert.That(ntsKEResponse.Cookies.Count(),   Is.GreaterThan(0),    "No cookies received in NTS-KE response!");
-
-        }
-
-        #endregion
-
-        #region TestNTP()
-
-        /// <summary>
-        /// Test the NTP client against the public NTP server.
-        /// </summary>
-        [Test]
-        public async Task TestNTP()
-        {
-
-            var ntsClient      = new NTSClient(
-                                     ServerName,
                                      Timeout:    Timeout,
                                      DNSClient:  new DNSClient(SearchForIPv6DNSServers: false)
                                  );
 
-            var ntpResponse    = await ntsClient.QueryTime();
+            var ntsKEResult    = await ntsClient.GetNTSKERecords();
 
-            Assert.That(ntpResponse,  Is.Not.Null, "No NTP response received!");
+            Assert.That(ntsKEResult.Success,             Is.True, ntsKEResult.ErrorMessage);
+            Assert.That(ntsKEResult.ErrorCategory,       Is.EqualTo(NTSKEErrorCategory.None));
 
-            if (ntpResponse is not null)
+            var ntsKEResponse  = ntsKEResult.Response;
+            Assert.That(ntsKEResponse,                   Is.Not.Null,          "No NTS-KE response received!");
+
+            if (ntsKEResponse is not null)
             {
-
-                //Assert.That(ntpResponse,  Is.Not.Null,  ntpResponse.ErrorMessage);
-
-                if (ExpectedReferenceIdentifier is not null)
-                    Assert.That(ntpResponse.ReferenceIdentifier.AsASCII,   Is.EqualTo(ExpectedReferenceIdentifier));
-
-                if (ExpectedStratum             is not null)
-                    Assert.That(ntpResponse.Stratum,                       Is.EqualTo(ExpectedStratum));
-
-                    //Assert.That(ntpPacket.    UniqueIdentifier(),                                          Is.Not.Null);
-                    //Assert.That(ntpResponse.UniqueIdentifier(),                                          Is.Not.Null);
-                    //Assert.That(ntpResponse.UniqueIdentifier()?.ToHexString(),                           Is.EqualTo(ntpPacket.UniqueIdentifier()?.ToHexString()));
-
-                    //Assert.That(ntpPacket.Extensions.Count(),                                              Is.EqualTo(3));
-                    //Assert.That(ntpPacket.Extensions.ElementAt(0) is UniqueIdentifierExtension,            Is.True);
-                    //Assert.That(ntpPacket.Extensions.ElementAt(1) is NTSCookieExtension,                   Is.True);
-                    //Assert.That(ntpPacket.Extensions.ElementAt(2) is AuthenticatorAndEncryptedExtension,   Is.True);
-
-
-                //// Initially 2, but +1 decrypted extension
-                //Assert.That(ntpResponse.Extensions.Count(),  Is.EqualTo(3));
-
-
-                //// 1. Check Unique Identifier Extension
-                //if (ntpResponse.Extensions.ElementAt(0) is UniqueIdentifierExtension uniqueIdentifierExtension)
-                //{
-                //    Assert.That(uniqueIdentifierExtension.Authenticated,                          Is.True);
-                //    Assert.That(uniqueIdentifierExtension.Encrypted,                              Is.False);
-                //}
-                //else
-                //    Assert.Fail("Unique Identifier Extension is invalid!");
-
-
-                //// 2. Check NTS Authenticator and Encrypted Extension
-                //if (ntpResponse.Extensions.ElementAt(1) is AuthenticatorAndEncryptedExtension authenticatorAndEncryptedExtension)
-                //{
-                //    Assert.That(authenticatorAndEncryptedExtension.Authenticated,                 Is.False);
-                //    Assert.That(authenticatorAndEncryptedExtension.Encrypted,                     Is.False);
-                //    Assert.That(authenticatorAndEncryptedExtension.EncryptedExtensions.Count(),   Is.EqualTo(1));
-                //}
-                //else
-                //    Assert.Fail("NTS Authenticator and Encrypted Extension is invalid!");
-
-
-                //// 3. Check NTS Cookie Extension
-                //if (ntpResponse.Extensions.ElementAt(2) is NTSCookieExtension cookieExtension)
-                //{
-                //    Assert.That(cookieExtension.Authenticated,                                    Is.True);
-                //    Assert.That(cookieExtension.Encrypted,                                        Is.True);
-                //}
-                //else
-                //    Assert.Fail("NTS Cookie Extension is invalid!");
-
+                Assert.That(ntsKEResponse,                   Is.Not.Null,          "No NTS-KE response received!");
+                Assert.That(ntsKEResponse.C2SKey,            Is.Not.Null,          "No C2S key received in NTS-KE response!");
+                Assert.That(ntsKEResponse.C2SKey.Length,     Is.GreaterThan(0));
+                Assert.That(ntsKEResponse.S2CKey,            Is.Not.Null,          "No S2C key received in NTS-KE response!");
+                Assert.That(ntsKEResponse.S2CKey.Length,     Is.GreaterThan(0));
+                Assert.That(ntsKEResponse.Cookies.Count(),   Is.GreaterThan(0),    "No cookies received in NTS-KE response!");
             }
 
         }
@@ -179,8 +144,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                                      DNSClient:  new DNSClient(SearchForIPv6DNSServers: false)
                                  );
 
-            var ntsKEResponse  = ntsClient.GetNTSKERecords();
+            var ntsKEResult    = await ntsClient.GetNTSKERecords();
+            var ntsKEResponse  = ntsKEResult.Response!;
 
+            Assert.That(ntsKEResult.Success,          Is.True, ntsKEResult.ErrorMessage);
+            Assert.That(ntsKEResult.ErrorCategory,    Is.EqualTo(NTSKEErrorCategory.None));
             Assert.That(ntsKEResponse,                   Is.Not.Null,          "No NTS-KE response received!");
             Assert.That(ntsKEResponse.C2SKey,            Is.Not.Null,          "No C2S key received in NTS-KE response!");
             Assert.That(ntsKEResponse.C2SKey.Length,     Is.GreaterThan(0));
@@ -189,7 +157,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
             Assert.That(ntsKEResponse.Cookies.Count(),   Is.GreaterThan(0),    "No cookies received in NTS-KE response!");
 
 
-            var ntsResponse    = await ntsClient.QueryTime(NTSKEResponse: ntsKEResponse);
+            var ntsResult      = await ntsClient.QueryTime(NTSKEResponse: ntsKEResponse);
+            var ntsResponse    = ntsResult.Response;
 
             Assert.That(ntsResponse,  Is.Not.Null, "No NTP+NTS response received!");
 
@@ -272,8 +241,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                                      DNSClient:  new DNSClient(SearchForIPv6DNSServers: false)
                                  );
 
-            var ntsKEResponse  = ntsClient.GetNTSKERecords();
+            var ntsKEResult    = await ntsClient.GetNTSKERecords();
+            var ntsKEResponse  = ntsKEResult.Response!;
 
+            Assert.That(ntsKEResult.Success,          Is.True, ntsKEResult.ErrorMessage);
+            Assert.That(ntsKEResult.ErrorCategory,    Is.EqualTo(NTSKEErrorCategory.None));
             Assert.That(ntsKEResponse,                   Is.Not.Null);
             Assert.That(ntsKEResponse.C2SKey,            Is.Not.Null);
             Assert.That(ntsKEResponse.C2SKey.Length,     Is.GreaterThan(0));
@@ -282,7 +254,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
             Assert.That(ntsKEResponse.Cookies.Count(),   Is.GreaterThan(0));
 
 
-            var ntsResponse    = await ntsClient.QueryTime(NTSKEResponse: ntsKEResponse);
+            var ntsResult      = await ntsClient.QueryTime(NTSKEResponse: ntsKEResponse);
+            var ntsResponse    = ntsResult.Response;
             Assert.That(ntsResponse,    Is.Not.Null);
 
             if (ntsResponse is not null)
@@ -348,8 +321,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
                                              );
 
-            var ntsKEResponse              = ntsClient.GetNTSKERecords();
+            var ntsKEResult                = await ntsClient.GetNTSKERecords();
+            var ntsKEResponse              = ntsKEResult.Response!;
 
+            Assert.That(ntsKEResult.Success,              Is.True, ntsKEResult.ErrorMessage);
+            Assert.That(ntsKEResult.ErrorCategory,        Is.EqualTo(NTSKEErrorCategory.None));
             Assert.That(ntsKEResponse,                   Is.Not.Null);
             Assert.That(ntsKEResponse.C2SKey,            Is.Not.Null);
             Assert.That(ntsKEResponse.C2SKey.Length,     Is.GreaterThan(0));
@@ -358,7 +334,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
             Assert.That(ntsKEResponse.Cookies.Count(),   Is.GreaterThan(0));
 
 
-            var ntsResponse                = await ntsClient.QueryTime(NTSKEResponse: ntsKEResponse);
+            var ntsResult                  = await ntsClient.QueryTime(NTSKEResponse: ntsKEResponse);
+            var ntsResponse                = ntsResult.Response;
             Assert.That(ntsResponse,     Is.Not.Null);
 
             if (ntsResponse is not null)
@@ -448,15 +425,19 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
                                              );
 
-            var ntsKEResponse              = ntsClient.GetNTSKERecords();
+            var ntsKEResult                = await ntsClient.GetNTSKERecords();
+            var ntsKEResponse              = ntsKEResult.Response!;
 
+            Assert.That(ntsKEResult.Success,        Is.False);
+            Assert.That(ntsKEResult.ErrorCategory,  Is.EqualTo(NTSKEErrorCategory.TLSCertificate));
             Assert.That(ntsKEResponse.ErrorMessage,   Is.EqualTo("certificate_unknown(46)"));
 
 
-            var ntsResponse                = await ntsClient.QueryTime(NTSKEResponse: ntsKEResponse);
+            var ntsResult                  = await ntsClient.QueryTime(NTSKEResponse: ntsKEResponse);
+            var ntsResponse                = ntsResult.Response;
 
             Assert.That(ntsResponse,                  Is.Not.Null);
-            Assert.That(ntsResponse?.ErrorMessage,    Is.EqualTo("certificate_unknown(46)"));
+            Assert.That(ntsResult.ErrorMessage,       Is.EqualTo("certificate_unknown(46)"));
 
         }
 
@@ -479,8 +460,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                                                  DNSClient:  new DNSClient(SearchForIPv6DNSServers: false)
                                              );
 
-            var ntsKEResponse              = ntsClient.GetNTSKERecords();
+            var ntsKEResult                = await ntsClient.GetNTSKERecords();
+            var ntsKEResponse              = ntsKEResult.Response!;
 
+            Assert.That(ntsKEResult.Success,              Is.True, ntsKEResult.ErrorMessage);
+            Assert.That(ntsKEResult.ErrorCategory,        Is.EqualTo(NTSKEErrorCategory.None));
             Assert.That(ntsKEResponse,                   Is.Not.Null);
             Assert.That(ntsKEResponse.C2SKey,            Is.Not.Null);
             Assert.That(ntsKEResponse.C2SKey.Length,     Is.GreaterThan(0));
@@ -489,10 +473,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
             Assert.That(ntsKEResponse.Cookies.Count(),   Is.GreaterThan(0));
 
 
-            var ntsResponse                = await ntsClient.QueryTime(
+            var ntsResult                  = await ntsClient.QueryTime(
                                                        NTSKEResponse:       ntsKEResponse,
                                                        SignedResponseMode:  SignedResponseMode.Scheduled
                                                    );
+            var ntsResponse                = ntsResult.Response;
 
             Assert.That(ntsResponse,  Is.Not.Null);
 

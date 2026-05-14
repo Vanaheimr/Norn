@@ -270,15 +270,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
             var sw = Stopwatch.StartNew();
 
-            var ntskeResponse = await ntsClient.GetNTSKERecordsAsync(
-                                     Timeout:            config.NTSKETimeout,
-                                     CancellationToken:  CancellationToken
-                                 );
+            var ntskeResult = await ntsClient.GetNTSKERecords(
+                                   Timeout:            config.NTSKETimeout,
+                                   CancellationToken:  CancellationToken
+                               );
 
             sw.Stop();
 
-            var timingInfo      = ntskeResponse.TimingInfo;
-            var tlsInfo         = ntskeResponse.TLSInfo;
+            var ntskeResponse   = ntskeResult.Response;
+            var timingInfo      = ntskeResult.TimingInfo;
+            var tlsInfo         = ntskeResult.TLSInfo;
             var certificateInfo = BuildCertificateInfo(tlsInfo);
             var totalDuration   = timingInfo?.TotalDuration          ?? sw.Elapsed;
             var tcpDuration     = timingInfo?.TCPConnectDuration     ?? TimeSpan.Zero;
@@ -288,10 +289,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
             var connectedIP     = timingInfo?.ConnectedIPAddress?.ToString();
             var tlsCompliance   = EvaluateTLSCompliance(certificateInfo, tlsInfo);
 
-            if (ntskeResponse.ErrorMessage is not null)
+            if (!ntskeResult.Success ||
+                ntskeResponse?.ErrorMessage is not null ||
+                ntskeResponse is null)
             {
 
-                var errorCategory = ClassifyNTSKEError(ntskeResponse.ErrorMessage);
+                var errorMessage  = ntskeResult.ErrorMessage ?? ntskeResponse?.ErrorMessage ?? "NTS-KE failed.";
+                var errorCategory = MapNTSKEErrorCategory(ntskeResult.ErrorCategory);
 
                 return new NTSKEMeasurementResult {
                            Success                 = false,
@@ -299,7 +303,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                            TCPConnectDuration      = tcpDuration,
                            TLSHandshakeDuration    = tlsDuration,
                            NTSKEProtocolDuration   = ntskeDuration,
-                           ErrorMessage            = Error.Create(ntskeResponse.ErrorMessage),
+                           ErrorMessage            = Error.Create(errorMessage),
                            CertificateInfo         = certificateInfo,
                            TLSCipherSuite          = tlsInfo?.NegotiatedCipherSuite,
                            TLSVersion              = tlsInfo?.NegotiatedTLSVersion,
@@ -471,10 +475,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
             try
             {
 
-                // We capture T1 externally for Stopwatch RTT, but the REAL T1
-                // comes from the NTP packet's TransmitTimestamp (set inside BuildNTSRequest,
-                // just before UDP send). We recover it from Response.OriginateTimestamp
-                // (the server echoes our TransmitTimestamp back as OriginateTimestamp).
+                // The detailed NTS query result carries the precise UDP send/receive
+                // stopwatch timestamps. The outer stopwatch stays as a defensive
+                // fallback around the full monitoring call path.
                 var t1_stopwatch_ticks = sw.ElapsedTicks;
 
                 var ntsClient  = CachedState.NTSClient;
@@ -490,50 +493,67 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                                RemotePort              = remoteInfo.Port
                            };
 
-                var ntpResponse = await ntsClient.QueryTime(
-                                            Timeout:            config.NTPTimeout,
-                                            NTSKEResponse:      CachedState.NTSKEResponse,
-                                            CancellationToken:  CancellationToken
-                                        );
+                var ntsQueryResult = await ntsClient.QueryTime(
+                                                 Timeout:            config.NTPTimeout,
+                                                 NTSKEResponse:      CachedState.NTSKEResponse,
+                                                 CancellationToken:  CancellationToken
+                                             );
 
-                // Record T4 (client receive time) – includes response parsing overhead
+                var ntpResponse    = ntsQueryResult.Response;
+
+                // Fallback T4 around the monitoring call path.
                 var t4_stopwatch_ticks = sw.ElapsedTicks;
 
                 sw.Stop();
-                var stopwatchRTT = StopwatchTicksToTimeSpan(t4_stopwatch_ticks - t1_stopwatch_ticks);
+                var stopwatchRTT = ntsQueryResult.StopwatchRoundTripTime ??
+                                   StopwatchTicksToTimeSpan(t4_stopwatch_ticks - t1_stopwatch_ticks);
 
-                CachedState.RemainingCookies = ToByteCookieCount(ntsClient.AvailableCookieCount);
+                var queryRemoteAddress = ntsQueryResult.RemoteEndPoint is not null
+                                             ? IPAddress.FromDotNet(ntsQueryResult.RemoteEndPoint.Address)
+                                             : remoteInfo.Address;
+
+                var queryRemotePort    = ntsQueryResult.RemoteEndPoint is not null
+                                             ? IPPort.Parse(ntsQueryResult.RemoteEndPoint.Port)
+                                             : remoteInfo.Port;
+
+                CachedState.RemainingCookies = ToByteCookieCount(ntsQueryResult.RemainingCookiesAfterQuery);
 
 
                 if (ntpResponse is null)
                     return new NTPMeasurementResult {
-                               Success                     = false,
-                               StopwatchRTT                = stopwatchRTT,
-                               ErrorMessage                = Error.Create("No NTP response (null)"),
-                               ErrorCategory               = MonitoringErrorCategory.NTPTimeout,
-                               RemoteHost                  = remoteInfo.Host,
-                               RemoteAddress               = remoteInfo.Address,
-                               RemotePort                  = remoteInfo.Port,
-                               RemainingCookiesAfterQuery  = CachedState.RemainingCookies
-                           };
+                                Success                     = false,
+                                StopwatchRTT                = stopwatchRTT,
+                                ErrorMessage                = Error.Create(ntsQueryResult.ErrorMessage ?? "No NTP response (null)"),
+                                ErrorCategory               = MapNTSQueryErrorCategory(ntsQueryResult.ErrorCategory),
+                                RemoteHost                  = remoteInfo.Host,
+                                RemoteAddress               = queryRemoteAddress,
+                                RemotePort                  = queryRemotePort,
+                                RemainingCookiesAfterQuery  = CachedState.RemainingCookies
+                            };
 
-                if (ntpResponse.ErrorMessage is not null)
+                if (!ntsQueryResult.Success ||
+                    ntpResponse.ErrorMessage is not null)
+                {
+                    var errorMessage = ntsQueryResult.ErrorMessage ?? ntpResponse.ErrorMessage ?? "NTP query failed!";
+
                     return new NTPMeasurementResult {
-                               Success          = false,
-                               StopwatchRTT     = stopwatchRTT,
-                               ErrorMessage     = Error.Create(ntpResponse.ErrorMessage),
-                               KissOfDeath      = ntpResponse.Stratum == 0,
-                               KissOfDeathCode  = ntpResponse.Stratum == 0
-                                                      ? ntpResponse.ReferenceIdentifier.ToString(ntpResponse.Stratum)
-                                                      : null,
-                               ErrorCategory    = ntpResponse.Stratum == 0
-                                                      ? MonitoringErrorCategory.KissOfDeath
-                                                      : ClassifyNTPError(ntpResponse.ErrorMessage),
-                               RemoteHost       = remoteInfo.Host,
-                               RemoteAddress    = remoteInfo.Address,
-                               RemotePort       = remoteInfo.Port,
-                               RemainingCookiesAfterQuery = CachedState.RemainingCookies
-                           };
+                                Success          = false,
+                                StopwatchRTT     = stopwatchRTT,
+                                ErrorMessage     = Error.Create(errorMessage),
+                                KissOfDeath      = ntpResponse.Stratum == 0,
+                                KissOfDeathCode  = ntpResponse.Stratum == 0
+                                                       ? ntpResponse.ReferenceIdentifier.ToString(ntpResponse.Stratum)
+                                                       : null,
+                                ErrorCategory    = ntpResponse.Stratum == 0
+                                                       ? MonitoringErrorCategory.KissOfDeath
+                                                       : MapNTSQueryErrorCategory(ntsQueryResult.ErrorCategory),
+                                RemoteHost       = remoteInfo.Host,
+                                RemoteAddress    = queryRemoteAddress,
+                                RemotePort       = queryRemotePort,
+                                RemainingCookiesAfterQuery = CachedState.RemainingCookies
+                            };
+
+                }
 
 
                 // ──── Extract NTP timestamps ────
@@ -545,8 +565,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                 //
                 // T2 = ReceiveTimestamp  = when the server received our packet
                 // T3 = TransmitTimestamp = when the server sent the response
-                // T4 = We approximate from Stopwatch, anchored to T1.
-                //      T4 ≈ T1 + stopwatchRTT (includes parse overhead on both ends)
+                // T4 = The receive timestamp captured by Norn while parsing the UDP
+                //      response. If it is unavailable, we approximate from Stopwatch.
 
                 var t1      = NTPPacket.NTPTimestampToDateTime(ntpResponse.OriginateTimestamp);
                 var t2      = NTPPacket.NTPTimestampToDateTime(ntpResponse.ReceiveTimestamp);
@@ -573,11 +593,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
 
                 // ──── Check NTS extensions ────
-                var uniqueIdMatched   = ntpResponse.UniqueIdentifier() is not null;
-                var newCookieReceived = ntpResponse.Extensions.Any(e => e is NTSCookieExtension { Encrypted: true });
-
-                // If we got a new cookie, update the cache
-                CachedState.RemainingCookies = ToByteCookieCount(ntsClient.AvailableCookieCount);
+                var uniqueIdMatched = ntpResponse.UniqueIdentifier() is not null;
 
 
                 return new NTPMeasurementResult {
@@ -595,8 +611,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                            RoundTripDelay              = delay,
                            StopwatchRTT                = stopwatchRTT,
                            RemoteHost                  = remoteInfo.Host,
-                           RemoteAddress               = remoteInfo.Address,
-                           RemotePort                  = remoteInfo.Port,
+                           RemoteAddress               = queryRemoteAddress,
+                           RemotePort                  = queryRemotePort,
 
                            LeapIndicator               = ntpResponse.LI,
                            Stratum                     = ntpResponse.Stratum,
@@ -607,7 +623,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                            ReferenceId                 = ntpResponse.ReferenceIdentifier.ToString(ntpResponse.Stratum),
                            ReferenceTimestamp          = NTPPacket.NTPTimestampToDateTime(ntpResponse.ReferenceTimestamp),
 
-                           NewCookieReceived           = newCookieReceived,
+                           NewCookieReceived           = ntsQueryResult.NewCookieReceived,
                            RemainingCookiesAfterQuery  = CachedState.RemainingCookies,
                            KissOfDeath                 = false
 
@@ -659,68 +675,47 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
         #endregion
 
+        #region (private static) MapNTSQueryErrorCategory(ErrorCategory)
 
-        #region (private static) ClassifyNTSKEError(ErrorMessage)
+        private static MonitoringErrorCategory MapNTSQueryErrorCategory(NTSQueryErrorCategory ErrorCategory)
 
-        private static MonitoringErrorCategory ClassifyNTSKEError(String? ErrorMessage)
-        {
+            => ErrorCategory switch {
 
-            if (ErrorMessage is null)
-                return MonitoringErrorCategory.Unknown;
+                   NTSQueryErrorCategory.None               => MonitoringErrorCategory.None,
+                   NTSQueryErrorCategory.NTSKE              => MonitoringErrorCategory.NTSKEProtocol,
+                   NTSQueryErrorCategory.Cookie             => MonitoringErrorCategory.Cache,
+                   NTSQueryErrorCategory.DNS                => MonitoringErrorCategory.DNS,
+                   NTSQueryErrorCategory.NTPTimeout         => MonitoringErrorCategory.NTPTimeout,
+                   NTSQueryErrorCategory.NTSAuthentication  => MonitoringErrorCategory.NTSAuthentication,
+                   NTSQueryErrorCategory.KissOfDeath        => MonitoringErrorCategory.KissOfDeath,
+                   NTSQueryErrorCategory.Protocol           => MonitoringErrorCategory.Unknown,
+                   NTSQueryErrorCategory.Network            => MonitoringErrorCategory.NTPTimeout,
+                   NTSQueryErrorCategory.Canceled           => MonitoringErrorCategory.Canceled,
+                   NTSQueryErrorCategory.Exception          => MonitoringErrorCategory.Exception,
+                   _                                        => MonitoringErrorCategory.Unknown
 
-            if (ErrorMessage.Contains("No IP address", StringComparison.OrdinalIgnoreCase) ||
-                ErrorMessage.Contains("Name or service not known", StringComparison.OrdinalIgnoreCase) ||
-                ErrorMessage.Contains("nodename", StringComparison.OrdinalIgnoreCase))
-                return MonitoringErrorCategory.DNS;
-
-            if (ErrorMessage.Contains("connect", StringComparison.OrdinalIgnoreCase))
-                return MonitoringErrorCategory.TCPConnect;
-
-            if (ErrorMessage.Contains("certificate", StringComparison.OrdinalIgnoreCase))
-                return MonitoringErrorCategory.TLSCertificate;
-
-            if (ErrorMessage.Contains("TLS", StringComparison.OrdinalIgnoreCase) ||
-                ErrorMessage.Contains("handshake", StringComparison.OrdinalIgnoreCase))
-                return MonitoringErrorCategory.TLSHandshake;
-
-            if (ErrorMessage.Contains("parse", StringComparison.OrdinalIgnoreCase) ||
-                ErrorMessage.Contains("NTS-KE", StringComparison.OrdinalIgnoreCase) ||
-                ErrorMessage.Contains("Read operation timed out", StringComparison.OrdinalIgnoreCase))
-                return MonitoringErrorCategory.NTSKEProtocol;
-
-            return MonitoringErrorCategory.Unknown;
-
-        }
+               };
 
         #endregion
 
+        #region (private static) MapNTSKEErrorCategory(ErrorCategory)
 
-        #region (private static) ClassifyNTPError(ErrorMessage)
+        private static MonitoringErrorCategory MapNTSKEErrorCategory(NTSKEErrorCategory ErrorCategory)
 
-        private static MonitoringErrorCategory ClassifyNTPError(String? ErrorMessage)
-        {
+            => ErrorCategory switch {
 
-            if (ErrorMessage is null)
-                return MonitoringErrorCategory.Unknown;
+                   NTSKEErrorCategory.None            => MonitoringErrorCategory.None,
+                   NTSKEErrorCategory.DNS             => MonitoringErrorCategory.DNS,
+                   NTSKEErrorCategory.TCPConnect      => MonitoringErrorCategory.TCPConnect,
+                   NTSKEErrorCategory.TLSHandshake    => MonitoringErrorCategory.TLSHandshake,
+                   NTSKEErrorCategory.TLSCertificate  => MonitoringErrorCategory.TLSCertificate,
+                   NTSKEErrorCategory.Timeout         => MonitoringErrorCategory.NTSKEProtocol,
+                   NTSKEErrorCategory.Protocol        => MonitoringErrorCategory.NTSKEProtocol,
+                   NTSKEErrorCategory.Canceled        => MonitoringErrorCategory.Canceled,
+                   NTSKEErrorCategory.Exception       => MonitoringErrorCategory.Exception,
+                   _                                  => MonitoringErrorCategory.Unknown
 
-            if (ErrorMessage.Contains("timeout", StringComparison.OrdinalIgnoreCase) ||
-                ErrorMessage.Contains("No 1st NTP response", StringComparison.OrdinalIgnoreCase) ||
-                ErrorMessage.Contains("No 2nd NTP response", StringComparison.OrdinalIgnoreCase))
-                return MonitoringErrorCategory.NTPTimeout;
-
-            if (ErrorMessage.Contains("SIV", StringComparison.OrdinalIgnoreCase) ||
-                ErrorMessage.Contains("Unique", StringComparison.OrdinalIgnoreCase) ||
-                ErrorMessage.Contains("decrypt", StringComparison.OrdinalIgnoreCase) ||
-                ErrorMessage.Contains("auth", StringComparison.OrdinalIgnoreCase))
-                return MonitoringErrorCategory.NTSAuthentication;
-
-            if (ErrorMessage.Contains("KoD", StringComparison.OrdinalIgnoreCase) ||
-                ErrorMessage.Contains("Kiss", StringComparison.OrdinalIgnoreCase))
-                return MonitoringErrorCategory.KissOfDeath;
-
-            return MonitoringErrorCategory.Unknown;
-
-        }
+               };
 
         #endregion
 

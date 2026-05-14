@@ -52,7 +52,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                                []
                            );
 
-            Assert.That(response.NTPv4Servers?.FirstOrDefault(),   Is.EqualTo("ntp.example.org"));
+            Assert.That(response.NTPv4Servers?.FirstOrDefault()?.ToString().TrimEnd('.'),   Is.EqualTo("ntp.example.org"));
             Assert.That(response.NTPv4Ports?.  FirstOrDefault(),   Is.EqualTo(IPPort.Parse(1234)));
 
         }
@@ -94,6 +94,27 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                            );
 
             Assert.That(response.NTPv4Ports,   Is.Empty);
+
+        }
+
+        #endregion
+
+        #region NTSKEResult_Failed_Carries_Response_And_Category()
+
+        [Test]
+        public void NTSKEResult_Failed_Carries_Response_And_Category()
+        {
+
+            var result = NTSKEResult.Failed(
+                             "No IP address found for example.org!",
+                             NTSKEErrorCategory.DNS
+                         );
+
+            Assert.That(result.Success,                 Is.False);
+            Assert.That(result.ErrorCategory,           Is.EqualTo(NTSKEErrorCategory.DNS));
+            Assert.That(result.ErrorMessage,            Is.EqualTo("No IP address found for example.org!"));
+            Assert.That(result.Response,                Is.Not.Null);
+            Assert.That(result.Response?.ErrorMessage,  Is.EqualTo("No IP address found for example.org!"));
 
         }
 

@@ -15,27 +15,28 @@
  * limitations under the License.
  */
 
-namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
+namespace org.GraphDefined.Vanaheimr.Norn.NTS
 {
 
     /// <summary>
-    /// Structured measurement error category.
+    /// Structured error categories for NTS/NTP client queries.
     /// </summary>
-    public enum MonitoringErrorCategory
+    public enum NTSQueryErrorCategory
     {
+
         None,
+        NTSKE,
+        Cookie,
         DNS,
-        TCPConnect,
-        TLSHandshake,
-        TLSCertificate,
-        NTSKEProtocol,
         NTPTimeout,
         NTSAuthentication,
         KissOfDeath,
-        Cache,
+        Protocol,
+        Network,
         Canceled,
         Exception,
         Unknown
+
     }
 
 }

@@ -43,16 +43,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #region Data
 
-        public static readonly IPPort            DefaultNTSKE_Port  = IPPort.          Parse      (4460);
-        public static readonly IPPort            DefaultNTP_Port    = IPPort.          Parse      ( 123);
-        public        readonly TimeSpan          DefaultTimeout     = TimeSpan.        FromSeconds(   3);
+        public static readonly IPPort                   DefaultNTSKE_Port      = IPPort.          Parse      (4460);
+        public static readonly IPPort                   DefaultNTP_Port        = IPPort.          Parse      ( 123);
+        public        readonly TimeSpan                 DefaultTimeout         = TimeSpan.        FromSeconds(   3);
+        public        readonly Int32                    MaxNTSKEResponseSize   = 64 * 1024;
 
-        public static readonly PercentageDouble  DefaultJitter      = PercentageDouble.Parse      (0.25);
+        public static readonly PercentageDouble         DefaultJitter          = PercentageDouble.Parse      (0.25);
 
-        private readonly Object             cookieLock       = new();
-        private readonly Queue<Byte[]>      cookieQueue      = new();
-        private readonly HashSet<String>    knownCookies     = [];
-        private readonly HashSet<NTSKE_Response> seededNTSKEResponses = [];
+        private       readonly Lock                     cookieLock             = new();
+        private       readonly Queue<Byte[]>            cookieQueue            = new();
+        private       readonly HashSet<String>          knownCookies           = [];
+        private       readonly HashSet<NTSKE_Response>  seededNTSKEResponses   = [];
 
         #endregion
 
@@ -92,7 +93,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <param name="NTP_Port">An optional NTP port (default: 123).</param>
         /// <param name="Id">An optional unique identifier for the client.</param>
         /// <param name="RemoteCertificateValidator">An optional remote certificate validator.</param>
-        /// <param name="RemoteCertificateValidatorOverridesDefaultValidation">Whether the remote certificate validator replaces the default chain and hostname validation.</param>
         /// <param name="IPVersionPreference">The IP version preference for NTS-KE and NTP/NTS network connections.</param>
         /// <param name="Timeout">An optional timeout for the NTS-KE/NTS requests.</param>
         /// <param name="DNSClient">An optional DNS client to use.</param>
@@ -102,8 +102,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                          UInt16?                                                        Id                           = null,
                          RemoteTLSServerCertificateValidationHandler<NTSKE_TLSClient>?  RemoteCertificateValidator   = null,
                          IPVersionPreference?                                           IPVersionPreference          = null,
-                         DNSClient?                                                     DNSClient                    = null,
-                         TimeSpan?                                                      Timeout                      = null)
+                         TimeSpan?                                                      Timeout                      = null,
+                         DNSClient?                                                     DNSClient                    = null)
         {
 
             this.Id                          = Id                  ?? RandomExtensions.RandomUInt16();
@@ -145,191 +145,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #endregion
 
-        #region GetNTSKERecords (RequestNTSPublicKeys = false, Timeout = null)
-
-        /// <summary>
-        /// Get NTS-KE records from the server.
-        /// </summary>
-        /// <param name="RequestNTSPublicKeys">Whether to request the public keys used for NTS response signing.</param>
-        /// <param name="Timeout">An optional timeout.</param>
-        public NTSKE_Response GetNTSKERecords(Boolean    RequestNTSPublicKeys   = false,
-                                               TimeSpan?  Timeout                = null)
-            => GetNTSKERecordsAsync(RequestNTSPublicKeys, Timeout).GetAwaiter().GetResult();
-
-        #endregion
-
-        #region GetNTSKERecordsAsync(RequestNTSPublicKeys = false, Timeout = null, CancellationToken = default)
-
-        /// <summary>
-        /// Get NTS-KE records from the server.
-        /// </summary>
-        /// <param name="RequestNTSPublicKeys">Whether to request the public keys used for NTS response signing.</param>
-        /// <param name="Timeout">An optional timeout.</param>
-        /// <param name="CancellationToken">An optional cancellation token.</param>
-        public async Task<NTSKE_Response> GetNTSKERecordsAsync(Boolean            RequestNTSPublicKeys   = false,
-                                                               TimeSpan?          Timeout                = null,
-                                                               CancellationToken  CancellationToken      = default)
-        {
-
-            var timeout                  = Timeout ?? this.Timeout ?? DefaultTimeout;
-            var totalStopwatch           = Stopwatch.StartNew();
-            var resolvedIPAddresses      = Array.Empty<IIPAddress>();
-            var connectedIPAddress       = default(IIPAddress);
-            var dnsLookupDuration        = default(TimeSpan?);
-            var tcpConnectDuration       = default(TimeSpan?);
-            var tlsHandshakeDuration     = default(TimeSpan?);
-            var ntsKEProtocolDuration    = default(TimeSpan?);
-
-            NTSKE_TimingInfo BuildTimingInfo()
-                => new (
-                       DNSLookupDuration:       dnsLookupDuration,
-                       TCPConnectDuration:      tcpConnectDuration,
-                       TLSHandshakeDuration:    tlsHandshakeDuration,
-                       NTSKEProtocolDuration:   ntsKEProtocolDuration,
-                       TotalDuration:           totalStopwatch.Elapsed,
-                       ResolvedIPAddresses:     resolvedIPAddresses,
-                       ConnectedIPAddress:      connectedIPAddress
-                   );
-
-            try
-            {
-
-                using var timeoutCTS = CancellationTokenSource.CreateLinkedTokenSource(CancellationToken);
-                timeoutCTS.CancelAfter(timeout);
-
-                var dnsStopwatch    = Stopwatch.StartNew();
-
-                //var ipAddresses     = await DNSClient.Query(Hostname.ToString(), timeoutCTS.Token).ConfigureAwait(false);
-                var ipAddresses     = await DNSClient.Query_IPAddresses(Hostname, Timeout: timeout, CancellationToken: timeoutCTS.Token).ConfigureAwait(false);
-
-                resolvedIPAddresses = this.IPVersionPreference switch {
-                                          IPVersionPreference.IPv6Only    => [.. ipAddresses.Where  (ipAddress => ipAddress is IPv6Address        )],
-                                          IPVersionPreference.IPv4Only    => [.. ipAddresses.Where  (ipAddress => ipAddress is IPv4Address        )],
-                                          IPVersionPreference.PreferIPv4  => [.. ipAddresses.OrderBy(ipAddress => ipAddress is IPv4Address ? 0 : 1)],
-                                          _                               => [.. ipAddresses.OrderBy(ipAddress => ipAddress is IPv6Address ? 0 : 1)]
-                                      };
-                dnsLookupDuration   = dnsStopwatch.Elapsed;
-
-                if (resolvedIPAddresses.Length == 0)
-                    return new NTSKE_Response($"No IP address found for {Hostname}!", BuildTimingInfo());
-
-                var tcpStopwatch    = Stopwatch.StartNew();
-                var lastException   = default(Exception);
-                var tcpClient       = default(TcpClient);
-
-                foreach (var ipAddress in resolvedIPAddresses)
-                {
-
-                    var candidate = new TcpClient() {
-                                        ReceiveTimeout = (Int32) timeout.TotalMilliseconds,
-                                        SendTimeout    = (Int32) timeout.TotalMilliseconds
-                                    };
-
-                    try
-                    {
-
-                        await candidate.ConnectAsync(
-                                  ipAddress. ToDotNet(),
-                                  NTSKE_Port.ToUInt16(),
-                                  timeoutCTS.Token
-                              ).ConfigureAwait(false);
-
-                        tcpClient          = candidate;
-                        connectedIPAddress = ipAddress;
-                        break;
-
-                    }
-                    catch (Exception ex)
-                    {
-                        lastException = ex;
-                        candidate.Dispose();
-                    }
-
-                }
-
-                tcpConnectDuration = tcpStopwatch.Elapsed;
-
-                if (tcpClient is null)
-                    return new NTSKE_Response(lastException?.Message ?? $"Could not connect to {Hostname}:{NTSKE_Port}!", BuildTimingInfo());
-
-                using (tcpClient)
-                using (var networkStream = tcpClient.GetStream())
-                {
-
-                    var tlsClientProtocol = new TlsClientProtocol(networkStream);
-                    var ntsTlsClient      = new NTSKE_TLSClient  (RemoteCertificateValidator,
-                                                                  Hostname);
-
-                    var tlsStopwatch      = Stopwatch.StartNew();
-                    var tlsHandshakeTask  = Task.Run(
-                                                () => tlsClientProtocol.Connect(ntsTlsClient),
-                                                CancellationToken.None
-                                            );
-
-                    if (await Task.WhenAny(tlsHandshakeTask, Task.Delay(timeout, timeoutCTS.Token)).ConfigureAwait(false) != tlsHandshakeTask)
-                        return new NTSKE_Response("TLS handshake timed out.", BuildTimingInfo(), ntsTlsClient.TLSInfo);
-
-                    await tlsHandshakeTask.ConfigureAwait(false);
-                    tlsHandshakeDuration  = tlsStopwatch.Elapsed;
-
-                    C2S_Key               = ntsTlsClient.NTS_C2S_Key ?? [];
-                    S2C_Key               = ntsTlsClient.NTS_S2C_Key ?? [];
-
-                    var ntsKEStopwatch    = Stopwatch.StartNew();
-                    var ntsKERequest      = BuildNTSKERequest(RequestNTSPublicKeys);
-                    await tlsClientProtocol.Stream.WriteAsync(ntsKERequest, 0, ntsKERequest.Length, timeoutCTS.Token).ConfigureAwait(false);
-                    await tlsClientProtocol.Stream.FlushAsync(timeoutCTS.Token).ConfigureAwait(false);
-
-                    var buffer            = new Byte[4096];
-                    var readTask          = tlsClientProtocol.Stream.ReadAsync(buffer, 0, buffer.Length, timeoutCTS.Token);
-
-                    if (await Task.WhenAny(readTask, Task.Delay(timeout, timeoutCTS.Token)).ConfigureAwait(false) != readTask)
-                        return new NTSKE_Response("Read operation timed out.", BuildTimingInfo(), ntsTlsClient.TLSInfo);
-
-                    var bytesRead         = await readTask.ConfigureAwait(false);
-                    ntsKEProtocolDuration = ntsKEStopwatch.Elapsed;
-
-                    try
-                    {
-                        tlsClientProtocol.Close();
-                    }
-                    catch
-                    { }
-
-                    if (bytesRead > 0)
-                    {
-
-                        Array.Resize(ref buffer, bytesRead);
-
-                        if (NTSKE_Record.TryParse(buffer, out var records, out var errorResponse))
-                            return new NTSKE_Response(
-                                       records,
-                                       C2S_Key,
-                                       S2C_Key,
-                                       BuildTimingInfo(),
-                                       ntsTlsClient.TLSInfo
-                                   );
-
-                        return new NTSKE_Response(errorResponse ?? "Could not parse NTS-KE response!", BuildTimingInfo(), ntsTlsClient.TLSInfo);
-
-                    }
-
-                    return new NTSKE_Response($"No response received from {Hostname}!", BuildTimingInfo(), ntsTlsClient.TLSInfo);
-
-                }
-
-            }
-            catch (Exception ex)
-            {
-                return new NTSKE_Response(ex.Message, BuildTimingInfo());
-            }
-
-        }
-
-        #endregion
-
-
-        #region (private) BuildNTSRequest (NTSKEResponse = null, UniqueId = null)
+        #region (private) BuildNTSRequest   (NTSKEResponse = null, UniqueId = null)
 
         /// <summary>
         /// Builds an NTP mode=3 request with minimal NTS EFs:
@@ -402,6 +218,230 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         }
 
         #endregion
+
+        #region GetNTSKERecords (RequestNTSPublicKeys = false, Timeout = null, CancellationToken = default)
+
+        /// <summary>
+        /// Get NTS-KE records from the server and return a structured result.
+        /// </summary>
+        /// <param name="RequestNTSPublicKeys">Whether to request the public keys used for NTS response signing.</param>
+        /// <param name="Timeout">An optional timeout.</param>
+        /// <param name="CancellationToken">An optional cancellation token.</param>
+        public async Task<NTSKEResult> GetNTSKERecords(Boolean            RequestNTSPublicKeys   = false,
+                                                       TimeSpan?          Timeout                = null,
+                                                       CancellationToken  CancellationToken      = default)
+        {
+
+            var timeout                  = Timeout ?? this.Timeout ?? DefaultTimeout;
+            var totalStopwatch           = Stopwatch.StartNew();
+            var resolvedIPAddresses      = Array.Empty<IIPAddress>();
+            var connectedIPAddress       = default(IIPAddress);
+            var dnsLookupDuration        = default(TimeSpan?);
+            var tcpConnectDuration       = default(TimeSpan?);
+            var tlsHandshakeDuration     = default(TimeSpan?);
+            var ntsKEProtocolDuration    = default(TimeSpan?);
+
+            NTSKE_TimingInfo TakeTimingInfoSnapshot()
+                => new (
+                       DNSLookupDuration:      dnsLookupDuration,
+                       TCPConnectDuration:     tcpConnectDuration,
+                       TLSHandshakeDuration:   tlsHandshakeDuration,
+                       NTSKEProtocolDuration:  ntsKEProtocolDuration,
+                       TotalDuration:          totalStopwatch.Elapsed,
+                       ResolvedIPAddresses:    resolvedIPAddresses,
+                       ConnectedIPAddress:     connectedIPAddress
+                   );
+
+            try
+            {
+
+                using var timeoutCTS = CancellationTokenSource.CreateLinkedTokenSource(CancellationToken);
+                timeoutCTS.CancelAfter(timeout);
+
+                var dnsStopwatch     = Stopwatch.StartNew();
+
+                var ipAddresses      = await DNSClient.Query_IPAddresses(
+                                                 Hostname,
+                                                 Timeout:            timeout,
+                                                 CancellationToken:  timeoutCTS.Token
+                                             ).ConfigureAwait(false);
+
+                resolvedIPAddresses  = this.IPVersionPreference switch {
+                                           IPVersionPreference.IPv6Only    => [.. ipAddresses.Where  (ipAddress => ipAddress is IPv6Address        )],
+                                           IPVersionPreference.IPv4Only    => [.. ipAddresses.Where  (ipAddress => ipAddress is IPv4Address        )],
+                                           IPVersionPreference.PreferIPv4  => [.. ipAddresses.OrderBy(ipAddress => ipAddress is IPv4Address ? 0 : 1)],
+                                           _                               => [.. ipAddresses.OrderBy(ipAddress => ipAddress is IPv6Address ? 0 : 1)]
+                                       };
+                dnsLookupDuration    = dnsStopwatch.Elapsed;
+
+                if (resolvedIPAddresses.Length == 0)
+                    return NTSKEResult.Failed(
+                               $"No IP address found for {Hostname}!",
+                               NTSKEErrorCategory.DNS,
+                               TakeTimingInfoSnapshot()
+                           );
+
+                var tcpStopwatch     = Stopwatch.StartNew();
+                var lastException    = default(Exception);
+                var tcpClient        = default(TcpClient);
+
+                foreach (var ipAddress in resolvedIPAddresses)
+                {
+
+                    var candidate = new TcpClient() {
+                                        ReceiveTimeout = (Int32) timeout.TotalMilliseconds,
+                                        SendTimeout    = (Int32) timeout.TotalMilliseconds
+                                    };
+
+                    try
+                    {
+
+                        await candidate.ConnectAsync(
+                                  ipAddress. ToDotNet(),
+                                  NTSKE_Port.ToUInt16(),
+                                  timeoutCTS.Token
+                              ).ConfigureAwait(false);
+
+                        tcpClient          = candidate;
+                        connectedIPAddress = ipAddress;
+                        break;
+
+                    }
+                    catch (Exception ex)
+                    {
+                        lastException = ex;
+                        candidate.Dispose();
+                    }
+
+                }
+
+                tcpConnectDuration = tcpStopwatch.Elapsed;
+
+                if (tcpClient is null)
+                    return NTSKEResult.Failed(
+                               lastException?.Message ?? $"Could not connect to {Hostname}:{NTSKE_Port}!",
+                               NTSKEErrorCategory.TCPConnect,
+                               TakeTimingInfoSnapshot()
+                           );
+
+                using (tcpClient)
+                using (var networkStream = tcpClient.GetStream())
+                {
+
+                    var tlsClientProtocol  = new TlsClientProtocol(networkStream);
+                    var ntsTlsClient       = new NTSKE_TLSClient  (RemoteCertificateValidator,
+                                                                   Hostname);
+
+                    var tlsStopwatch       = Stopwatch.StartNew();
+                    var tlsHandshakeTask   = Task.Run(
+                                                 () => tlsClientProtocol.Connect(ntsTlsClient),
+                                                 CancellationToken.None
+                                             );
+
+                    if (await Task.WhenAny(tlsHandshakeTask, Task.Delay(timeout, timeoutCTS.Token)).ConfigureAwait(false) != tlsHandshakeTask)
+                        return NTSKEResult.Failed(
+                                   "TLS handshake timed out.",
+                                   NTSKEErrorCategory.TLSHandshake,
+                                   TakeTimingInfoSnapshot(),
+                                   ntsTlsClient.TLSInfo
+                               );
+
+                    await tlsHandshakeTask.ConfigureAwait(false);
+                    tlsHandshakeDuration   = tlsStopwatch.Elapsed;
+
+                    C2S_Key                = ntsTlsClient.NTS_C2S_Key ?? [];
+                    S2C_Key                = ntsTlsClient.NTS_S2C_Key ?? [];
+
+                    var ntsKEStopwatch     = Stopwatch.StartNew();
+                    var ntsKERequest       = BuildNTSKERequest(RequestNTSPublicKeys);
+                    await tlsClientProtocol.Stream.WriteAsync(ntsKERequest, timeoutCTS.Token).ConfigureAwait(false);
+                    await tlsClientProtocol.Stream.FlushAsync(              timeoutCTS.Token).ConfigureAwait(false);
+
+                    var readResult         = await NTSKEMessageReader.ReadAsync(
+                                                       tlsClientProtocol.Stream,
+                                                       timeout,
+                                                       MaxNTSKEResponseSize,
+                                                       timeoutCTS.Token
+                                                   ).ConfigureAwait(false);
+
+                    ntsKEProtocolDuration  = ntsKEStopwatch.Elapsed;
+
+                    try
+                    {
+                        tlsClientProtocol.Close();
+                    }
+                    catch
+                    { }
+
+                    if (readResult.ErrorMessage is not null)
+                        return NTSKEResult.Failed(
+                                   readResult.ErrorMessage,
+                                   TakeTimingInfoSnapshot(),
+                                   ntsTlsClient.TLSInfo
+                               );
+
+                    if (readResult.ResponseBytes is not null &&
+                        readResult.ResponseBytes.Length > 0)
+                    {
+
+                        if (NTSKE_Record.TryParse(readResult.ResponseBytes, out var records, out var errorResponse))
+                            return NTSKEResult.SuccessResult(
+                                       new NTSKE_Response(
+                                           records,
+                                           C2S_Key,
+                                           S2C_Key,
+                                           TakeTimingInfoSnapshot(),
+                                           ntsTlsClient.TLSInfo
+                                       )
+                                   );
+
+                        return NTSKEResult.Failed(
+                                   errorResponse ?? "Could not parse NTS-KE response!",
+                                   NTSKEErrorCategory.Protocol,
+                                   TakeTimingInfoSnapshot(),
+                                   ntsTlsClient.TLSInfo
+                               );
+
+                    }
+
+                    return NTSKEResult.Failed(
+                               $"No response received from {Hostname}!",
+                               NTSKEErrorCategory.Timeout,
+                               TakeTimingInfoSnapshot(),
+                               ntsTlsClient.TLSInfo
+                           );
+
+                }
+
+            }
+            catch (OperationCanceledException) when (!CancellationToken.IsCancellationRequested)
+            {
+                return NTSKEResult.Failed(
+                           "NTS-KE operation timed out.",
+                           NTSKEErrorCategory.Timeout,
+                           TakeTimingInfoSnapshot()
+                       );
+            }
+            catch (OperationCanceledException) when (CancellationToken.IsCancellationRequested)
+            {
+                return NTSKEResult.Failed(
+                           "NTS-KE operation canceled.",
+                           NTSKEErrorCategory.Canceled,
+                           TakeTimingInfoSnapshot()
+                       );
+            }
+            catch (Exception ex)
+            {
+                return NTSKEResult.Failed(
+                           ex.Message,
+                           TakeTimingInfoSnapshot()
+                       );
+            }
+
+        }
+
+        #endregion
+
 
         #region (private) AddCookies(Cookies)
 
@@ -499,57 +539,31 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #endregion
 
-        #region (private) ResolveNTPRemoteEndPoint(NTSKEResponse, Timeout, CancellationToken)
 
-        private async Task<System.Net.IPEndPoint?> ResolveNTPRemoteEndPoint(NTSKE_Response?     NTSKEResponse,
-                                                                            TimeSpan            Timeout,
-                                                                            CancellationToken   CancellationToken)
+        #region (private static) ReceiveUdpResponseAsync(UDPClient, Timeout, CancellationToken)
+
+        private static async Task<(UdpReceiveResult? Result, Boolean TimedOut)>
+
+            ReceiveUdpResponseAsync(UdpClient           UDPClient,
+                                    TimeSpan            Timeout,
+                                    CancellationToken   CancellationToken)
+
         {
 
-            var ntpServer  = NTSKEResponse?.NTPv4Servers.Any() == true
-                                 ? NTSKEResponse.NTPv4Servers.First()
-                                 : null;
+            using var timeoutCTS = CancellationTokenSource.CreateLinkedTokenSource(CancellationToken);
+            timeoutCTS.CancelAfter(Timeout);
 
-            var ntpPort    = NTSKEResponse?.NTPv4Ports.  Any() == true
-                                 ? NTSKEResponse.NTPv4Ports.  First()
-                                 : NTP_Port;
-
-            if (ntpServer.IsNotNullOrEmpty())
+            try
             {
-
-                if (String.Equals(ntpServer.ToString().TrimEnd('.'),
-                                  Hostname.ToString().TrimEnd('.'),
-                                  StringComparison.OrdinalIgnoreCase) &&
-                    NTSKEResponse?.TimingInfo?.ConnectedIPAddress is not null)
-                {
-                    return new System.Net.IPEndPoint(NTSKEResponse.TimingInfo.ConnectedIPAddress.ToDotNet(), ntpPort.ToUInt16());
-                }
-
-                if (System.Net.IPAddress.TryParse(ntpServer.ToString().TrimEnd('.'), out var ipAddress))
-                    return new System.Net.IPEndPoint(ipAddress, ntpPort.ToUInt16());
-
-                using var timeoutCTS = CancellationTokenSource.CreateLinkedTokenSource(CancellationToken);
-                timeoutCTS.CancelAfter(Timeout);
-
-                var ipAddresses = await DNSClient.Query_IPAddresses(ntpServer, CancellationToken: timeoutCTS.Token).ConfigureAwait(false);
-
-                var preferredIP = this.IPVersionPreference switch {
-                                      IPVersionPreference.IPv6Only    => ipAddresses.FirstOrDefault(ipAddress => ipAddress is IPv6Address),
-                                      IPVersionPreference.IPv4Only    => ipAddresses.FirstOrDefault(ipAddress => ipAddress is IPv4Address),
-                                      IPVersionPreference.PreferIPv4  => ipAddresses.OrderBy(ipAddress => ipAddress is IPv4Address ? 0 : 1).FirstOrDefault(),
-                                      _                               => ipAddresses.OrderBy(ipAddress => ipAddress is IPv6Address ? 0 : 1).FirstOrDefault()
-                                  };
-
-                return preferredIP is not null
-                           ? new System.Net.IPEndPoint(preferredIP.ToDotNet(), ntpPort.ToUInt16())
-                           : null;
-
+                return (
+                    await UDPClient.ReceiveAsync(timeoutCTS.Token).AsTask().ConfigureAwait(false),
+                    false
+                );
             }
-
-            if (NTSKEResponse?.TimingInfo?.ConnectedIPAddress is not null)
-                return new System.Net.IPEndPoint(NTSKEResponse.TimingInfo.ConnectedIPAddress.ToDotNet(), ntpPort.ToUInt16());
-
-            return null;
+            catch (OperationCanceledException) when (!CancellationToken.IsCancellationRequested)
+            {
+                return (null, true);
+            }
 
         }
 
@@ -558,21 +572,21 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         #region QueryTime (Timeout = null, NTSKEResponse = null, SignedResponseMode = None, SignedResponseKeyId = 1, ...)
 
         /// <summary>
-        /// Sends a single NTP request (mode=3) with NTS extension fields:
-        ///   1) Unique Identifier extension field
-        ///   2) NTS Cookie extension field (cleartext for server)
-        ///   3) NTS Authenticator & Encrypted extension field (placeholder)
-        /// and reads a single response.
+        /// Sends a single NTS-authenticated NTP request and returns a structured result.
         /// </summary>
-        public async Task<NTPPacket?> QueryTime(TimeSpan?           Timeout               = null,
-                                                NTSKE_Response?     NTSKEResponse         = null,
-                                                SignedResponseMode  SignedResponseMode    = SignedResponseMode.None,
-                                                UInt16              SignedResponseKeyId   = 1,
-                                                CancellationToken   CancellationToken     = default)
+        public async Task<NTSQueryResult> QueryTime(TimeSpan?           Timeout               = null,
+                                                    NTSKE_Response?     NTSKEResponse         = null,
+                                                    SignedResponseMode  SignedResponseMode    = SignedResponseMode.None,
+                                                    UInt16              SignedResponseKeyId   = 1,
+                                                    CancellationToken   CancellationToken     = default)
         {
 
             if (NTSKEResponse?.ErrorMessage is not null)
-                return new NTPPacket(NTSKEResponse?.ErrorMessage ?? "Unknown error!");
+                return NTSQueryResult.Failed2(
+                           NTSKEResponse.ErrorMessage ?? "Unknown NTS-KE error!",
+                           NTSQueryErrorCategory.NTSKE,
+                           RemainingCookiesAfterQuery: AvailableCookieCount
+                       );
 
             var timeout = Timeout ?? this.Timeout ?? DefaultTimeout;
 
@@ -596,18 +610,32 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             if (NTSKEResponse is not null &&
                 !TryTakeCookie(NTSKEResponse, out cookie))
             {
-                return new NTPPacket("No NTS cookie available!");
+
+                return NTSQueryResult.Failed2(
+                           "No NTS cookie available!",
+                           NTSQueryErrorCategory.Cookie,
+                           RemainingCookiesAfterQuery: AvailableCookieCount
+                       );
+
             }
 
-            var remoteEndPoint     = await ResolveNTPRemoteEndPoint(
+            var remoteEndPoint     = await NTPRemoteEndPointResolver.ResolveAsync(
                                                NTSKEResponse,
+                                               Hostname,
+                                               NTP_Port,
+                                               DNSClient,
+                                               IPVersionPreference,
                                                timeout,
                                                CancellationToken
                                            ).ConfigureAwait(false);
 
             var remoteDescription  = remoteEndPoint is not null
                                          ? remoteEndPoint.ToString()
-                                         : $"{Hostname}:{NTP_Port}";
+                                         : NTPRemoteEndPointResolver.GetRemoteDescription(
+                                               NTSKEResponse,
+                                               Hostname,
+                                               NTP_Port
+                                           );
 
             var transmitTimestamp  = NTPPacket.GetCurrentNTPTimestamp();
 
@@ -655,14 +683,29 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                     }
 
-                    var receiveTask1                = udpClient.ReceiveAsync(CancellationToken).AsTask();
-                    var timeoutTask1                = Task.Delay(timeout, CancellationToken);
-                    var finishedTask1               = await Task.WhenAny(receiveTask1, timeoutTask1);
+                    var receiveResult1WithTimeout   = await ReceiveUdpResponseAsync(
+                                                                udpClient,
+                                                                timeout,
+                                                                CancellationToken
+                                                            ).ConfigureAwait(false);
 
-                    if (finishedTask1 == timeoutTask1)
-                        return new NTPPacket($"No 1st NTP response from {remoteDescription} within {Math.Round(timeout.TotalSeconds, 2)} seconds timeout!");
+                    if (receiveResult1WithTimeout.TimedOut ||
+                        receiveResult1WithTimeout.Result is null)
+                    {
 
-                    var receiveResult1              = await receiveTask1;
+                        return NTSQueryResult.Failed2(
+                                   $"No 1st NTP response from {remoteDescription} within {Math.Round(timeout.TotalSeconds, 2)} seconds timeout!",
+                                   NTSQueryErrorCategory.NTPTimeout,
+                                   remoteEndPoint,
+                                   remoteDescription,
+                                   cookie,
+                                   AvailableCookieCount,
+                                   SendStopwatchTimestamp: sendStopwatchTimestamp
+                               );
+
+                    }
+
+                    var receiveResult1              = receiveResult1WithTimeout.Result.Value;
                     var destinationTimestamp1       = NTPPacket.GetCurrentNTPTimestamp();
                     var receiveStopwatchTimestamp1  = Stopwatch.GetTimestamp();
 
@@ -682,19 +725,49 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                         if (ntpResponse1.NTSSignedResponseAnnouncement()?.IsScheduled == true)
                         {
 
-                            var receiveTask2                = udpClient.ReceiveAsync(CancellationToken).AsTask();
-                            var timeoutTask2                = Task.Delay(timeout, CancellationToken);
-                            var finishedTask2               = await Task.WhenAny(receiveTask2, timeoutTask2);
+                            var receiveResult2WithTimeout = await ReceiveUdpResponseAsync(
+                                                                      udpClient,
+                                                                      timeout,
+                                                                      CancellationToken
+                                                                  ).ConfigureAwait(false);
 
-                            if (finishedTask2 == timeoutTask2)
-                                return new NTPPacket($"No 2nd NTP response from {remoteDescription} within {Math.Round(timeout.TotalSeconds, 2)} seconds timeout!");
+                            if (receiveResult2WithTimeout.TimedOut ||
+                                receiveResult2WithTimeout.Result is null)
+                            {
 
-                            var receiveResult2              = await receiveTask2;
+                                return NTSQueryResult.Failed2(
+                                           $"No 2nd NTP response from {remoteDescription} within {Math.Round(timeout.TotalSeconds, 2)} seconds timeout!",
+                                           NTSQueryErrorCategory.NTPTimeout,
+                                           remoteEndPoint,
+                                           remoteDescription,
+                                           cookie,
+                                           AvailableCookieCount,
+                                           SendStopwatchTimestamp:     sendStopwatchTimestamp,
+                                           ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp1,
+                                           DestinationTimestamp:       destinationTimestamp1
+                                       );
+
+                            }
+
+                            var receiveResult2              = receiveResult2WithTimeout.Result.Value;
                             var destinationTimestamp2       = NTPPacket.GetCurrentNTPTimestamp();
                             var receiveStopwatchTimestamp2  = Stopwatch.GetTimestamp();
 
                             if (!receiveResult1.Buffer.IsPrefixOf(receiveResult2.Buffer))
-                                return new NTPPacket("2nd NTP response is not a prefix of the 1st NTP response!");
+                            {
+
+                                return NTSQueryResult.Failed2(
+                                           "2nd NTP response is not a prefix of the 1st NTP response!",
+                                           NTSQueryErrorCategory.Protocol,
+                                           remoteEndPoint,
+                                           remoteDescription,
+                                           cookie,
+                                           AvailableCookieCount,
+                                           SendStopwatchTimestamp:     sendStopwatchTimestamp,
+                                           ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp2,
+                                           DestinationTimestamp:       destinationTimestamp2
+                                       );
+                            }
 
                             if (NTPResponse.TryParse(receiveResult2.Buffer,
                                                      out var ntpResponse2,
@@ -706,27 +779,85 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                      SendStopwatchTimestamp:     sendStopwatchTimestamp,
                                                      ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp2))
                             {
+
                                 AddCookies(ntpResponse2);
-                                return ntpResponse2;
+
+                                return NTSQueryResult.SuccessResult(
+                                           ntpResponse2,
+                                           remoteEndPoint,
+                                           remoteDescription,
+                                           cookie,
+                                           AvailableCookieCount,
+                                           1,
+                                           ntpResponse2.Extensions.Any(extension => extension is NTSCookieExtension { Encrypted: true })
+                                       );
                             }
 
-                            return new NTPPacket("NTP 2nd response error: " + errorResponse2);
+                            return NTSQueryResult.Failed3(
+                                       "NTP 2nd response error: " + errorResponse2,
+                                       remoteEndPoint,
+                                       remoteDescription,
+                                       cookie,
+                                       AvailableCookieCount,
+                                       SendStopwatchTimestamp:     sendStopwatchTimestamp,
+                                       ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp2,
+                                       DestinationTimestamp:       destinationTimestamp2
+                                   );
 
                         }
 
                         #endregion
 
                         AddCookies(ntpResponse1);
-                        return ntpResponse1;
+
+                        return NTSQueryResult.SuccessResult(
+                                   ntpResponse1,
+                                   remoteEndPoint,
+                                   remoteDescription,
+                                   cookie,
+                                   AvailableCookieCount,
+                                   1,
+                                   ntpResponse1.Extensions.Any(extension => extension is NTSCookieExtension { Encrypted: true })
+                               );
 
                     }
                     else
-                        return new NTPPacket("NTP 1st response error: " + errorResponse1);
+                    {
 
+                        return NTSQueryResult.Failed3(
+                                   "NTP 1st response error: " + errorResponse1,
+                                   remoteEndPoint,
+                                   remoteDescription,
+                                   cookie,
+                                   AvailableCookieCount,
+                                   SendStopwatchTimestamp:     sendStopwatchTimestamp,
+                                   ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp1,
+                                   DestinationTimestamp:       destinationTimestamp1
+                               );
+                    }
+
+                }
+                catch (OperationCanceledException)
+                {
+                    return NTSQueryResult.Failed2(
+                               "NTP query operation canceled.",
+                               NTSQueryErrorCategory.Canceled,
+                               remoteEndPoint,
+                               remoteDescription,
+                               cookie,
+                               AvailableCookieCount
+                           );
                 }
                 catch (Exception e)
                 {
-                    return new NTPPacket("NTP receive exception: " + e.Message);
+                    return NTSQueryResult.Failed2(
+                               $"NTP receive exception from {remoteDescription}: {e.Message}",
+                               NTSQueryErrorCategory.Exception,
+                               remoteEndPoint,
+                               remoteDescription,
+                               cookie,
+                               AvailableCookieCount
+                           );
                 }
 
             }
@@ -734,6 +865,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         }
 
         #endregion
+
+
+        
 
 
         #region TryValidateNTSAuthenticatorExtension(ReceivedValue, AssociatedData, C2SKey, ExpectedPlaintext, out ErrorResponse)
@@ -758,7 +892,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// The plaintext that was encrypted (for example, in testing it might be "Hello world!" as UTF8 bytes).
         /// In a real implementation, this would be the concatenation of confidential internal extension fields.
         /// </param>
-        public static Boolean TryValidateNTSAuthenticatorExtension(Byte[]         ReceivedValue,
+        internal static Boolean TryValidateNTSAuthenticatorExtension(Byte[]         ReceivedValue,
                                                                    IList<Byte[]>  AssociatedData,
                                                                    Byte[]         S2CKey,
                                                                    Byte[]         ExpectedPlaintext,

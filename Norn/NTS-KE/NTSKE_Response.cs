@@ -124,8 +124,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             this.NTPv4Servers  = NTSKERecords.
                                      Where (ntsKERecord => ntsKERecord.Type == NTSKE_RecordTypes.NTPv4ServerNegotiation).
-                                     Select(ntsKERecord => DomainName.Parse(Encoding.ASCII.GetString(ntsKERecord.Body).TrimEnd('\0'))).
-                                     Where (domainName  => domainName.IsNotNullOrEmpty());
+                                     Select(ntsKERecord => Encoding.ASCII.GetString(ntsKERecord.Body).TrimEnd('\0')).
+                                     Where (server      => server.IsNotNullOrEmpty()).
+                                     Select(DomainName.Parse);
 
             this.NTPv4Ports    = NTSKERecords.
                                      Where (ntsKERecord =>  ntsKERecord.Type == NTSKE_RecordTypes.NTPv4PortNegotiation).
