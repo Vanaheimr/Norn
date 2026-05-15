@@ -15,7 +15,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\Hermod\HermodTests\HermodTests.csproj" />
+    <ProjectReference Include="..\..\Hermod\Hermod\Hermod.csproj" />
     <ProjectReference Include="..\Norn\Norn.csproj" />
   </ItemGroup>
 

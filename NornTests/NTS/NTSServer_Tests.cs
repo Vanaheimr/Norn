@@ -38,6 +38,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
         #region Data
 
+        private static readonly IPPort testNTSKEPort = IPPort.Parse(14460);
+        private static readonly IPPort testNTPPort   = IPPort.Parse(10123);
+
         private readonly NTSServer ntsServer;
 
         #endregion
@@ -51,6 +54,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         {
 
             ntsServer = new NTSServer(
+                            NTSKEPort: testNTSKEPort,
+                            NTSPort:   testNTPPort,
                             KeyPair:   new KeyPair(
                                            Id:                   1,
                                            PrivateKey:          "ANm7PAbjqlK+SPW/JLFXVt8U7vCpg69Xxy77rA8SN+Ce".FromBASE64(),
@@ -106,6 +111,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
             var ntsClient                  = new NTSClient(
                                                  Hermod.DNS.DomainName.Localhost,
+                                                 NTSKE_Port: testNTSKEPort,
+                                                 NTP_Port:   testNTPPort,
+                                                 IPVersionPreference: IPVersionPreference.IPv4Only,
                                                  RemoteCertificateValidator: (sender,
                                                                               serverCertificate,
                                                                               certificateChain,
@@ -153,7 +161,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
             Assert.That(ntsKEResponse.TLSInfo?.NegotiatedTLSVersion,          Is.EqualTo("TLS 1.3"));
 
             var ntsQueryResult             = await ntsClient.QueryTime(NTSKEResponse:  ntsKEResponse,
-                                                                               Timeout:        TimeSpan.FromMinutes(1));
+                                                                               Timeout:        TimeSpan.FromSeconds(10));
 
             Assert.That(ntsQueryResult.Success,                    Is.True, ntsQueryResult.ErrorMessage);
             Assert.That(ntsQueryResult.ErrorCategory,              Is.EqualTo(NTSQueryErrorCategory.None));
@@ -238,6 +246,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
             var ntsClient                  = new NTSClient(
                                                  Hermod.DNS.DomainName.Localhost,
+                                                 NTSKE_Port: testNTSKEPort,
+                                                 NTP_Port:   testNTPPort,
+                                                 IPVersionPreference: IPVersionPreference.IPv4Only,
                                                  RemoteCertificateValidator: (sender,
                                                                               serverCertificate,
                                                                               certificateChain,
@@ -281,7 +292,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
             var ntsQueryResult             = await ntsClient.QueryTime(
                                                        NTSKEResponse:       ntsKEResponse,
                                                        SignedResponseMode:  SignedResponseMode.Scheduled,
-                                                       Timeout:             TimeSpan.FromMinutes(1)
+                                                       Timeout:             TimeSpan.FromSeconds(10)
                                                    );
             var ntsResponse                = ntsQueryResult.Response;
 

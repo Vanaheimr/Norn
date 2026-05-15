@@ -32,6 +32,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
     /// https://zeit.ptb.de and https://time.ptb.de/files/ptb-ntp-services.json
     /// </summary>
     [TestFixture]
+    [Category("External")]
+    [Category("LiveNetwork")]
+    [Explicit("Live public NTS/NTP server test; run explicitly when network reachability should be verified.")]
     public class PTBTime4_Tests()
         : ANTSServer_Tests(
               ServerName:                   DomainName.Parse("ptbtime4.ptb.de"),

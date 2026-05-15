@@ -30,6 +30,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
     /// Test the NTS client against public NTS server 'time3.charging.cloud'.
     /// </summary>
     [TestFixture]
+    [Category("External")]
+    [Category("LiveNetwork")]
+    [Explicit("Live public NTS/NTP server test; run explicitly when network reachability should be verified.")]
     public class OpenChargingCloud3_Tests()
         : ANTSServer_Tests(
               ServerName:                   DomainName.Parse("time3.charging.cloud"),
