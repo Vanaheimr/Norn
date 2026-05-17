@@ -91,6 +91,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
             this.Duration       = Duration;
             this.IPv4Addresses  = IPv4Addresses ?? [];
             this.IPv6Addresses  = IPv6Addresses ?? [];
+            this.Warning        = Warning;
             this.ErrorMessage   = ErrorMessage;
 
         }
@@ -112,6 +113,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
                            ErrorMessage is not null
                                ? new JProperty("error",           ErrorMessage)
+                               : null,
+
+                           Warning is not null
+                               ? new JProperty("warning",         Warning.ToJSON())
                                : null
 
                        );

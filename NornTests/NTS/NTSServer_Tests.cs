@@ -17,9 +17,13 @@
 
 #region Usings
 
+using System.Net;
+using System.Net.Sockets;
+
 using NUnit.Framework;
 
 using org.GraphDefined.Vanaheimr.Hermod;
+using org.GraphDefined.Vanaheimr.Hermod.HTTP;
 using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Norn.NTP;
 using org.GraphDefined.Vanaheimr.Norn.NTS;
@@ -33,13 +37,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
     /// NTS server tests.
     /// </summary>
     [TestFixture]
+    [Category("LocalIntegration")]
     public class NTSServer_Tests
     {
 
         #region Data
 
-        private static readonly IPPort testNTSKEPort = IPPort.Parse(14460);
-        private static readonly IPPort testNTPPort   = IPPort.Parse(10123);
+        private static readonly IPPort testNTSKEPort = FindFreeTCPPort();
+        private static readonly IPPort testNTPPort   = FindFreeUDPPort();
 
         private readonly NTSServer ntsServer;
 
@@ -56,6 +61,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
             ntsServer = new NTSServer(
                             NTSKEPort: testNTSKEPort,
                             NTSPort:   testNTPPort,
+                            MasterKeysFilePath: null,
                             KeyPair:   new KeyPair(
                                            Id:                   1,
                                            PrivateKey:          "ANm7PAbjqlK+SPW/JLFXVt8U7vCpg69Xxy77rA8SN+Ce".FromBASE64(),
@@ -235,6 +241,86 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
         #endregion
 
+        #region TestNTSKE_Advertises_Explicit_ExternalURLs()
+
+        /// <summary>
+        /// Test that explicitly configured NTP URLs are announced via NTS-KE.
+        /// </summary>
+        [Test]
+        public async Task TestNTSKE_Advertises_Explicit_ExternalURLs()
+        {
+
+            var ntsKEPort = FindFreeTCPPort();
+            var ntpPort   = FindFreeUDPPort();
+
+            var server    = new NTSServer(
+                                NTSKEPort:          ntsKEPort,
+                                NTSPort:            ntpPort,
+                                ExternalURLs:       [ URL.Parse($"udp://localhost:{ntpPort}") ],
+                                MasterKeysFilePath: null
+                            );
+
+            await server.Start();
+
+            try
+            {
+
+                var ntsClient     = new NTSClient(
+                                        Hermod.DNS.DomainName.Localhost,
+                                        NTSKE_Port: ntsKEPort,
+                                        NTP_Port:   ntpPort,
+                                        IPVersionPreference: IPVersionPreference.IPv4Only,
+                                        RemoteCertificateValidator: (sender,
+                                                                     serverCertificate,
+                                                                     certificateChain,
+                                                                     ntsKETLSClient,
+                                                                     sslPolicyErrors) => TLSValidationResult.Success()
+                                    );
+
+                var ntsKEResult   = await ntsClient.GetNTSKERecords(RequestNTSPublicKeys: false);
+                var ntsKEResponse = ntsKEResult.Response!;
+
+                Assert.That(ntsKEResult.Success, Is.True, ntsKEResult.ErrorMessage);
+                Assert.That(ntsKEResponse.NTPv4Servers.Select(server => server.ToString().TrimEnd('.')), Does.Contain("localhost"));
+                Assert.That(ntsKEResponse.NTPv4Ports, Does.Contain(ntpPort));
+
+            }
+            finally
+            {
+                await server.ShutdownAsync();
+            }
+
+        }
+
+        #endregion
+
+        #region MasterKey_Rotates_After_Lifetime()
+
+        /// <summary>
+        /// Test that expired master keys are not kept as the active key for new cookies.
+        /// </summary>
+        [Test]
+        public async Task MasterKey_Rotates_After_Lifetime()
+        {
+
+            var server = new NTSServer(
+                             MasterKeysFilePath:           null,
+                             MasterKeyLifetime:            TimeSpan.FromMilliseconds(1),
+                             MasterKeyRotationGracePeriod: TimeSpan.FromSeconds(10)
+                         );
+
+            var firstMasterKeyId = server.CurrentMasterKeyId;
+
+            await Task.Delay(TimeSpan.FromMilliseconds(1200));
+
+            var secondMasterKeyId = server.CurrentMasterKeyId;
+
+            Assert.That(secondMasterKeyId, Is.GreaterThan(firstMasterKeyId));
+
+        }
+
+        #endregion
+
         #region TestServer_SignedResponses1()
 
         /// <summary>
@@ -380,6 +466,43 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                     Assert.Fail("NTS Signed Response Extension is invalid!");
 
             }
+
+        }
+
+        #endregion
+
+        #region (private static) FindFreeTCPPort()
+
+        private static IPPort FindFreeTCPPort()
+        {
+
+            using var listener = new TcpListener(System.Net.IPAddress.Loopback, 0);
+
+            listener.Start();
+
+            return IPPort.Parse(
+                       ((IPEndPoint) listener.LocalEndpoint).Port
+                   );
+
+        }
+
+        #endregion
+
+        #region (private static) FindFreeUDPPort()
+
+        private static IPPort FindFreeUDPPort()
+        {
+
+            using var udpClient = new UdpClient(
+                                      new IPEndPoint(
+                                          System.Net.IPAddress.Loopback,
+                                          0
+                                      )
+                                  );
+
+            return IPPort.Parse(
+                       ((IPEndPoint) udpClient.Client.LocalEndPoint!).Port
+                   );
 
         }
 

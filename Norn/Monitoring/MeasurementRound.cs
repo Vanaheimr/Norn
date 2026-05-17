@@ -168,11 +168,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                                : null,
 
                            InterServerOffsets is not null && InterServerOffsets.Count > 0
-                               ? new JProperty("interServerOffsetsMs",    JObject.FromObject(InterServerOffsets))
+                               ? new JProperty("interServerOffsetsMs",    JObject.FromObject(
+                                                                               InterServerOffsets.ToDictionary(
+                                                                                   offset => offset.Key,
+                                                                                   offset => Math.Round(offset.Value.TotalMilliseconds, 6)
+                                                                               )
+                                                                           ))
                                : null,
 
                            MaxInterServerDelta.HasValue
-                               ? new JProperty("maxInterServerDeltaMs",   MaxInterServerDelta.Value)
+                               ? new JProperty("maxInterServerDeltaMs",   Math.Round(MaxInterServerDelta.Value.TotalMilliseconds, 6))
                                : null
 
                        );

@@ -19,6 +19,7 @@
 
 using System.Net;
 using System.Net.Sockets;
+using System.Text;
 using System.Security.Cryptography;
 using System.Collections.Concurrent;
 
@@ -48,15 +49,21 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         private                  Socket?                                  tcpSocket;
         private                  Socket?                                  udpSocket;
         private                  CancellationTokenSource?                 cts;
+        private                  Task?                                    tcpLoopTask;
+        private                  Task?                                    udpLoopTask;
 
         private readonly         ConcurrentDictionary<UInt64, MasterKey>  masterKeys             = [];
         private static readonly  Lock                                     currentMasterKeyLock   = new();
         private                  MasterKey?                               currentMasterKey;
-        private const            String                                   masterKeysFile         = "masterKeys.json";
+        private readonly         String?                                  masterKeysFilePath;
 
         private readonly         ConcurrentDictionary<UInt64, KeyPair>    keyPairs               = [];
         private                  KeyPair?                                 currentKeyPair;
         private                  PublicKey?                               currentPublicKey;
+
+        private readonly         SemaphoreSlim                            ntpRequestSemaphore;
+        private readonly         SemaphoreSlim                            ntskeConnectionSemaphore;
+        private readonly         Boolean                                  advertiseExternalURLs;
 
         #endregion
 
@@ -88,6 +95,36 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         public DNSClient         DNSClient       { get; }
 
+        /// <summary>
+        /// The local IP address used for the TCP and UDP listener sockets.
+        /// </summary>
+        public System.Net.IPAddress  ListenIPAddress               { get; }
+
+        /// <summary>
+        /// Whether an IPv6 listener socket should also accept IPv4 traffic.
+        /// </summary>
+        public Boolean               EnableDualStack               { get; }
+
+        public TimeSpan              MasterKeyLifetime             { get; }
+
+        public TimeSpan              MasterKeyRotationGracePeriod  { get; }
+
+        public TimeSpan              NTSKEHandshakeTimeout         { get; }
+
+        public TimeSpan              NTSKERequestTimeout           { get; }
+
+        public Int32                 MaxNTSKERequestSize           { get; }
+
+        public Int32                 MaxConcurrentNTPRequests      { get; }
+
+        public Int32                 MaxConcurrentNTSKEConnections { get; }
+
+        /// <summary>
+        /// The key id currently used for newly generated NTS cookies.
+        /// </summary>
+        public UInt64                CurrentMasterKeyId
+            => GetCurrentMasterKey().Id;
+
         #endregion
 
         #region Constructor(s)
@@ -106,14 +143,37 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                          IPPort?            NTSPort        = null,
                          KeyPair?           KeyPair        = null,
                          IEnumerable<URL>?  ExternalURLs   = null,
-                         DNSClient?         DNSClient      = null)
+                         DNSClient?         DNSClient      = null,
+                         System.Net.IPAddress? ListenIPAddress               = null,
+                         Boolean            EnableDualStack               = true,
+                         String?            MasterKeysFilePath            = "masterKeys.json",
+                         TimeSpan?          MasterKeyLifetime             = null,
+                         TimeSpan?          MasterKeyRotationGracePeriod  = null,
+                         TimeSpan?          NTSKEHandshakeTimeout         = null,
+                         TimeSpan?          NTSKERequestTimeout           = null,
+                         Int32?             MaxNTSKERequestSize           = null,
+                         Int32?             MaxConcurrentNTPRequests      = null,
+                         Int32?             MaxConcurrentNTSKEConnections = null)
         {
 
-            this.Description   = Description  ?? I18NString.Empty;
-            this.TCPPort       = NTSKEPort    ?? IPPort.NTSKE;
-            this.UDPPort       = NTSPort      ?? IPPort.NTP;
-            this.ExternalURLs  = ExternalURLs ?? [ URL.Parse($"udp://localhost:{this.UDPPort}") ];
-            this.DNSClient     = DNSClient    ?? new DNSClient();
+            this.Description                  = Description                  ?? I18NString.Empty;
+            this.TCPPort                      = NTSKEPort                    ?? IPPort.NTSKE;
+            this.UDPPort                      = NTSPort                      ?? IPPort.NTP;
+            this.ExternalURLs                 = ExternalURLs                 ?? [ URL.Parse($"udp://localhost:{this.UDPPort}") ];
+            this.DNSClient                    = DNSClient                    ?? new DNSClient();
+            this.ListenIPAddress              = ListenIPAddress              ?? System.Net.IPAddress.Any;
+            this.EnableDualStack              = EnableDualStack;
+            this.masterKeysFilePath           = MasterKeysFilePath;
+            this.MasterKeyLifetime            = MasterKeyLifetime            ?? TimeSpan.FromDays(1);
+            this.MasterKeyRotationGracePeriod = MasterKeyRotationGracePeriod ?? TimeSpan.FromDays(7);
+            this.NTSKEHandshakeTimeout        = NTSKEHandshakeTimeout        ?? TimeSpan.FromSeconds(10);
+            this.NTSKERequestTimeout          = NTSKERequestTimeout          ?? TimeSpan.FromSeconds(10);
+            this.MaxNTSKERequestSize          = MaxNTSKERequestSize          ?? 64 * 1024;
+            this.MaxConcurrentNTPRequests     = MaxConcurrentNTPRequests     ?? 1024;
+            this.MaxConcurrentNTSKEConnections= MaxConcurrentNTSKEConnections?? 64;
+            this.advertiseExternalURLs        = ExternalURLs is not null;
+            this.ntpRequestSemaphore          = new SemaphoreSlim(this.MaxConcurrentNTPRequests);
+            this.ntskeConnectionSemaphore     = new SemaphoreSlim(this.MaxConcurrentNTSKEConnections);
 
             if (KeyPair is not null)
             {
@@ -128,9 +188,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             try
             {
 
-                var invalidAfter = Timestamp.Now + TimeSpan.FromDays(7);
+                var invalidAfter = Timestamp.Now + this.MasterKeyRotationGracePeriod;
 
-                foreach (var masterKeyText in File.ReadAllLines(masterKeysFile))
+                foreach (var masterKeyText in MasterKeysFilePath.IsNotNullOrEmpty()
+                                                  ? File.ReadAllLines(MasterKeysFilePath)
+                                                  : [])
                 {
                     if (MasterKey.TryParse(masterKeyText, out var masterKey, out var errorResponse))
                     {
@@ -160,6 +222,110 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         #endregion
 
 
+        #region (private) CreateSocket(SocketType, ProtocolType)
+
+        private Socket CreateSocket(SocketType     SocketType,
+                                    ProtocolType   ProtocolType)
+        {
+
+            var socket = new Socket(
+                             ListenIPAddress.AddressFamily,
+                             SocketType,
+                             ProtocolType
+                         );
+
+            if (ListenIPAddress.AddressFamily == AddressFamily.InterNetworkV6 &&
+                EnableDualStack)
+            {
+                socket.DualMode = true;
+            }
+
+            return socket;
+
+        }
+
+        #endregion
+
+        #region (private) BuildNTSKEResponseRecords(NTSKERequest, C2SKey, S2CKey)
+
+        private IEnumerable<NTSKE_Record> BuildNTSKEResponseRecords(IEnumerable<NTSKE_Record>  NTSKERequest,
+                                                                    Byte[]                    C2SKey,
+                                                                    Byte[]                    S2CKey)
+        {
+
+            var ntsKERecords = new List<NTSKE_Record> {
+                                   NTSKE_Record.NTSNextProtocolNegotiation,
+                                   NTSKE_Record.AEADAlgorithmNegotiation()
+                               };
+
+            if (advertiseExternalURLs)
+            {
+                foreach (var externalURL in ExternalURLs.Where(url => url.Protocol == URLProtocols.udp))
+                {
+
+                    var hostname = externalURL.Hostname.Name.Trim('[', ']');
+
+                    if (hostname.IsNotNullOrEmpty())
+                        ntsKERecords.Add(
+                            NTSKE_Record.NTPv4ServerNegotiation(
+                                Encoding.ASCII.GetBytes(hostname)
+                            )
+                        );
+
+                    if (externalURL.Port.HasValue)
+                        ntsKERecords.Add(
+                            NTSKE_Record.NTPv4PortNegotiation(
+                                ToNetworkByteOrder(externalURL.Port.Value)
+                            )
+                        );
+
+                }
+            }
+
+            ntsKERecords.AddRange(
+                GetCurrentMasterKey().
+                    GenerateNTSKECookies(
+                        NumberOfCookies:   7,
+                        C2SKey:            C2SKey,
+                        S2CKey:            S2CKey,
+                        AEADAlgorithm:     AEADAlgorithms.AES_SIV_CMAC_256,
+                        IsCritical:        false
+                    )
+            );
+
+            if (NTSKERequest.Any(ntsKERecord => ntsKERecord.Type == NTSKE_RecordTypes.NTSRequestPublicKey) &&
+                currentPublicKey is not null)
+            {
+                ntsKERecords.Add(
+                    NTSKE_Record.NTSPublicKey(currentPublicKey)
+                );
+            }
+
+            ntsKERecords.Add(NTSKE_Record.EndOfMessage);
+
+            return ntsKERecords;
+
+        }
+
+        #endregion
+
+        #region (private static) ToNetworkByteOrder(Port)
+
+        private static Byte[] ToNetworkByteOrder(IPPort Port)
+        {
+
+            var port = Port.ToUInt16();
+
+            return [
+                (Byte) (port >> 8),
+                (Byte) (port & 0xFF)
+            ];
+
+        }
+
+        #endregion
+
+
         #region (private) GetCurrentMasterKey()
 
         private MasterKey GetCurrentMasterKey()
@@ -177,17 +343,33 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             // seamlessly transition from one generation to the next without having to perform a new
             // NTS-KE handshake.
 
-            if (currentMasterKey is null)
+            var now = Timestamp.Now;
+
+            if (currentMasterKey is null ||
+                currentMasterKey.Value.NotBefore > now ||
+                currentMasterKey.Value.NotAfter  <= now)
             {
                 lock (currentMasterKeyLock)
                 {
 
-                    if (currentMasterKey is null)
+                    now = Timestamp.Now;
+
+                    foreach (var masterKey in masterKeys.Values)
                     {
+                        if (masterKey.NotAfter <= now - MasterKeyRotationGracePeriod)
+                            masterKeys.TryRemove(masterKey.Id, out _);
+                    }
+
+                    if (currentMasterKey is null ||
+                        currentMasterKey.Value.NotBefore > now ||
+                        currentMasterKey.Value.NotAfter  <= now)
+                    {
+                        currentMasterKey = null;
+
                         foreach (var masterKey in masterKeys.Values.OrderByDescending(masterKey => masterKey.NotAfter))
                         {
-                            if (masterKey.NotBefore <= Timestamp.Now &&
-                                masterKey.NotAfter  >  Timestamp.Now)
+                            if (masterKey.NotBefore <= now &&
+                                masterKey.NotAfter  >  now)
                             {
                                 currentMasterKey = masterKey;
                                 break;
@@ -203,11 +385,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                 : masterKeys.Keys.Max() + 1;
 
                         currentMasterKey  = new MasterKey(
-                                                Id:         newKeyId,
-                                                Value:      RandomNumberGenerator.GetBytes(32),
-                                                NotBefore:  Timestamp.Now,
-                                                NotAfter:   Timestamp.Now + TimeSpan.FromDays(1)
-                                            );
+                                                 Id:         newKeyId,
+                                                 Value:      RandomNumberGenerator.GetBytes(32),
+                                                 NotBefore:  now,
+                                                 NotAfter:   now + MasterKeyLifetime
+                                             );
 
                         masterKeys.TryAdd(
                             currentMasterKey.Value.Id,
@@ -216,10 +398,20 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                         try
                         {
-                            File.AppendAllText(
-                                masterKeysFile,
-                                currentMasterKey.Value.ToJSON().ToString(Newtonsoft.Json.Formatting.None) + Environment.NewLine
-                            );
+                            if (masterKeysFilePath.IsNotNullOrEmpty())
+                            {
+
+                                var masterKeysDirectory = Path.GetDirectoryName(masterKeysFilePath);
+
+                                if (masterKeysDirectory.IsNotNullOrEmpty())
+                                    Directory.CreateDirectory(masterKeysDirectory);
+
+                                File.AppendAllText(
+                                    masterKeysFilePath,
+                                    currentMasterKey.Value.ToJSON().ToString(Newtonsoft.Json.Formatting.None) + Environment.NewLine
+                                );
+
+                            }
                         }
                         catch (Exception e) {
                             DebugX.LogException(e, "Failed to write master key to file!");
@@ -324,15 +516,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             #region Start NTP/NTS UDP server
 
-            udpSocket = new Socket(
-                            AddressFamily.InterNetwork,
-                            SocketType.Dgram,
-                            ProtocolType.Udp
-                        );
+            udpSocket = CreateSocket(SocketType.Dgram, ProtocolType.Udp);
 
             udpSocket.Bind(
                 new IPEndPoint(
-                    System.Net.IPAddress.Any,
+                    ListenIPAddress,
                     UDPPort.ToUInt16()
                 )
             );
@@ -340,7 +528,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             DebugX.Log($"NTP Server started on port {UDPPort}/UDP");
 
             // Fire-and-forget task that handles incoming NTP in a loop
-            _ = Task.Run(async () => {
+            udpLoopTask = Task.Run(async () => {
 
                 try
                 {
@@ -360,6 +548,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                         // Local copy to pass into the Task
                         var udpPacketLocal  = udpPacket;
 
+
+                        if (!await ntpRequestSemaphore.WaitAsync(0, cts.Token).ConfigureAwait(false))
+                        {
+                            DebugX.Log($"Dropping NTP request from {udpPacketLocal.RemoteEndPoint}: too many concurrent requests.");
+                            continue;
+                        }
 
                         _ = Task.Run(async () => {
 
@@ -382,20 +576,25 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                            );
 
                                     await udpSocket.SendToAsync(
-                                              new ArraySegment<Byte>(responsePacket1.ToByteArray()),
-                                              SocketFlags.None,
-                                              udpPacketLocal.RemoteEndPoint
-                                          );
+                                               new ArraySegment<Byte>(responsePacket1.ToByteArray()),
+                                               SocketFlags.None,
+                                               udpPacketLocal.RemoteEndPoint,
+                                               cts.Token
+                                           );
 
                                     if (toBeSigned && currentKeyPair is not null)
                                     {
 
+                                        // The unsigned response is intentionally sent first so clients can
+                                        // measure RTT with minimal signing latency. The signed response follows
+                                        // as a scheduled security confirmation once the digital signature is ready.
                                         var responsePacket2 = SignResponse(responsePacket1, currentKeyPair);
 
                                         await udpSocket.SendToAsync(
                                                   new ArraySegment<Byte>(responsePacket2.ToByteArray()),
                                                   SocketFlags.None,
-                                                  udpPacketLocal.RemoteEndPoint
+                                                  udpPacketLocal.RemoteEndPoint,
+                                                  cts.Token
                                               );
 
                                     }
@@ -409,6 +608,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                             catch (Exception e)
                             {
                                 DebugX.Log($"Exception while processing a NTP request: {e}");
+                            }
+                            finally
+                            {
+                                ntpRequestSemaphore.Release();
                             }
 
                         }, cts.Token);
@@ -433,15 +636,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             #region Start NTS-KE TCP server
 
-            tcpSocket = new Socket(
-                            AddressFamily.InterNetwork,
-                            SocketType.Stream,
-                            ProtocolType.Tcp
-                        );
+            tcpSocket = CreateSocket(SocketType.Stream, ProtocolType.Tcp);
 
             tcpSocket.Bind(
                 new IPEndPoint(
-                    System.Net.IPAddress.Any,
+                    ListenIPAddress,
                     TCPPort.ToUInt16()
                 )
             );
@@ -456,7 +655,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             // openssl s_client -connect 127.0.0.1:4460 -verify 0
 
             // Fire-and-forget loop that Accepts new sockets
-            _ = Task.Run(async () => {
+            tcpLoopTask = Task.Run(async () => {
 
                 try
                 {
@@ -468,59 +667,57 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                         if (clientSocket == null)
                             continue;
 
+                        if (!await ntskeConnectionSemaphore.WaitAsync(0, cts.Token).ConfigureAwait(false))
+                        {
+                            DebugX.Log($"Closing NTS-KE connection from {clientSocket.RemoteEndPoint}: too many concurrent connections.");
+                            clientSocket.Close();
+                            continue;
+                        }
+
                         _ = Task.Run(async () => {
 
                             try
                             {
 
                                 using var networkStream  = new NetworkStream    (clientSocket, ownsSocket: false);
+                                using var requestCTS     = CancellationTokenSource.CreateLinkedTokenSource(cts.Token);
+                                requestCTS.CancelAfter(NTSKEHandshakeTimeout + NTSKERequestTimeout);
                                 var tlsServerProtocol    = new TlsServerProtocol(networkStream);
                                 var tlsServer            = new NTSKE_TLSService ();
-                                tlsServerProtocol.Accept(tlsServer);
+
+                                await Task.Run(
+                                          () => tlsServerProtocol.Accept(tlsServer),
+                                          requestCTS.Token
+                                      ).WaitAsync(NTSKEHandshakeTimeout, requestCTS.Token).
+                                        ConfigureAwait(false);
 
                                 var c2sKey               = tlsServer.NTS_C2S_Key ?? [];
                                 var s2cKey               = tlsServer.NTS_S2C_Key ?? [];
 
 
-                                // Read client request bytes from the stream
-                                var buffer               = new Byte[BufferSize];
-                                var bytesRead            = await tlsServerProtocol.Stream.ReadAsync(buffer, cts.Token);
-                                if (bytesRead > 0)
+                                var (requestBytes, errorMessage) = await NTSKEMessageReader.ReadAsync(
+                                                                        tlsServerProtocol.Stream,
+                                                                        NTSKERequestTimeout,
+                                                                        MaxNTSKERequestSize,
+                                                                        requestCTS.Token
+                                                                    ).ConfigureAwait(false);
+
+                                if (requestBytes is not null)
                                 {
 
-                                    Array.Resize(ref buffer, bytesRead);
-
-                                    if (NTSKE_Record.TryParse(buffer, out var ntsKERequest, out var errorResponse))
+                                    if (NTSKE_Record.TryParse(requestBytes, out var ntsKERequest, out var errorResponse))
                                     {
 
-                                        var ntsKERecords = new List<NTSKE_Record> {
-                                                               NTSKE_Record.NTSNextProtocolNegotiation,
-                                                               NTSKE_Record.AEADAlgorithmNegotiation()
-                                                           };
+                                        var ntsKERecords = BuildNTSKEResponseRecords(
+                                                               ntsKERequest,
+                                                               c2sKey,
+                                                               s2cKey
+                                                           );
 
-                                        ntsKERecords.AddRange(
-                                            GetCurrentMasterKey().
-                                                GenerateNTSKECookies(
-                                                    NumberOfCookies:   7,
-                                                    C2SKey:            c2sKey,
-                                                    S2CKey:            s2cKey,
-                                                    AEADAlgorithm:     AEADAlgorithms.AES_SIV_CMAC_256,
-                                                    IsCritical:        false
-                                                )
-                                        );
-
-                                        if (ntsKERequest.Any(ntsKERecord => ntsKERecord.Type == NTSKE_RecordTypes.NTSRequestPublicKey) &&
-                                            currentPublicKey is not null)
-                                        {
-                                            ntsKERecords.Add(
-                                                NTSKE_Record.NTSPublicKey(currentPublicKey)
-                                            );
-                                        }
-
-                                        ntsKERecords.Add(NTSKE_Record.EndOfMessage);
-
-                                        await tlsServerProtocol.Stream.WriteAsync(ntsKERecords.ToByteArray());
-                                        await tlsServerProtocol.Stream.FlushAsync();
+                                        await tlsServerProtocol.Stream.WriteAsync(ntsKERecords.ToByteArray(), requestCTS.Token).
+                                                                          ConfigureAwait(false);
+                                        await tlsServerProtocol.Stream.FlushAsync(requestCTS.Token).
+                                                                          ConfigureAwait(false);
 
                                     }
                                     else
@@ -528,6 +725,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                         DebugX.Log($"Invalid NTS-KE response: {errorResponse}");
                                     }
 
+                                }
+                                else
+                                {
+                                    DebugX.Log($"Invalid NTS-KE request: {errorMessage}");
                                 }
 
                                 tlsServerProtocol.Close();
@@ -541,6 +742,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                             {
                                 try { clientSocket.Shutdown(SocketShutdown.Both); } catch { }
                                 clientSocket.Close();
+                                ntskeConnectionSemaphore.Release();
                             }
 
                         });
@@ -573,8 +775,46 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// Stop the server.
         /// </summary>
         public void Shutdown()
+            => ShutdownAsync().GetAwaiter().GetResult();
+
+        /// <summary>
+        /// Stop the server and wait for the listener loops to exit.
+        /// </summary>
+        public async Task ShutdownAsync()
         {
+
             cts?.Cancel();
+
+            try { udpSocket?.Close(); } catch { }
+            try { tcpSocket?.Close(); } catch { }
+
+            var listenerTasks = new[] {
+                                    udpLoopTask,
+                                    tcpLoopTask
+                                }.
+                                Where(task => task is not null).
+                                Select(task => task!).
+                                ToArray();
+
+            if (listenerTasks.Length > 0)
+            {
+                try
+                {
+                    await Task.WhenAll(listenerTasks).
+                               WaitAsync(TimeSpan.FromSeconds(5)).
+                               ConfigureAwait(false);
+                }
+                catch (TimeoutException)
+                {
+                    DebugX.Log("Timed out while waiting for NTS server listener loops to stop.");
+                }
+            }
+
+            cts?.Dispose();
+            cts          = null;
+            udpLoopTask  = null;
+            tcpLoopTask  = null;
+
         }
 
         #endregion

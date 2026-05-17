@@ -19,6 +19,8 @@
 
 using NUnit.Framework;
 
+using Newtonsoft.Json.Linq;
+
 using org.GraphDefined.Vanaheimr.Hermod;
 using org.GraphDefined.Vanaheimr.Hermod.DNS;
 using org.GraphDefined.Vanaheimr.Illias;
@@ -151,6 +153,69 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.Monitoring
             Assert.That(json.Value<Boolean>("cookiePoolLow"),              Is.False);
             Assert.That(json.Value<Boolean>("cookiePoolEmpty"),            Is.False);
             Assert.That(json.Value<String>("referenceId"),                 Is.EqualTo("IPv4/Hash: 10.165.8.4 (0x0AA50804)"));
+
+        }
+
+        #endregion
+
+        #region DNS_ToJSON_Includes_Warning()
+
+        [Test]
+        public void DNS_ToJSON_Includes_Warning()
+        {
+
+            var result = new DNSResolutionResult(
+                             Success:        true,
+                             Duration:       TimeSpan.FromMilliseconds(3),
+                             IPv4Addresses:  [ IPv4Address.Parse("192.0.2.10") ],
+                             Warning:        Warning.Create("AAAA lookup timed out")
+                         );
+
+            var json = result.ToJSON();
+
+            Assert.That(json.Value<Boolean>("success"),                 Is.True);
+            Assert.That(json["warning"],                                Is.Not.Null);
+            Assert.That(json["warning"]!.ToString(),                    Does.Contain("AAAA lookup timed out"));
+
+        }
+
+        #endregion
+
+        #region MeasurementRound_ToJSON_Emits_InterServer_Offsets_As_Milliseconds()
+
+        [Test]
+        public void MeasurementRound_ToJSON_Emits_InterServer_Offsets_As_Milliseconds()
+        {
+
+            var roundId = Guid.NewGuid();
+
+            var result1 = new NTSMeasurementResult(DomainName.Parse("time1.example.org"), roundId) {
+                              Success = true,
+                              NTP     = new NTPMeasurementResult {
+                                            Success = true,
+                                            Offset  = TimeSpan.FromMilliseconds(0.25)
+                                        }
+                          };
+
+            var result2 = new NTSMeasurementResult(DomainName.Parse("time2.example.org"), roundId) {
+                              Success = true,
+                              NTP     = new NTPMeasurementResult {
+                                            Success = true,
+                                            Offset  = TimeSpan.FromMilliseconds(1.75)
+                                        }
+                          };
+
+            var round = new MeasurementRound(
+                            "drone-1",
+                            [ result1, result2 ],
+                            roundId
+                        ).WithInterServerMetrics();
+
+            var json    = round.ToJSON();
+            var offsets = (JObject) json["interServerOffsetsMs"]!;
+
+            Assert.That(json.Value<Double>("maxInterServerDeltaMs"), Is.EqualTo(1.5).Within(0.000001));
+            Assert.That(offsets.Properties().Single().Value.Value<Double>(), Is.EqualTo(1.5).Within(0.000001));
 
         }
 
