@@ -38,6 +38,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         public NTSKE_TLSInfo?      TLSInfo         { get; }
 
+        public NTSKEDiagnostics    Diagnostics     { get; }
+
         #endregion
 
         #region Constructor(s)
@@ -56,6 +58,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             this.ErrorCategory  = ErrorCategory;
             this.TimingInfo     = TimingInfo;
             this.TLSInfo        = TLSInfo;
+            this.Diagnostics    = new NTSKEDiagnostics(
+                                      TimingInfo,
+                                      TLSInfo,
+                                      Response?.WarningMessages ?? [],
+                                      Response?.NTPv4ServerNames ?? [],
+                                      Response?.NTPv4Ports      ?? []
+                                  );
 
         }
 

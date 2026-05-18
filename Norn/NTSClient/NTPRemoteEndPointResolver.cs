@@ -49,6 +49,35 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #endregion
 
+        #region GetRemoteCandidates(NTSKEResponse, FallbackHost, FallbackPort)
+
+        public static IEnumerable<(String Host, IPPort Port)> GetRemoteCandidates(NTSKE_Response?  NTSKEResponse,
+                                                                                  DomainName       FallbackHost,
+                                                                                  IPPort           FallbackPort)
+        {
+
+            var hosts = (NTSKEResponse?.NTPv4ServerNames.Any() == true
+                             ? NTSKEResponse.NTPv4ServerNames
+                             : [ FallbackHost.ToString().TrimEnd('.') ]).
+                        ToList();
+
+            var ports = (NTSKEResponse?.NTPv4Ports.Any() == true
+                             ? NTSKEResponse.NTPv4Ports
+                             : [ FallbackPort ]).
+                        ToList();
+
+            for (var i = 0; i < hosts.Count; i++)
+            {
+                yield return (
+                    hosts[i],
+                    ports[Math.Min(i, ports.Count - 1)]
+                );
+            }
+
+        }
+
+        #endregion
+
         #region GetRemoteDescription(NTSKEResponse, FallbackHost, FallbackPort)
 
         public static String GetRemoteDescription(NTSKE_Response?  NTSKEResponse,
@@ -56,10 +85,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                   IPPort           FallbackPort)
         {
 
-            var host = GetRemoteHost(NTSKEResponse, FallbackHost);
-            var port = GetRemotePort(NTSKEResponse, FallbackPort);
+            var (host, port) = GetRemoteCandidates(
+                                   NTSKEResponse,
+                                   FallbackHost,
+                                   FallbackPort
+                               ).First();
 
-            return $"{host.ToString().TrimEnd('.')}:{port}";
+            return FormatEndpoint(host.TrimEnd('.'), port);
 
         }
 
@@ -76,49 +108,112 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                                       CancellationToken    CancellationToken = default)
         {
 
-            var host       = GetRemoteHost(NTSKEResponse, FallbackHost);
-            var port       = GetRemotePort(NTSKEResponse, FallbackPort);
-            var normalized = host.ToString().TrimEnd('.');
+            var candidates = GetRemoteCandidates(
+                                 NTSKEResponse,
+                                 FallbackHost,
+                                 FallbackPort
+                             ).ToList();
 
             if ((NTSKEResponse?.NTPv4Servers.Any() != true ||
-                 String.Equals(normalized,
+                 String.Equals(candidates[0].Host.TrimEnd('.'),
                                FallbackHost.ToString().TrimEnd('.'),
                                StringComparison.OrdinalIgnoreCase)) &&
                 NTSKEResponse?.TimingInfo?.ConnectedIPAddress is not null)
             {
                 return new System.Net.IPEndPoint(
                            NTSKEResponse.TimingInfo.ConnectedIPAddress.ToDotNet(),
-                           port.ToUInt16()
+                           candidates[0].Port.ToUInt16()
                        );
             }
 
-            if (System.Net.IPAddress.TryParse(normalized, out var literalIPAddress))
-                return new System.Net.IPEndPoint(
-                           literalIPAddress,
-                           port.ToUInt16()
-                       );
+            foreach (var (host, port) in candidates)
+            {
 
-            var ipAddresses = await DNSClient.Query_IPAddresses(
-                                    host,
-                                    Timeout:            Timeout,
-                                    CancellationToken:  CancellationToken
-                                ).ConfigureAwait(false);
+                var normalized = host.TrimEnd('.');
 
-            var orderedIPAddresses = IPVersionPreference switch {
-                                         IPVersionPreference.IPv6Only    => ipAddresses.Where  (ipAddress => ipAddress is IPv6Address),
-                                         IPVersionPreference.IPv4Only    => ipAddresses.Where  (ipAddress => ipAddress is IPv4Address),
-                                         IPVersionPreference.PreferIPv4  => ipAddresses.OrderBy(ipAddress => ipAddress is IPv4Address ? 0 : 1),
-                                         _                               => ipAddresses.OrderBy(ipAddress => ipAddress is IPv6Address ? 0 : 1)
-                                     };
+                if (System.Net.IPAddress.TryParse(normalized, out var literalIPAddress))
+                {
+                    if (IsAllowedIPAddress(literalIPAddress, IPVersionPreference))
+                    {
+                        return new System.Net.IPEndPoint(
+                                   literalIPAddress,
+                                   port.ToUInt16()
+                               );
+                    }
 
-            var selectedIPAddress = orderedIPAddresses.FirstOrDefault();
+                    continue;
+                }
 
-            return selectedIPAddress is not null
-                       ? new System.Net.IPEndPoint(
-                             selectedIPAddress.ToDotNet(),
-                             port.ToUInt16()
-                         )
-                       : null;
+                IEnumerable<IIPAddress> ipAddresses;
+
+                try
+                {
+                    ipAddresses = await DNSClient.Query_IPAddresses(
+                                           DomainName.Parse(normalized),
+                                           Timeout:            Timeout,
+                                           CancellationToken:  CancellationToken
+                                       ).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch
+                {
+                    continue;
+                }
+
+                var orderedIPAddresses = IPVersionPreference switch {
+                                             IPVersionPreference.IPv6Only    => ipAddresses.Where  (ipAddress => ipAddress is IPv6Address),
+                                             IPVersionPreference.IPv4Only    => ipAddresses.Where  (ipAddress => ipAddress is IPv4Address),
+                                             IPVersionPreference.PreferIPv4  => ipAddresses.OrderBy(ipAddress => ipAddress is IPv4Address ? 0 : 1),
+                                             _                               => ipAddresses.OrderBy(ipAddress => ipAddress is IPv6Address ? 0 : 1)
+                                         };
+
+                var selectedIPAddress = orderedIPAddresses.FirstOrDefault();
+
+                if (selectedIPAddress is not null)
+                    return new System.Net.IPEndPoint(
+                               selectedIPAddress.ToDotNet(),
+                               port.ToUInt16()
+                           );
+
+            }
+
+            return null;
+
+        }
+
+        #endregion
+
+        #region (private static) FormatEndpoint(Host, Port)
+
+        private static String FormatEndpoint(String  Host,
+                                             IPPort  Port)
+        {
+
+            return System.Net.IPAddress.TryParse(Host, out var ipAddress) &&
+                   ipAddress.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6
+                       ? $"[{Host}]:{Port}"
+                       : $"{Host}:{Port}";
+
+        }
+
+        #endregion
+
+        #region (private static) IsAllowedIPAddress(IPAddress, IPVersionPreference)
+
+        private static Boolean IsAllowedIPAddress(System.Net.IPAddress  IPAddress,
+                                                  IPVersionPreference   IPVersionPreference)
+        {
+
+            if (IPVersionPreference == IPVersionPreference.IPv4Only)
+                return IPAddress.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork;
+
+            if (IPVersionPreference == IPVersionPreference.IPv6Only)
+                return IPAddress.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6;
+
+            return true;
 
         }
 

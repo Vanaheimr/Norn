@@ -23,7 +23,9 @@ using System.Text;
 using System.Security.Cryptography;
 using System.Collections.Concurrent;
 
+using Org.BouncyCastle.Crypto.Parameters;
 using Org.BouncyCastle.Tls;
+using Org.BouncyCastle.X509;
 
 using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Hermod;
@@ -64,6 +66,21 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         private readonly         SemaphoreSlim                            ntpRequestSemaphore;
         private readonly         SemaphoreSlim                            ntskeConnectionSemaphore;
         private readonly         Boolean                                  advertiseExternalURLs;
+        private readonly         X509Certificate?                         tlsCertificate;
+        private readonly         ECPrivateKeyParameters?                  tlsPrivateKey;
+        private readonly         String?                                  tlsServerSubjectName;
+
+        private                  Int64                                    ntpRequestsReceived;
+        private                  Int64                                    ntpRequestsRejected;
+        private                  Int64                                    ntpRequestsInvalid;
+        private                  Int64                                    ntpResponsesSent;
+        private                  Int64                                    ntpSignedResponsesSent;
+        private                  Int64                                    ntpRequestFailures;
+        private                  Int64                                    ntskeConnectionsAccepted;
+        private                  Int64                                    ntskeConnectionsRejected;
+        private                  Int64                                    ntskeHandshakeFailures;
+        private                  Int64                                    ntskeRequestsInvalid;
+        private                  Int64                                    ntskeResponsesSent;
 
         #endregion
 
@@ -125,6 +142,24 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public UInt64                CurrentMasterKeyId
             => GetCurrentMasterKey().Id;
 
+        /// <summary>
+        /// A point-in-time snapshot of the NTS server counters.
+        /// </summary>
+        public NTSServerMetrics      Metrics
+            => new (
+                   NTPRequestsReceived:       System.Threading.Interlocked.Read(ref ntpRequestsReceived),
+                   NTPRequestsRejected:       System.Threading.Interlocked.Read(ref ntpRequestsRejected),
+                   NTPRequestsInvalid:        System.Threading.Interlocked.Read(ref ntpRequestsInvalid),
+                   NTPResponsesSent:          System.Threading.Interlocked.Read(ref ntpResponsesSent),
+                   NTPSignedResponsesSent:    System.Threading.Interlocked.Read(ref ntpSignedResponsesSent),
+                   NTPRequestFailures:        System.Threading.Interlocked.Read(ref ntpRequestFailures),
+                   NTSKEConnectionsAccepted:  System.Threading.Interlocked.Read(ref ntskeConnectionsAccepted),
+                   NTSKEConnectionsRejected:  System.Threading.Interlocked.Read(ref ntskeConnectionsRejected),
+                   NTSKEHandshakeFailures:    System.Threading.Interlocked.Read(ref ntskeHandshakeFailures),
+                   NTSKERequestsInvalid:      System.Threading.Interlocked.Read(ref ntskeRequestsInvalid),
+                   NTSKEResponsesSent:        System.Threading.Interlocked.Read(ref ntskeResponsesSent)
+               );
+
         #endregion
 
         #region Constructor(s)
@@ -153,7 +188,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                          TimeSpan?          NTSKERequestTimeout           = null,
                          Int32?             MaxNTSKERequestSize           = null,
                          Int32?             MaxConcurrentNTPRequests      = null,
-                         Int32?             MaxConcurrentNTSKEConnections = null)
+                         Int32?             MaxConcurrentNTSKEConnections = null,
+                         X509Certificate?   TLSCertificate                = null,
+                         ECPrivateKeyParameters? TLSPrivateKey            = null,
+                         String?            TLSServerSubjectName          = null)
         {
 
             this.Description                  = Description                  ?? I18NString.Empty;
@@ -174,6 +212,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             this.advertiseExternalURLs        = ExternalURLs is not null;
             this.ntpRequestSemaphore          = new SemaphoreSlim(this.MaxConcurrentNTPRequests);
             this.ntskeConnectionSemaphore     = new SemaphoreSlim(this.MaxConcurrentNTSKEConnections);
+            this.tlsCertificate               = TLSCertificate;
+            this.tlsPrivateKey                = TLSPrivateKey;
+            this.tlsServerSubjectName         = TLSServerSubjectName;
 
             if (KeyPair is not null)
             {
@@ -545,12 +586,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                         cts.Token
                                                     );
 
+                        System.Threading.Interlocked.Increment(ref ntpRequestsReceived);
+
                         // Local copy to pass into the Task
                         var udpPacketLocal  = udpPacket;
 
 
                         if (!await ntpRequestSemaphore.WaitAsync(0, cts.Token).ConfigureAwait(false))
                         {
+                            System.Threading.Interlocked.Increment(ref ntpRequestsRejected);
                             DebugX.Log($"Dropping NTP request from {udpPacketLocal.RemoteEndPoint}: too many concurrent requests.");
                             continue;
                         }
@@ -581,6 +625,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                udpPacketLocal.RemoteEndPoint,
                                                cts.Token
                                            );
+                                    System.Threading.Interlocked.Increment(ref ntpResponsesSent);
 
                                     if (toBeSigned && currentKeyPair is not null)
                                     {
@@ -596,17 +641,20 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                   udpPacketLocal.RemoteEndPoint,
                                                   cts.Token
                                               );
+                                        System.Threading.Interlocked.Increment(ref ntpSignedResponsesSent);
 
                                     }
 
                                 }
                                 else
                                 {
+                                    System.Threading.Interlocked.Increment(ref ntpRequestsInvalid);
                                     DebugX.Log($"Invalid NTP request from {udpPacketLocal.RemoteEndPoint}: {errorResponse}");
                                 }
                             }
                             catch (Exception e)
                             {
+                                System.Threading.Interlocked.Increment(ref ntpRequestFailures);
                                 DebugX.Log($"Exception while processing a NTP request: {e}");
                             }
                             finally
@@ -667,8 +715,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                         if (clientSocket == null)
                             continue;
 
+                        System.Threading.Interlocked.Increment(ref ntskeConnectionsAccepted);
+
                         if (!await ntskeConnectionSemaphore.WaitAsync(0, cts.Token).ConfigureAwait(false))
                         {
+                            System.Threading.Interlocked.Increment(ref ntskeConnectionsRejected);
                             DebugX.Log($"Closing NTS-KE connection from {clientSocket.RemoteEndPoint}: too many concurrent connections.");
                             clientSocket.Close();
                             continue;
@@ -683,7 +734,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                 using var requestCTS     = CancellationTokenSource.CreateLinkedTokenSource(cts.Token);
                                 requestCTS.CancelAfter(NTSKEHandshakeTimeout + NTSKERequestTimeout);
                                 var tlsServerProtocol    = new TlsServerProtocol(networkStream);
-                                var tlsServer            = new NTSKE_TLSService ();
+                                var tlsServer            = new NTSKE_TLSService (
+                                                               tlsCertificate,
+                                                               tlsPrivateKey,
+                                                               tlsServerSubjectName
+                                                           );
 
                                 await Task.Run(
                                           () => tlsServerProtocol.Accept(tlsServer),
@@ -718,16 +773,19 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                                           ConfigureAwait(false);
                                         await tlsServerProtocol.Stream.FlushAsync(requestCTS.Token).
                                                                           ConfigureAwait(false);
+                                        System.Threading.Interlocked.Increment(ref ntskeResponsesSent);
 
                                     }
                                     else
                                     {
+                                        System.Threading.Interlocked.Increment(ref ntskeRequestsInvalid);
                                         DebugX.Log($"Invalid NTS-KE response: {errorResponse}");
                                     }
 
                                 }
                                 else
                                 {
+                                    System.Threading.Interlocked.Increment(ref ntskeRequestsInvalid);
                                     DebugX.Log($"Invalid NTS-KE request: {errorMessage}");
                                 }
 
@@ -736,6 +794,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                             }
                             catch (Exception ex)
                             {
+                                System.Threading.Interlocked.Increment(ref ntskeHandshakeFailures);
                                 DebugX.Log($"TLS handshake/IO failed: {ex.Message}");
                             }
                             finally

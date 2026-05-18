@@ -69,6 +69,94 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
         #endregion
 
+        #region Builds_Paired_Candidates_For_Multiple_Hosts_And_Ports()
+
+        [Test]
+        public void Builds_Paired_Candidates_For_Multiple_Hosts_And_Ports()
+        {
+
+            var response = new NTSKE_Response(
+                               [
+                                   NTSKE_Record.NTPv4ServerNegotiation(Encoding.ASCII.GetBytes("ntp1.example.org")),
+                                   NTSKE_Record.NTPv4ServerNegotiation(Encoding.ASCII.GetBytes("ntp2.example.org")),
+                                   NTSKE_Record.NTPv4PortNegotiation  ([ 0x04, 0xD2 ])
+                               ],
+                               [],
+                               []
+                           );
+
+            var candidates = NTPRemoteEndPointResolver.GetRemoteCandidates(
+                                 response,
+                                 DomainName.Parse("fallback.example.org"),
+                                 IPPort.NTP
+                             ).ToList();
+
+            Assert.That(candidates.Count,                 Is.EqualTo(2));
+            Assert.That(candidates[0].Host,               Is.EqualTo("ntp1.example.org"));
+            Assert.That(candidates[0].Port,               Is.EqualTo(IPPort.Parse(1234)));
+            Assert.That(candidates[1].Host,               Is.EqualTo("ntp2.example.org"));
+            Assert.That(candidates[1].Port,               Is.EqualTo(IPPort.Parse(1234)));
+
+        }
+
+        #endregion
+
+        #region Uses_Fallback_Host_When_Only_Port_Is_Negotiated()
+
+        [Test]
+        public void Uses_Fallback_Host_When_Only_Port_Is_Negotiated()
+        {
+
+            var response = new NTSKE_Response(
+                               [
+                                   NTSKE_Record.NTPv4PortNegotiation([ 0x04, 0xD2 ])
+                               ],
+                               [],
+                               []
+                           );
+
+            var candidates = NTPRemoteEndPointResolver.GetRemoteCandidates(
+                                 response,
+                                 DomainName.Parse("fallback.example.org"),
+                                 IPPort.NTP
+                             ).ToList();
+
+            Assert.That(candidates.Count,    Is.EqualTo(1));
+            Assert.That(candidates[0].Host,  Is.EqualTo("fallback.example.org"));
+            Assert.That(candidates[0].Port,  Is.EqualTo(IPPort.Parse(1234)));
+
+        }
+
+        #endregion
+
+        #region Formats_IPv6_Remote_Description_With_Brackets()
+
+        [Test]
+        public void Formats_IPv6_Remote_Description_With_Brackets()
+        {
+
+            var response = new NTSKE_Response(
+                               [
+                                   NTSKE_Record.NTPv4ServerNegotiation(Encoding.ASCII.GetBytes("2001:db8::1")),
+                                   NTSKE_Record.NTPv4PortNegotiation  ([ 0x04, 0xD2 ])
+                               ],
+                               [],
+                               []
+                           );
+
+            Assert.That(
+                NTPRemoteEndPointResolver.GetRemoteDescription(
+                    response,
+                    DomainName.Parse("fallback.example.org"),
+                    IPPort.NTP
+                ),
+                Is.EqualTo("[2001:db8::1]:1234")
+            );
+
+        }
+
+        #endregion
+
         #region Falls_Back_To_Client_Host_And_Port_Without_Negotiation()
 
         [Test]

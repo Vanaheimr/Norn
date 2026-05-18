@@ -200,10 +200,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
         #endregion
 
-        #region NTSKERecordValidator_Rejects_Warning_Record()
+        #region NTSKERecordValidator_Accepts_Warning_Record()
 
         [Test]
-        public void NTSKERecordValidator_Rejects_Warning_Record()
+        public void NTSKERecordValidator_Accepts_Warning_Record()
         {
 
             var records = CreateValidResponseRecords(
@@ -214,13 +214,19 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                 NTSKERecordValidator.ValidateServerResponse(
                     records,
                     out var errorMessage,
-                    out var errorCategory
+                    out var errorCategory,
+                    out var warningMessages
                 ),
-                Is.False
+                Is.True,
+                errorMessage
             );
 
-            Assert.That(errorMessage,   Does.Contain("Warning record"));
-            Assert.That(errorCategory,  Is.EqualTo(NTSKEErrorCategory.ServerWarning));
+            Assert.That(errorCategory,     Is.EqualTo(NTSKEErrorCategory.None));
+            Assert.That(warningMessages,   Does.Contain("Server warning"));
+
+            var response = new NTSKE_Response(records, [], []);
+
+            Assert.That(response.WarningMessages, Does.Contain("Server warning"));
 
         }
 

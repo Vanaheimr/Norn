@@ -36,12 +36,32 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public static Boolean ValidateServerResponse(IEnumerable<NTSKE_Record>              Records,
                                                      [NotNullWhen(false)] out String?       ErrorMessage,
                                                      out NTSKEErrorCategory                 ErrorCategory)
+
+            => ValidateServerResponse(
+                   Records,
+                   out ErrorMessage,
+                   out ErrorCategory,
+                   out _
+               );
+
+        #endregion
+
+        #region ValidateServerResponse(Records, out ErrorMessage, out ErrorCategory, out WarningMessages)
+
+        public static Boolean ValidateServerResponse(IEnumerable<NTSKE_Record>              Records,
+                                                     [NotNullWhen(false)] out String?       ErrorMessage,
+                                                     out NTSKEErrorCategory                 ErrorCategory,
+                                                     out IEnumerable<String>                WarningMessages)
         {
 
             var records = Records.ToList();
 
-            ErrorMessage   = null;
-            ErrorCategory  = NTSKEErrorCategory.None;
+            ErrorMessage     = null;
+            ErrorCategory    = NTSKEErrorCategory.None;
+            WarningMessages  = records.
+                                   Where (record => record.Type == NTSKE_RecordTypes.Warning).
+                                   Select(FormatRecordBody).
+                                   ToArray();
 
 
             foreach (var record in records)
@@ -66,17 +86,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                 ErrorMessage   = $"NTS-KE server returned an Error record: {FormatRecordBody(errorRecord)}";
                 ErrorCategory  = NTSKEErrorCategory.ServerError;
-                return false;
-
-            }
-
-
-            var warningRecord = records.FirstOrDefault(record => record.Type == NTSKE_RecordTypes.Warning);
-            if (warningRecord is not null)
-            {
-
-                ErrorMessage   = $"NTS-KE server returned a Warning record: {FormatRecordBody(warningRecord)}";
-                ErrorCategory  = NTSKEErrorCategory.ServerWarning;
                 return false;
 
             }

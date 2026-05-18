@@ -67,7 +67,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public NTSKE_TLSInfo?             TLSInfo         { get; }
 
         /// <summary>
-        /// The negotiated NTPv4 server names or IP addresses, if announced by NTS-KE.
+        /// The negotiated NTPv4 server names or IP literals, if announced by NTS-KE.
+        /// </summary>
+        public IEnumerable<String>        NTPv4ServerNames { get; } = [];
+
+        /// <summary>
+        /// The negotiated NTPv4 server names that can be represented as DNS domain names.
         /// </summary>
         public IEnumerable<DomainName>    NTPv4Servers    { get; } = [];
 
@@ -75,6 +80,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// The negotiated NTPv4 UDP ports, if announced by NTS-KE.
         /// </summary>
         public IEnumerable<IPPort>        NTPv4Ports      { get; } = [];
+
+        /// <summary>
+        /// Warning messages returned by the NTS-KE server.
+        /// </summary>
+        public IEnumerable<String>        WarningMessages { get; } = [];
 
 
         /// <summary>
@@ -122,11 +132,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             this.TimingInfo    = TimingInfo;
             this.TLSInfo       = TLSInfo;
 
-            this.NTPv4Servers  = NTSKERecords.
+            this.NTPv4ServerNames = NTSKERecords.
                                      Where (ntsKERecord => ntsKERecord.Type == NTSKE_RecordTypes.NTPv4ServerNegotiation).
                                      Select(ntsKERecord => Encoding.ASCII.GetString(ntsKERecord.Body).TrimEnd('\0')).
                                      Where (server      => server.IsNotNullOrEmpty()).
-                                     Select(DomainName.Parse);
+                                     ToArray();
+
+            this.NTPv4Servers  = this.NTPv4ServerNames.
+                                      Where(server => DomainName.TryParse(server, out _, out _)).
+                                      Select(DomainName.Parse).
+                                      ToArray();
 
             this.NTPv4Ports    = NTSKERecords.
                                      Where (ntsKERecord =>  ntsKERecord.Type == NTSKE_RecordTypes.NTPv4PortNegotiation).
@@ -134,6 +149,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                      Select(ntsKERecord => (UInt16) (ntsKERecord.Body[0] << 8) | ntsKERecord.Body[1]).
                                      Where (port        =>  port > 0).
                                      Select(IPPort.Parse);
+
+            this.WarningMessages = NTSKERecords.
+                                       Where (ntsKERecord => ntsKERecord.Type == NTSKE_RecordTypes.Warning).
+                                       Select(FormatRecordBody);
 
         }
 
@@ -160,6 +179,24 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #endregion
 
+
+        #region (private static) FormatRecordBody(Record)
+
+        private static String FormatRecordBody(NTSKE_Record Record)
+        {
+
+            if (Record.Body.Length == 0)
+                return "<empty>";
+
+            var text = Encoding.UTF8.GetString(Record.Body).TrimEnd('\0');
+
+            return String.IsNullOrWhiteSpace(text)
+                       ? BitConverter.ToString(Record.Body)
+                       : text;
+
+        }
+
+        #endregion
 
         #region (private) FormatHostnamesAndPorts(Hostnames, Ports)
 

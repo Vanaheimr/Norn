@@ -66,6 +66,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         public NTSResponseValidationResult? ResponseValidation      { get; }
 
+        public NTSQueryDiagnostics          Diagnostics             { get; }
+
         #endregion
 
         #region Constructor(s)
@@ -111,6 +113,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                           ((Double) TimeSpan.TicksPerSecond / System.Diagnostics.Stopwatch.Frequency))
                                               );
             }
+
+            this.Diagnostics = new NTSQueryDiagnostics(
+                                   this.RemoteEndPoint,
+                                   this.RemoteDescription,
+                                   this.SendStopwatchTimestamp,
+                                   this.ReceiveStopwatchTimestamp,
+                                   this.StopwatchRoundTripTime,
+                                   this.DestinationTimestamp,
+                                   this.NewCookieReceived,
+                                   this.CookiePoolDiagnostics,
+                                   this.ResponseValidation
+                               );
 
         }
 

@@ -175,6 +175,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
             Assert.That(ntsQueryResult.RemoteDescription,          Is.Not.Empty);
             Assert.That(ntsQueryResult.UsedCookie,                 Is.Not.Null);
             Assert.That(ntsQueryResult.RemainingCookiesAfterQuery, Is.GreaterThanOrEqualTo(0));
+            Assert.That(ntsQueryResult.Diagnostics,                Is.Not.Null);
+            Assert.That(ntsQueryResult.Diagnostics.RemoteDescription, Is.Not.Empty);
 
             var ntsResponse                = ntsQueryResult.Response;
             Assert.That(ntsResponse,    Is.Not.Null);
@@ -236,6 +238,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                     Assert.Fail("NTS Cookie Extension is invalid!");
 
             }
+
+            var metrics = ntsServer.Metrics;
+
+            Assert.That(metrics.NTSKEConnectionsAccepted, Is.GreaterThanOrEqualTo(1));
+            Assert.That(metrics.NTSKEResponsesSent,       Is.GreaterThanOrEqualTo(1));
+            Assert.That(metrics.NTPRequestsReceived,      Is.GreaterThanOrEqualTo(1));
+            Assert.That(metrics.NTPResponsesSent,         Is.GreaterThanOrEqualTo(1));
 
         }
 

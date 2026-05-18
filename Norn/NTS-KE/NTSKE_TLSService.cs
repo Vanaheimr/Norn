@@ -101,6 +101,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         {
 
+            if ((Certificate is null) != (PrivateKey is null))
+                throw new ArgumentException("TLS certificate and private key must be provided together.");
+
             if (Certificate is not null &&
                 PrivateKey  is not null)
             {
@@ -110,13 +113,19 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 this.SubjectName  = SubjectName;
 
             }
+            else
+            {
 
-            (this.Certificate, this.PrivateKey)  = GenerateSelfSignedServerCertificate(
-                                                       SubjectName.IsNotNullOrEmpty()
-                                                           ? $"CN={SubjectName}"
-                                                           : "CN=ntpKE.example.org",
-                                                       [ "ntpKE1.example.org", "ntpKE2.example.org" ]
-                                                   );
+                (this.Certificate, this.PrivateKey)  = GenerateSelfSignedServerCertificate(
+                                                           SubjectName.IsNotNullOrEmpty()
+                                                               ? $"CN={SubjectName}"
+                                                               : "CN=ntpKE.example.org",
+                                                           [ "ntpKE1.example.org", "ntpKE2.example.org" ]
+                                                       );
+
+                this.SubjectName = SubjectName;
+
+            }
 
             this.encodedCertificate              = this.Certificate.GetEncoded();
 
@@ -245,7 +254,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             certGenerator.AddExtension(
                 X509Extensions.BasicConstraints,
                 true,
-                new BasicConstraints(true)
+                new BasicConstraints(false)
             );
 
             certGenerator.AddExtension(
