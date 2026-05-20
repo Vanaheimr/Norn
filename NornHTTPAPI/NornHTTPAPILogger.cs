@@ -40,7 +40,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.HTTPAPI
         /// <summary>
         /// The Norn HTTP API logger.
         /// </summary>
-        public class HTTPAPILogger : HTTPServerLoggerX
+        public class HTTPAPILogger : HTTPServerLogger
         {
 
             #region Data

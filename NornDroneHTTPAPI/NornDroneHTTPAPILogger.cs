@@ -34,7 +34,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Drone.HTTPAPI
         /// <summary>
         /// The Norn Drone HTTP API logger.
         /// </summary>
-        public class HTTPAPILogger : HTTPServerLoggerX
+        public class HTTPAPILogger : HTTPServerLogger
         {
 
             #region Data
