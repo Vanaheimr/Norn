@@ -511,6 +511,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
         #endregion
 
+        #region (static) GetCurrentNTPTimestamp(TimeProvider)
+
+        /// <summary>
+        /// Read the given clock and convert it to the 64-bit NTP format.
+        /// </summary>
+        /// <param name="TimeProvider">The clock to read.</param>
+        public static UInt64 GetCurrentNTPTimestamp(TimeProvider TimeProvider)
+
+            => GetCurrentNTPTimestamp(TimeProvider.GetUtcNow().UtcDateTime);
+
+        #endregion
+
         #region (static) GetCurrentNTPTimestamp(Timestamp = null)
 
         /// <summary>
@@ -562,6 +574,20 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
         #endregion
 
+
+        #region NTPTimestampToDateTime(NTPTimestamp, TimeProvider)
+
+        /// <summary>
+        /// Convert a 64-bit NTP timestamp to a DateTime (UTC), resolving its era against the
+        /// given clock rather than the ambient one.
+        /// </summary>
+        public static DateTime NTPTimestampToDateTime(UInt64        NTPTimestamp,
+                                                      TimeProvider  TimeProvider)
+
+            => NTPTimestampToDateTime(NTPTimestamp,
+                                      TimeProvider.GetUtcNow().UtcDateTime);
+
+        #endregion
 
         #region NTPTimestampToDateTime(ntpTimestamp)
 

@@ -145,10 +145,20 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         #endregion
 
 
+        /// <summary>
+        /// Create a new NTS cookie for the given session keys.
+        /// </summary>
+        /// <param name="TimeProvider">
+        /// The optional clock to timestamp the cookie with. It must be the same clock the server
+        /// rotates its master keys on, because TryParse checks this timestamp against that key's
+        /// validity window — two clocks that disagree would make a freshly minted cookie
+        /// unusable. Without one the ambient <see cref="Illias.Timestamp.Now"/> is read, as before.
+        /// </param>
         public static NTSCookie Create(MasterKey        MasterKey,
                                        Byte[]           C2SKey,
                                        Byte[]           S2CKey,
-                                       AEADAlgorithms?  AEADAlgorithm   = null)
+                                       AEADAlgorithms?  AEADAlgorithm   = null,
+                                       TimeProvider?    TimeProvider    = null)
         {
 
             return new (
@@ -156,7 +166,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                        S2CKey:          S2CKey,
                        MasterKeyId:     MasterKey.Id,
                        AEADAlgorithm:   AEADAlgorithm,
-                       Timestamp:       Illias.Timestamp.Now,
+                       Timestamp:       TimeProvider?.GetUtcNow() ?? Illias.Timestamp.Now,
                        Nonce:           RandomNumberGenerator.GetBytes(32)
                    );
 

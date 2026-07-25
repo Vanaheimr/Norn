@@ -42,7 +42,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                  Byte[]          C2SKey,
                                  Byte[]          S2CKey,
                                  AEADAlgorithms  AEADAlgorithm   = AEADAlgorithms.AES_SIV_CMAC_256,
-                                 Boolean         IsCritical      = false)
+                                 Boolean         IsCritical      = false,
+                                 TimeProvider?   TimeProvider    = null)
 
         {
 
@@ -69,7 +70,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 cookies.Add(
                     new NTSKERecords.NewCookieForNTPv4(
                         IsCritical,
-                        NTSCookie.Create(MasterKey, C2SKey, S2CKey, AEADAlgorithm).Encrypt(MasterKey)
+                        NTSCookie.Create(MasterKey, C2SKey, S2CKey, AEADAlgorithm, TimeProvider).Encrypt(MasterKey)
                     )
                 );
             }
@@ -88,7 +89,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                         UInt16          NumberOfCookies,
                                         Byte[]          C2SKey,
                                         Byte[]          S2CKey,
-                                        AEADAlgorithms  AEADAlgorithm   = AEADAlgorithms.AES_SIV_CMAC_256)
+                                        AEADAlgorithms  AEADAlgorithm   = AEADAlgorithms.AES_SIV_CMAC_256,
+                                        TimeProvider?   TimeProvider    = null)
                                     //    Boolean         IsCritical      = false)
 
         {
@@ -115,7 +117,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             {
                 cookies.Add(
                     new NTSCookieExtension(
-                        NTSCookie.Create(MasterKey, C2SKey, S2CKey, AEADAlgorithm).Encrypt(MasterKey)
+                        NTSCookie.Create(MasterKey, C2SKey, S2CKey, AEADAlgorithm, TimeProvider).Encrypt(MasterKey)
                     )
                 );
             }

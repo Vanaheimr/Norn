@@ -89,9 +89,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <param name="Certificate">The TLS certificate to use.</param>
         /// <param name="PrivateKey">The private key to use.</param>
         /// <param name="SubjectName">The optional X.509 subject name to use for new certificates.</param>
-        public NTSKE_TLSService(X509Certificate?         Certificate   = null,
-                                ECPrivateKeyParameters?  PrivateKey    = null,
-                                String?                  SubjectName   = null)
+        /// <param name="TimeProvider">The optional clock deciding a generated certificate's validity period.</param>
+        public NTSKE_TLSService(X509Certificate?         Certificate    = null,
+                                ECPrivateKeyParameters?  PrivateKey     = null,
+                                String?                  SubjectName    = null,
+                                TimeProvider?            TimeProvider   = null)
 
             : base(
                   new BcTlsCrypto(
@@ -120,7 +122,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                            SubjectName.IsNotNullOrEmpty()
                                                                ? $"CN={SubjectName}"
                                                                : "CN=ntpKE.example.org",
-                                                           [ "ntpKE1.example.org", "ntpKE2.example.org" ]
+                                                           [ "ntpKE1.example.org", "ntpKE2.example.org" ],
+                                                           TimeProvider
                                                        );
 
                 this.SubjectName = SubjectName;
@@ -241,10 +244,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </summary>
         /// <param name="SubjectName">The X.509 subject name to use for the new certificate.</param>
         /// <param name="SubjectAlternativeNames">Optional enumeration of subject alternative DNS names.</param>
+        /// <param name="TimeProvider">The optional clock the validity period is measured from.</param>
         public static (X509Certificate         Certificate,
                        ECPrivateKeyParameters  PrivateKey)
             GenerateSelfSignedServerCertificate(String                SubjectName,
-                                                IEnumerable<String>?  SubjectAlternativeNames = null)
+                                                IEnumerable<String>?  SubjectAlternativeNames   = null,
+                                                TimeProvider?         TimeProvider              = null)
 
         {
 
@@ -270,8 +275,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             certGenerator.SetSubjectDN   (new X509Name(SubjectName));
             certGenerator.SetIssuerDN    (new X509Name(SubjectName));  // self-signed!
 
-            certGenerator.SetNotBefore   (Timestamp.Now.AddDays(-1).DateTime);
-            certGenerator.SetNotAfter    (Timestamp.Now.AddDays(30).DateTime);
+            // One clock read for both bounds, so a certificate cannot be issued with a validity
+            // period that straddles two different readings.
+            var now = TimeProvider?.GetUtcNow() ?? Timestamp.Now;
+
+            certGenerator.SetNotBefore   (now.AddDays(-1).UtcDateTime);
+            certGenerator.SetNotAfter    (now.AddDays(30).UtcDateTime);
 
             certGenerator.SetPublicKey   (keyPair.Public);
 
