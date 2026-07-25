@@ -276,10 +276,54 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                );
 
         /// <summary>
-        /// NTS Error
+        /// NTS Next Protocol Negotiation carrying the given protocol IDs.
+        ///
+        /// An empty list is how a server says it supports none of the protocols the client
+        /// offered — RFC 8915 § 4.1.2 allows the response list to be empty, and requires that
+        /// whatever it does contain be a subset of the request's.
+        /// </summary>
+        /// <param name="ProtocolIds">The protocol IDs, most preferred first.</param>
+        public static NTSKE_Record  NextProtocolNegotiation(params UInt16[] ProtocolIds)
+
+            => new NTSKERecords.NTSNextProtocolNegotiation(
+                   true,
+                   ToNetworkByteOrder(ProtocolIds)
+               );
+
+        /// <summary>
+        /// NTS AEAD Algorithm Negotiation carrying the given algorithm IDs.
+        ///
+        /// An empty list is how a server says it supports none of the algorithms offered
+        /// (RFC 8915 § 4.1.5).
+        /// </summary>
+        /// <param name="Algorithms">The AEAD algorithms, most preferred first.</param>
+        public static NTSKE_Record  AEADAlgorithmNegotiation(IEnumerable<AEADAlgorithms> Algorithms)
+
+            => new NTSKERecords.AEADAlgorithmNegotiation(
+                   true,
+                   ToNetworkByteOrder([.. Algorithms.Select(algorithm => (UInt16) algorithm)])
+               );
+
+        /// <summary>
+        /// NTS Error carrying one of the RFC 8915 § 4.1.3 error codes.
+        ///
+        /// The body is a two-octet code, not text: a peer has to be able to act on it, and
+        /// § 4.1.3 defines exactly three values.
+        /// </summary>
+        /// <param name="ErrorCode">The error code.</param>
+        public static NTSKE_Record  Error(NTSKEErrorCodes ErrorCode)
+
+            => new NTSKERecords.Error(
+                   true,
+                   ToNetworkByteOrder((UInt16) ErrorCode)
+               );
+
+        /// <summary>
+        /// NTS Error carrying a free-text message.
         /// </summary>
         /// <param name="IsCritical">Whether an unrecognized record must cause an error.</param>
         /// <param name="ErrorMessage">The error message.</param>
+        [Obsolete("RFC 8915 § 4.1.3 defines the Error body as a two-octet code; use Error(NTSKEErrorCodes).")]
         public static NTSKE_Record  Error(String   ErrorMessage,
                                           Boolean  IsCritical   = true)
 
@@ -287,6 +331,22 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                    IsCritical,
                    ErrorMessage
                );
+
+
+        private static Byte[] ToNetworkByteOrder(params UInt16[] Values)
+        {
+
+            var bytes = new Byte[Values.Length * 2];
+
+            for (var i = 0; i < Values.Length; i++)
+            {
+                bytes[i * 2]     = (Byte) (Values[i] >> 8);
+                bytes[i * 2 + 1] = (Byte)  Values[i];
+            }
+
+            return bytes;
+
+        }
 
         /// <summary>
         /// NTS Warning
