@@ -203,6 +203,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                 return false;
             }
 
+            // Validate the whole extension field chain before decoding any of it, so a
+            // malformed tail cannot be dropped while the rest of the packet is accepted.
+            if (!NTPExtensionFieldValidator.TryValidate(Buffer, out ErrorResponse))
+            {
+                NTPResponse = null;
+                return false;
+            }
+
             #endregion
 
             var ntpPacketBytes = new Byte[48];
@@ -219,16 +227,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
                 var type   = (ExtensionTypes) ((Buffer[offset]     << 8) | Buffer[offset + 1]);
                 var length = (UInt16)         ((Buffer[offset + 2] << 8) | Buffer[offset + 3]);
-
-                if (length < 4)
-                {
-                    ErrorResponse  = $"Illegal length of extension {length} at offset {offset}!";
-                    NTPResponse      = null;
-                    return false;
-                }
-
-                if (offset + length > Buffer.Length)
-                    break;
 
                 var copy = new Byte[length];
                 Array.Copy(Buffer, offset, copy, 0, length);

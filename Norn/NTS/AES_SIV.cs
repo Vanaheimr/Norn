@@ -17,6 +17,8 @@
 
 #region Usings
 
+using System.Security.Cryptography;
+
 using Org.BouncyCastle.Crypto.Macs;
 using Org.BouncyCastle.Crypto.Modes;
 using Org.BouncyCastle.Crypto.Engines;
@@ -92,13 +94,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             var ciphertext   = AES_CTR_Encrypt(Plaintext, syntheticIV, Key2_AESCTR);
             var result       = new Byte[syntheticIV.Length + ciphertext.Length];
 
-            DebugX.Log($"key (CMAC):   '{Key1_CMAC.  ToHexString()}'");
-            DebugX.Log($"key (CTR):    '{Key2_AESCTR.ToHexString()}'");
-            DebugX.Log($"syntheticIV:  '{syntheticIV.ToHexString()}'");
-            foreach (var ad in AssociatedData.SelectCounted((ad, c) => $"assocdata({c}): '{ad.ToHexString()}'"))
-                DebugX.Log(ad);
-            DebugX.Log($"nonce:        '{Nonce.      ToHexString()}'");
-            DebugX.Log($"ciphertext:   '{ciphertext. ToHexString()}'");
+            // Nothing is logged here on purpose: this runs for every NTS request and every NTS
+            // response, and both halves of the split key pass through it. Logging them once is
+            // enough to compromise every association the process has served.
 
             Array.Copy(syntheticIV, 0, result,                  0, syntheticIV.Length);
             Array.Copy(ciphertext,  0, result, syntheticIV.Length, ciphertext. Length);
@@ -138,16 +136,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             // Recompute the synthetic IV from associated data, nonce, and the decrypted plaintext:
             var computedSIV  = String2InitializationVector(AssociatedData, Nonce, plaintext);
 
-            var a = AssociatedData.Select(ad => ad.ToHexString()).AggregateWith(" / ");
-            var n = Nonce.      ToHexString();
-            var s = syntheticIV.ToHexString();
-            var c = ciphertext. ToHexString();
-            var z = computedSIV.ToHexString();
-
-            var o = $"{a} - {n} - {s} - {c} - {z}";
-
-            if (!syntheticIV.SequenceEqual(computedSIV))
-                throw new Exception("Authentication failed: SIV mismatch!");
+            // Compared in constant time: a data-dependent early exit would leak how much of a
+            // forged synthetic IV was correct, letting an attacker construct one byte at a time.
+            if (!CryptographicOperations.FixedTimeEquals(syntheticIV, computedSIV))
+                throw new CryptographicException("Authentication failed: SIV mismatch!");
 
             return plaintext;
 
@@ -167,11 +159,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                    Byte[]               Plaintext)
         {
 
-            // Special case: If there are no associated data blocks
-            // and no plaintext, return CMAC(K, <one>)
-            if (!AssociatedData.Any() && Plaintext.Length == 0)
-                return CMAC(Key1_CMAC, [0x80, .. new Byte[15]]);
-
+            // There is deliberately no "empty vector" special case here.
+            //
+            // RFC 5297 §2.4 returns CMAC(K, <one>) only when S2V is called with an empty
+            // vector, and §2.6 always appends the plaintext to that vector:
+            //
+            //     V = S2V(K1, AD1, ..., ADn, P)
+            //
+            // So even with no associated data and an empty plaintext the vector is ("") —
+            // one element, length zero — which falls through to the padded-last-block branch
+            // below. The empty vector is unreachable from SIV-ENCRYPT, and short-cutting to
+            // CMAC(<one>) on "no associated data and no plaintext" produced a different
+            // synthetic IV than any conformant implementation.
 
             // Step 1: Initialize D with CMAC(K, <zero>), meaning 0^128
             var D          = CMAC(Key1_CMAC, new Byte[16]);
@@ -326,6 +325,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             // as are necessary.
             //
             // pad(data) = data || 0x80 || 0^j, till the total length is 16 Bytes.
+
+            // The RFC defines pad() only for len(X) < 128 bits. A full or overlong block has
+            // nothing to pad, and writing the 0x80 marker at Data.Length would run past the
+            // end of the block.
+            if (Data.Length >= 16)
+                throw new ArgumentException($"pad() is defined for inputs shorter than 16 bytes; got {Data.Length}!",
+                                            nameof(Data));
 
             var padded = new Byte[16];
             Buffer.BlockCopy(Data, 0, padded, 0, Data.Length);

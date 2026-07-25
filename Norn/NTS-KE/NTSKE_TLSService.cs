@@ -134,6 +134,24 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         #endregion
 
 
+        #region (protected override) GetProtocolNames()
+
+        /// <summary>
+        /// Offer the "ntske/1" application protocol, so it is selected and echoed back in the
+        /// ServerHello.
+        ///
+        /// RFC 8915 § 4 requires NTS-KE to run under this ALPN identifier. Without it the
+        /// server completes the TLS handshake but never tells the client which protocol was
+        /// chosen, and a client that checks — chrony's does — has to treat the connection as
+        /// something other than NTS-KE and give up. Returning the name here also makes
+        /// BouncyCastle fail the handshake when a client offers ALPN with no overlap, rather
+        /// than proceeding on an unstated protocol.
+        /// </summary>
+        protected override IList<ProtocolName> GetProtocolNames()
+            => [ ProtocolName.Ntske_1 ];
+
+        #endregion
+
         #region (public    override) NotifyHandshakeComplete()
 
         public override void NotifyHandshakeComplete()
