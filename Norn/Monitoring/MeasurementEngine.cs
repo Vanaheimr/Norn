@@ -40,13 +40,21 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
     /// The measurement engine performs individual and parallel measurements
     /// against NTS servers using the Norn library.
     /// </summary>
-    public class MeasurementEngine(MonitoringConfig Configuration)
+    /// <param name="Configuration">The monitoring configuration.</param>
+    /// <param name="TimeProvider">
+    /// The clock this engine reads: the round timestamps, cache ageing and certificate expiry.
+    /// It is also handed to every <see cref="NTSClient"/> the engine creates, so a measurement
+    /// and the client that produced it agree on what time it is.
+    /// </param>
+    public class MeasurementEngine(MonitoringConfig  Configuration,
+                                   TimeProvider?     TimeProvider   = null)
     {
 
         #region Data
 
-        private readonly ConcurrentDictionary<DomainName, CachedNTSKEState>  ntskeCache  = [];
-        private readonly MonitoringConfig                                    config      = Configuration;
+        private readonly ConcurrentDictionary<DomainName, CachedNTSKEState>  ntskeCache    = [];
+        private readonly MonitoringConfig                                    config        = Configuration;
+        private readonly TimeProvider                                        timeProvider  = TimeProvider ?? System.TimeProvider.System;
 
         #endregion
 
@@ -62,7 +70,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         {
 
             var roundId          = UUIDv7.Generate();
-            var roundTimestamp   = Timestamp.Now;
+            var roundTimestamp   = timeProvider.GetUtcNow();
             var roundStopwatch   = Stopwatch.StartNew();
 
             // Launch all server measurements simultaneously
@@ -106,7 +114,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
             var result          = new NTSMeasurementResult(
                                       Server.Hostname,
-                                      RoundId
+                                      RoundId,
+                                      Timestamp: timeProvider.GetUtcNow()
                                   ) {
                                         Success = false
                                     };
@@ -126,7 +135,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
                 var cachedState = GetOrRefreshNTSKE(Server);
 
-                if (cachedState is null || cachedState.NeedsRefresh(config.NTSKERefreshInterval))
+                if (cachedState is null || cachedState.NeedsRefresh(config.NTSKERefreshInterval, timeProvider))
                 {
 
                     ntskeFromCache   = false;
@@ -137,7 +146,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
                         totalStopwatch.Stop();
 
-                        return new NTSMeasurementResult(Server.Hostname, RoundId) {
+                        return new NTSMeasurementResult(Server.Hostname, RoundId, Timestamp: timeProvider.GetUtcNow()) {
                                    DNS             = dnsResult,
                                    NTSKE           = ntskeMeasurement,
                                    NTSKEFromCache  = false,
@@ -158,7 +167,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
                     totalStopwatch.Stop();
 
-                    return new NTSMeasurementResult(Server.Hostname, RoundId) {
+                    return new NTSMeasurementResult(Server.Hostname, RoundId, Timestamp: timeProvider.GetUtcNow()) {
                                DNS             = dnsResult,
                                NTSKE           = ntskeMeasurement,
                                NTSKEFromCache  = ntskeFromCache,
@@ -175,7 +184,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
                 totalStopwatch.Stop();
 
-                return new NTSMeasurementResult(Server.Hostname, RoundId) {
+                return new NTSMeasurementResult(Server.Hostname, RoundId, Timestamp: timeProvider.GetUtcNow()) {
                            DNS             = dnsResult,
                            NTSKE           = ntskeMeasurement,
                            NTSKEFromCache  = ntskeFromCache,
@@ -192,7 +201,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
                 totalStopwatch.Stop();
 
-                return new NTSMeasurementResult(Server.Hostname, RoundId) {
+                return new NTSMeasurementResult(Server.Hostname, RoundId, Timestamp: timeProvider.GetUtcNow()) {
                            Success        = false,
                            ErrorMessage   = Error.Create(e),
                            ErrorCategory  = MonitoringErrorCategory.Exception,
@@ -265,7 +274,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                                 Server.Hostname,
                                 Server.NTSKEPort,
                                 Server.NTPPort,
-                                Timeout: config.NTSKETimeout
+                                Timeout:       config.NTSKETimeout,
+                                TimeProvider:  timeProvider
                             );
 
             var sw = Stopwatch.StartNew();
@@ -323,7 +333,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
             ntskeCache[Server.Hostname] = new CachedNTSKEState {
                                               NTSKEResponse     = ntskeResponse,
                                               NTSClient         = ntsClient,
-                                              LastRefreshed     = Timestamp.Now,
+                                              LastRefreshed     = timeProvider.GetUtcNow(),
                                               RemainingCookies  = ToByteCookieCount(cookiePoolDiagnostics.AvailableCookieCount)
                                           };
 
@@ -361,9 +371,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
         #endregion
 
-        #region (private static) BuildCertificateInfo(TLSInfo)
+        #region (private) BuildCertificateInfo(TLSInfo)
 
-        private static TLSCertificateInfo? BuildCertificateInfo(NTSKE_TLSInfo? TLSInfo)
+        /// <summary>
+        /// Describe the server's certificate. Not static any more: "days until expiry" is
+        /// relative to a clock, and it has to be this engine's.
+        /// </summary>
+        private TLSCertificateInfo? BuildCertificateInfo(NTSKE_TLSInfo? TLSInfo)
         {
 
             var certificate = TLSInfo?.ServerCertificate;
@@ -376,7 +390,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                        Issuer                   = certificate.Issuer,
                        NotBefore                = certificate.NotBefore.ToUniversalTime(),
                        NotAfter                 = certificate.NotAfter. ToUniversalTime(),
-                       DaysUntilExpiry          = (Int32) (certificate.NotAfter.ToUniversalTime() - Timestamp.Now).TotalDays,
+                       DaysUntilExpiry          = (Int32) (certificate.NotAfter.ToUniversalTime() - timeProvider.GetUtcNow()).TotalDays,
                        SerialNumber             = certificate.SerialNumber,
                        Thumbprint               = certificate.Thumbprint,
                        SignatureAlgorithm       = certificate.SignatureAlgorithm.FriendlyName,
@@ -468,9 +482,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         /// <summary>
         /// Perform a single NTS-authenticated NTP query with precise T1/T2/T3/T4 timing.
         ///
-        /// CRITICAL: We use Stopwatch for T1 and T4 because Timestamp.Now only has
-        /// ~15ms resolution on Windows. Stopwatch uses the CPU's high-resolution
-        /// performance counter.
+        /// T1 and T4 come from the client's wall clock, which is the only thing they can come
+        /// from: the offset is a statement about that clock, and Stopwatch has no epoch to state
+        /// it against. Stopwatch appears here only to measure the round trip — as a fallback for
+        /// T4 when the client did not record one, and as a diagnostic.
+        ///
+        /// That division is not about resolution. The comment this replaces justified it by
+        /// claiming the wall clock resolves to ~15 ms on Windows, which stopped being true when
+        /// .NET moved to GetSystemTimePreciseAsFileTime; measured, it is sub-microsecond here.
+        /// The real reason to keep an interval on a monotonic timer is that a wall clock steps —
+        /// an NTP correction landing mid-measurement would otherwise show up as network delay.
         ///
         /// The offset and delay calculations follow RFC 5905:
         ///   offset θ = ((T2 - T1) + (T3 - T4)) / 2
@@ -599,11 +620,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                 // T4 = The receive timestamp captured by Norn while parsing the UDP
                 //      response. If it is unavailable, we approximate from Stopwatch.
 
-                var t1      = NTPPacket.NTPTimestampToDateTime(ntpResponse.OriginateTimestamp);
-                var t2      = NTPPacket.NTPTimestampToDateTime(ntpResponse.ReceiveTimestamp);
-                var t3      = NTPPacket.NTPTimestampToDateTime(ntpResponse.TransmitTimestamp ?? 0);
+                // The era each timestamp belongs to is resolved against this engine's clock, not
+                // an ambient one: the wire carries only the low 32 bits of the second count
+                // (RFC 5905 § 6), so "roughly when" has to come from somewhere.
+                var t1      = NTPPacket.NTPTimestampToDateTime(ntpResponse.OriginateTimestamp,       timeProvider);
+                var t2      = NTPPacket.NTPTimestampToDateTime(ntpResponse.ReceiveTimestamp,         timeProvider);
+                var t3      = NTPPacket.NTPTimestampToDateTime(ntpResponse.TransmitTimestamp ?? 0,   timeProvider);
                 var t4      = ntpResponse.DestinationTimestamp.HasValue
-                                  ? NTPPacket.NTPTimestampToDateTime(ntpResponse.DestinationTimestamp.Value)
+                                  ? NTPPacket.NTPTimestampToDateTime(ntpResponse.DestinationTimestamp.Value, timeProvider)
                                   : t1.Add(stopwatchRTT);
 
                 // NOTE: t4 includes overhead from:
@@ -695,7 +719,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         {
 
             if (ntskeCache.TryGetValue(Server.Hostname, out var cached) &&
-                !cached.NeedsRefresh(config.NTSKERefreshInterval))
+                !cached.NeedsRefresh(config.NTSKERefreshInterval, timeProvider))
             {
                 return cached;
             }

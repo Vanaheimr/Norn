@@ -60,7 +60,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
             // Use reflection...
             var methodInfo     = typeof(NTSClient).GetMethod("BuildNTSRequest", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
             Assert.That(methodInfo,  Is.Not.Null, "The method 'BuildNTSRequest' could not be reflected!");
-            var requestPacket  = methodInfo?.Invoke(null, [ ntsKEResponse, cookie, uniqueId, plaintext, SignedResponseMode.None, (UInt16) 0, null, (UInt16) 2, (UInt16) cookie.Length ]) as NTPRequest;
+            // Invoke passes every parameter positionally — optional ones are not filled in — so
+            // the trailing null is the TimeProvider, meaning "read the ambient clock".
+            var requestPacket  = methodInfo?.Invoke(null, [ ntsKEResponse, cookie, uniqueId, plaintext, SignedResponseMode.None, (UInt16) 0, null, (UInt16) 2, (UInt16) cookie.Length, null ]) as NTPRequest;
 
             var isValid        = NTPRequest.TryParse(requestPacket?.ToByteArray() ?? [], out var ntpPacket, out var errorRequest, ntsKEResponse.C2SKey);
             var uniqueId2      = (ntpPacket?.Extensions.FirstOrDefault(extension => extension.Type == ExtensionTypes.UniqueIdentifier) as UniqueIdentifierExtension)?.Value;

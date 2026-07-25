@@ -42,9 +42,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         /// Whether this cache entry needs a refresh
         /// (too old or cookies exhausted).
         /// </summary>
-        public Boolean NeedsRefresh(TimeSpan MaxAge)
+        /// <param name="MaxAge">How long an entry stays usable.</param>
+        /// <param name="TimeProvider">
+        /// The clock to age the entry against — the same one that stamped
+        /// <see cref="LastRefreshed"/>, or the comparison spans two clocks.
+        /// </param>
+        public Boolean NeedsRefresh(TimeSpan       MaxAge,
+                                    TimeProvider?  TimeProvider   = null)
 
-            => (Timestamp.Now - LastRefreshed) > MaxAge || RemainingCookies <= 1;  // Keep 1 cookie in reserve
+            => ((TimeProvider?.GetUtcNow() ?? Timestamp.Now) - LastRefreshed) > MaxAge ||
+               RemainingCookies <= 1;  // Keep 1 cookie in reserve
 
     }
 
