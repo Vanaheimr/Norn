@@ -297,17 +297,217 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #endregion
 
-        #region (private) BuildNTSKEResponseRecords(NTSKERequest, C2SKey, S2CKey)
+        #region (private) NTS-KE request validation and negotiation
 
-        private IEnumerable<NTSKE_Record> BuildNTSKEResponseRecords(IEnumerable<NTSKE_Record>  NTSKERequest,
+        /// <summary>The next-protocol IDs this server implements (RFC 8915 § 4.1.2).</summary>
+        private static readonly UInt16[] supportedNextProtocols = [ 0 ];   // 0 = NTPv4
+
+        /// <summary>The AEAD algorithms this server implements (RFC 8915 § 4.1.5).</summary>
+        private static readonly AEADAlgorithms[] supportedAEADAlgorithms = [ AEADAlgorithms.AES_SIV_CMAC_256 ];
+
+        /// <summary>Protocol ID 0, NTPv4 — the only next protocol that makes cookies meaningful.</summary>
+        private const UInt16 NextProtocolNTPv4 = 0;
+
+
+        /// <summary>
+        /// What examining an NTS-KE request concluded: either an error code the request must be
+        /// refused with, or the protocol and algorithm that were actually agreed.
+        /// </summary>
+        /// <param name="ErrorCode">Set when the request must be refused; null when it is acceptable.</param>
+        /// <param name="NextProtocol">The agreed next protocol, or null when none could be agreed.</param>
+        /// <param name="AEADAlgorithm">The agreed AEAD algorithm, or null when none could be agreed.</param>
+        private sealed record NTSKENegotiation(NTSKEErrorCodes?  ErrorCode,
+                                               UInt16?           NextProtocol,
+                                               AEADAlgorithms?   AEADAlgorithm,
+                                               String?           Reason)
+        {
+
+            public static NTSKENegotiation Refuse(NTSKEErrorCodes ErrorCode, String Reason)
+                => new (ErrorCode, null, null, Reason);
+
+            public static NTSKENegotiation Accept(UInt16? NextProtocol, AEADAlgorithms? AEADAlgorithm)
+                => new (null, NextProtocol, AEADAlgorithm, null);
+
+            /// <summary>True when NTPv4 was agreed, which is what makes NTPv4 cookies meaningful.</summary>
+            public Boolean NTPv4Negotiated
+                => NextProtocol == NextProtocolNTPv4 && AEADAlgorithm.HasValue;
+
+        }
+
+
+        /// <summary>
+        /// Examine a parsed NTS-KE request: reject what RFC 8915 requires be rejected, and
+        /// otherwise work out what was actually negotiated.
+        ///
+        /// Previously nothing inbound was examined at all — the response was a fixed set of
+        /// records, so a malformed request was answered with a successful handshake and a
+        /// client's offers were ignored in favour of this server's defaults.
+        /// </summary>
+        private static NTSKENegotiation NegotiateNTSKE(IEnumerable<NTSKE_Record> NTSKERequest)
+        {
+
+            var records = NTSKERequest.ToArray();
+
+            // RFC 8915 § 4: "Implementations which receive a record with an unrecognized Record
+            // Type MUST ignore the record if the Critical Bit is 0 and MUST treat it as an
+            // error if the Critical Bit is 1", and § 4.1.3 code 0 covers exactly that case.
+            var unknownCritical = records.FirstOrDefault(record => record.IsCritical &&
+                                                                   !IsKnownRecordType(record.Type));
+
+            if (unknownCritical is not null)
+                return NTSKENegotiation.Refuse(
+                           NTSKEErrorCodes.UnrecognizedCriticalRecord,
+                           $"unrecognized critical record type {(UInt16) unknownCritical.Type}"
+                       );
+
+            #region Next Protocol Negotiation (§ 4.1.2)
+
+            var nextProtocolRecords = records.Where(record => record.Type == NTSKE_RecordTypes.NTSNextProtocolNegotiation).ToArray();
+
+            if (nextProtocolRecords.Length == 0)
+                return NTSKENegotiation.Refuse(
+                           NTSKEErrorCodes.BadRequest,
+                           "the request carries no NTS Next Protocol Negotiation record"
+                       );
+
+            if (nextProtocolRecords.Length > 1)
+                return NTSKENegotiation.Refuse(
+                           NTSKEErrorCodes.BadRequest,
+                           $"the request carries {nextProtocolRecords.Length} NTS Next Protocol Negotiation records"
+                       );
+
+            var nextProtocolRecord = nextProtocolRecords[0];
+
+            if (nextProtocolRecord.Body.Length % 2 != 0)
+                return NTSKENegotiation.Refuse(
+                           NTSKEErrorCodes.BadRequest,
+                           $"the NTS Next Protocol Negotiation body is {nextProtocolRecord.Body.Length} octets, " +
+                            "which is not a whole number of 16-bit protocol IDs"
+                       );
+
+            var offeredProtocols = ParseUInt16Body(nextProtocolRecord.Body);
+
+            // § 4.1.2: "The request MUST list at least one protocol".
+            if (offeredProtocols.Length == 0)
+                return NTSKENegotiation.Refuse(
+                           NTSKEErrorCodes.BadRequest,
+                           "the NTS Next Protocol Negotiation record offers no protocol"
+                       );
+
+            #endregion
+
+            #region AEAD Algorithm Negotiation (§ 4.1.5)
+
+            var aeadRecords = records.Where(record => record.Type == NTSKE_RecordTypes.AEADAlgorithmNegotiation).ToArray();
+
+            if (aeadRecords.Length > 1)
+                return NTSKENegotiation.Refuse(
+                           NTSKEErrorCodes.BadRequest,
+                           $"the request carries {aeadRecords.Length} AEAD Algorithm Negotiation records"
+                       );
+
+            if (aeadRecords.Length == 1 && aeadRecords[0].Body.Length % 2 != 0)
+                return NTSKENegotiation.Refuse(
+                           NTSKEErrorCodes.BadRequest,
+                           $"the AEAD Algorithm Negotiation body is {aeadRecords[0].Body.Length} octets, " +
+                            "which is not a whole number of 16-bit algorithm IDs"
+                       );
+
+            var offeredAEADAlgorithms = aeadRecords.Length == 1
+                                            ? ParseUInt16Body(aeadRecords[0].Body)
+                                            : [];
+
+            #endregion
+
+            // The response must be a subset of the request (§ 4.1.2), and the algorithm one the
+            // client offered (§ 4.1.5). Both may end up empty, which is how the server says it
+            // supports none of what was offered.
+            UInt16? negotiatedProtocol = offeredProtocols.
+                                             Where(supportedNextProtocols.Contains).
+                                             Select(protocol => (UInt16?) protocol).
+                                             FirstOrDefault();
+
+            AEADAlgorithms? negotiatedAEAD = offeredAEADAlgorithms.
+                                                 Select(id => (AEADAlgorithms) id).
+                                                 Where(supportedAEADAlgorithms.Contains).
+                                                 Select(algorithm => (AEADAlgorithms?) algorithm).
+                                                 FirstOrDefault();
+
+            return NTSKENegotiation.Accept(negotiatedProtocol, negotiatedAEAD);
+
+        }
+
+
+        /// <summary>Whether this server understands the given record type.</summary>
+        private static Boolean IsKnownRecordType(NTSKE_RecordTypes RecordType)
+
+            => RecordType is NTSKE_RecordTypes.EndOfMessage
+                          or NTSKE_RecordTypes.NTSNextProtocolNegotiation
+                          or NTSKE_RecordTypes.Error
+                          or NTSKE_RecordTypes.Warning
+                          or NTSKE_RecordTypes.AEADAlgorithmNegotiation
+                          or NTSKE_RecordTypes.NewCookieForNTPv4
+                          or NTSKE_RecordTypes.NTPv4ServerNegotiation
+                          or NTSKE_RecordTypes.NTPv4PortNegotiation
+                          or NTSKE_RecordTypes.NTSRequestPublicKey
+                          or NTSKE_RecordTypes.NTSPublicKey;
+
+
+        private static UInt16[] ParseUInt16Body(Byte[] Body)
+        {
+
+            var values = new UInt16[Body.Length / 2];
+
+            for (var i = 0; i < values.Length; i++)
+                values[i] = (UInt16) ((Body[i * 2] << 8) | Body[i * 2 + 1]);
+
+            return values;
+
+        }
+
+        #endregion
+
+        #region (private) BuildNTSKEErrorRecords(ErrorCode)
+
+        /// <summary>
+        /// An NTS-KE error response: the Error record and the End of Message that RFC 8915
+        /// § 4.1.1 requires as the final record of every message.
+        /// </summary>
+        private static IEnumerable<NTSKE_Record> BuildNTSKEErrorRecords(NTSKEErrorCodes ErrorCode)
+
+            => [
+                   NTSKE_Record.Error(ErrorCode),
+                   NTSKE_Record.EndOfMessage
+               ];
+
+        #endregion
+
+        #region (private) BuildNTSKEResponseRecords(Negotiation, NTSKERequest, C2SKey, S2CKey)
+
+        private IEnumerable<NTSKE_Record> BuildNTSKEResponseRecords(NTSKENegotiation           Negotiation,
+                                                                    IEnumerable<NTSKE_Record>  NTSKERequest,
                                                                     Byte[]                    C2SKey,
                                                                     Byte[]                    S2CKey)
         {
 
+            // Both lists carry what was actually agreed, and are empty when nothing was —
+            // never this server's defaults.
             var ntsKERecords = new List<NTSKE_Record> {
-                                   NTSKE_Record.NTSNextProtocolNegotiation,
-                                   NTSKE_Record.AEADAlgorithmNegotiation()
+                                   Negotiation.NextProtocol.HasValue
+                                       ? NTSKE_Record.NextProtocolNegotiation(Negotiation.NextProtocol.Value)
+                                       : NTSKE_Record.NextProtocolNegotiation(),
+                                   Negotiation.AEADAlgorithm.HasValue
+                                       ? NTSKE_Record.AEADAlgorithmNegotiation([ Negotiation.AEADAlgorithm.Value ])
+                                       : NTSKE_Record.AEADAlgorithmNegotiation([])
                                };
+
+            // Everything below concerns an NTPv4 association. Without one there is nothing to
+            // point the client at and nothing a cookie could authenticate.
+            if (!Negotiation.NTPv4Negotiated)
+            {
+                ntsKERecords.Add(NTSKE_Record.EndOfMessage);
+                return ntsKERecords;
+            }
 
             if (advertiseExternalURLs)
             {
@@ -336,10 +536,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             ntsKERecords.AddRange(
                 GetCurrentMasterKey().
                     GenerateNTSKECookies(
-                        NumberOfCookies:   7,
+                        NumberOfCookies:   MaxCookiesPerResponse,
                         C2SKey:            C2SKey,
                         S2CKey:            S2CKey,
-                        AEADAlgorithm:     AEADAlgorithms.AES_SIV_CMAC_256,
+                        AEADAlgorithm:     Negotiation.AEADAlgorithm!.Value,
                         IsCritical:        false
                     )
             );
@@ -760,44 +960,72 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                 var s2cKey               = tlsServer.NTS_S2C_Key ?? [];
 
 
+                                // A generous socket-level backstop, so a client that stalls
+                                // mid-TLS-record cannot hold this connection and its semaphore
+                                // slot indefinitely. Passing the socket to the reader means the
+                                // normal case never reaches it: the reader waits for the socket
+                                // to become readable and only then descends into the TLS stream,
+                                // so a truncated request expires with the TLS connection still
+                                // healthy and the Error record below can actually be written.
+                                clientSocket.ReceiveTimeout = (Int32) (NTSKERequestTimeout + TimeSpan.FromSeconds(5)).TotalMilliseconds;
+
                                 var (requestBytes, errorMessage) = await NTSKEMessageReader.ReadAsync(
                                                                         tlsServerProtocol.Stream,
                                                                         NTSKERequestTimeout,
                                                                         MaxNTSKERequestSize,
-                                                                        requestCTS.Token
+                                                                        requestCTS.Token,
+                                                                        clientSocket
                                                                     ).ConfigureAwait(false);
 
-                                if (requestBytes is not null)
+                                // Whatever happens from here, the client is told why. RFC 8915
+                                // § 4.1.3 requires an Error record; closing the connection in
+                                // silence leaves a client unable to tell a rejected request
+                                // from a network fault, and unable to learn what to change.
+                                IEnumerable<NTSKE_Record> ntsKERecords;
+
+                                if (requestBytes is null)
                                 {
-
-                                    if (NTSKE_Record.TryParse(requestBytes, out var ntsKERequest, out var errorResponse))
-                                    {
-
-                                        var ntsKERecords = BuildNTSKEResponseRecords(
-                                                               ntsKERequest,
-                                                               c2sKey,
-                                                               s2cKey
-                                                           );
-
-                                        await tlsServerProtocol.Stream.WriteAsync(ntsKERecords.ToByteArray(), requestCTS.Token).
-                                                                          ConfigureAwait(false);
-                                        await tlsServerProtocol.Stream.FlushAsync(requestCTS.Token).
-                                                                          ConfigureAwait(false);
-                                        System.Threading.Interlocked.Increment(ref ntskeResponsesSent);
-
-                                    }
-                                    else
-                                    {
-                                        System.Threading.Interlocked.Increment(ref ntskeRequestsInvalid);
-                                        DebugX.Log($"Invalid NTS-KE response: {errorResponse}");
-                                    }
-
-                                }
-                                else
-                                {
+                                    // § 4.1.3 code 1 covers both a malformed request and one
+                                    // that never arrived complete before the timeout.
                                     System.Threading.Interlocked.Increment(ref ntskeRequestsInvalid);
                                     DebugX.Log($"Invalid NTS-KE request: {errorMessage}");
+                                    ntsKERecords = BuildNTSKEErrorRecords(NTSKEErrorCodes.BadRequest);
                                 }
+
+                                else if (!NTSKE_Record.TryParse(requestBytes, out var ntsKERequest, out var errorResponse))
+                                {
+                                    System.Threading.Interlocked.Increment(ref ntskeRequestsInvalid);
+                                    DebugX.Log($"Invalid NTS-KE request: {errorResponse}");
+                                    ntsKERecords = BuildNTSKEErrorRecords(NTSKEErrorCodes.BadRequest);
+                                }
+
+                                else
+                                {
+
+                                    var negotiation = NegotiateNTSKE(ntsKERequest);
+
+                                    if (negotiation.ErrorCode.HasValue)
+                                    {
+                                        System.Threading.Interlocked.Increment(ref ntskeRequestsInvalid);
+                                        DebugX.Log($"Refusing NTS-KE request with error {(UInt16) negotiation.ErrorCode.Value}: {negotiation.Reason}");
+                                        ntsKERecords = BuildNTSKEErrorRecords(negotiation.ErrorCode.Value);
+                                    }
+
+                                    else
+                                        ntsKERecords = BuildNTSKEResponseRecords(
+                                                           negotiation,
+                                                           ntsKERequest,
+                                                           c2sKey,
+                                                           s2cKey
+                                                       );
+
+                                }
+
+                                await tlsServerProtocol.Stream.WriteAsync(ntsKERecords.ToByteArray(), requestCTS.Token).
+                                                                  ConfigureAwait(false);
+                                await tlsServerProtocol.Stream.FlushAsync(requestCTS.Token).
+                                                                  ConfigureAwait(false);
+                                System.Threading.Interlocked.Increment(ref ntskeResponsesSent);
 
                                 tlsServerProtocol.Close();
 

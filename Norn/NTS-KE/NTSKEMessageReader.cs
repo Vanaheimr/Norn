@@ -15,6 +15,12 @@
  * limitations under the License.
  */
 
+#region Usings
+
+using System.Net.Sockets;
+
+#endregion
+
 namespace org.GraphDefined.Vanaheimr.Norn.NTS
 {
 
@@ -24,19 +30,46 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
     public static class NTSKEMessageReader
     {
 
-        #region ReadAsync(Stream, Timeout, MaxResponseSize, CancellationToken)
+        #region ReadAsync(Stream, Timeout, MaxResponseSize, CancellationToken, WaitForDataOn = null)
 
+        /// <summary>
+        /// Read one complete NTS-KE message.
+        /// </summary>
+        /// <param name="TLSStream">The TLS stream to read from.</param>
+        /// <param name="Timeout">How long to wait for the whole message.</param>
+        /// <param name="MaxResponseSize">Refuse anything larger than this.</param>
+        /// <param name="WaitForDataOn">
+        /// The underlying socket. When given, this waits for the socket to become readable
+        /// before descending into the TLS stream, so a slow or truncated request expires
+        /// without a read ever being interrupted.
+        ///
+        /// That distinction matters: BouncyCastle marks a TLS connection as failed if a read
+        /// throws or is abandoned, and a failed connection cannot be written to — so the
+        /// caller would lose the ability to send the Error record RFC 8915 § 4.1.3 requires.
+        /// Waiting outside the TLS layer keeps the connection healthy enough to answer.
+        /// </param>
         public static async Task<(Byte[]? ResponseBytes, String? ErrorMessage)> ReadAsync(Stream             TLSStream,
                                                                                           TimeSpan           Timeout,
                                                                                           Int32              MaxResponseSize,
-                                                                                          CancellationToken  CancellationToken = default)
+                                                                                          CancellationToken  CancellationToken = default,
+                                                                                          Socket?            WaitForDataOn     = null)
         {
 
             using var memoryStream = new MemoryStream();
             var buffer             = new Byte[4096];
+            var deadline           = DateTime.UtcNow + Timeout;
 
             while (true)
             {
+
+                if (WaitForDataOn is not null &&
+                    !await WaitForReadableAsync(WaitForDataOn, deadline, CancellationToken).ConfigureAwait(false))
+                {
+                    return memoryStream.Length > 0
+                               ? (null, "Read operation timed out before a complete NTS-KE message arrived.")
+                               : (null, "Read operation timed out.");
+                }
+
 
                 Int32 bytesRead;
 
@@ -53,6 +86,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 }
                 catch (OperationCanceledException) when (!CancellationToken.IsCancellationRequested)
                 {
+                    return (null, "Read operation timed out.");
+                }
+                catch (IOException e) when (e.InnerException is SocketException { SocketErrorCode: SocketError.TimedOut })
+                {
+                    // A socket-level receive timeout. Unlike an abandoned Task.WaitAsync this
+                    // leaves no read pending, so the caller can still write a reply.
                     return (null, "Read operation timed out.");
                 }
 
@@ -82,6 +121,52 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     return (null, errorResponse);
 
             }
+
+        }
+
+        #endregion
+
+        #region (private) WaitForReadableAsync(Socket, Deadline, CancellationToken)
+
+        /// <summary>
+        /// Wait until the socket has data to read, or the deadline passes.
+        /// Returns false on timeout or cancellation.
+        /// </summary>
+        private static async Task<Boolean> WaitForReadableAsync(Socket             Socket,
+                                                                DateTime           Deadline,
+                                                                CancellationToken  CancellationToken)
+        {
+
+            // Polled in slices rather than one long wait so cancellation stays responsive.
+            var slice = TimeSpan.FromMilliseconds(250);
+
+            while (DateTime.UtcNow < Deadline)
+            {
+
+                if (CancellationToken.IsCancellationRequested)
+                    return false;
+
+                try
+                {
+                    // Poll reports readable both when data has arrived and when the peer has
+                    // closed; the caller's zero-bytes-read branch handles the latter.
+                    if (Socket.Poll(slice, SelectMode.SelectRead))
+                        return true;
+                }
+                catch (ObjectDisposedException)
+                {
+                    return false;
+                }
+                catch (SocketException)
+                {
+                    return false;
+                }
+
+                await Task.Yield();
+
+            }
+
+            return false;
 
         }
 
