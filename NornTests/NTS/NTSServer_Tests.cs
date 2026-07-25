@@ -203,8 +203,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                 }
 
 
-                // Initially 2, but +1 decrypted extension
-                Assert.That(ntsResponse.Extensions.Count(),  Is.EqualTo(3));
+                // A Unique Identifier, an Authenticator, and the cookies decrypted out of it.
+                // RFC 8915 § 5.7: the server returns one cookie for the one the client spent
+                // plus one per valid Cookie Placeholder, so the count follows the request.
+                var expectedCookies = 1 + (request?.Extensions.Count(extension => extension.Type == ExtensionTypes.NTSCookiePlaceholder) ?? 0);
+
+                Assert.That(ntsResponse.Extensions.OfType<NTSCookieExtension>().Count(),
+                            Is.EqualTo(expectedCookies),
+                            "one replacement cookie plus one per placeholder");
+
+                Assert.That(ntsResponse.Extensions.Count(),  Is.EqualTo(2 + expectedCookies));
 
 
                 // 1. Check Unique Identifier Extension
@@ -222,20 +230,25 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                 {
                     Assert.That(authenticatorAndEncryptedExtension.Authenticated,                 Is.False);
                     Assert.That(authenticatorAndEncryptedExtension.Encrypted,                     Is.False);
-                    Assert.That(authenticatorAndEncryptedExtension.EncryptedExtensions.Count(),   Is.EqualTo(1));
+                    Assert.That(authenticatorAndEncryptedExtension.EncryptedExtensions.Count(),   Is.EqualTo(expectedCookies),
+                                "the encrypted extensions are the replacement cookies");
                 }
                 else
                     Assert.Fail("NTS Authenticator and Encrypted Extension is invalid!");
 
 
-                // 3. Check NTS Cookie Extension
-                if (ntsResponse.Extensions.ElementAt(2) is NTSCookieExtension cookieExtension)
+                // 3. Check the NTS Cookie Extensions
+                //    Located by type rather than by index: the number of cookies follows the
+                //    request's placeholder count, so their positions are not fixed.
+                var cookieExtensions = ntsResponse.Extensions.OfType<NTSCookieExtension>().ToArray();
+
+                Assert.That(cookieExtensions, Is.Not.Empty, "NTS Cookie Extension is missing!");
+
+                foreach (var cookieExtension in cookieExtensions)
                 {
                     Assert.That(cookieExtension.Authenticated,                                    Is.True);
                     Assert.That(cookieExtension.Encrypted,                                        Is.True);
                 }
-                else
-                    Assert.Fail("NTS Cookie Extension is invalid!");
 
             }
 
@@ -420,8 +433,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                 }
 
 
-                // Initially 3, but +1 decrypted extension and +1 for response signature
-                Assert.That(ntsResponse.Extensions.Count(),  Is.EqualTo(5));
+                // A Unique Identifier, an Authenticator, a signed-response announcement, the
+                // response signature, and the cookies decrypted out of the Authenticator.
+                // RFC 8915 § 5.7 ties the cookie count to the request's placeholders.
+                var expectedCookies = 1 + (request?.Extensions.Count(extension => extension.Type == ExtensionTypes.NTSCookiePlaceholder) ?? 0);
+
+                Assert.That(ntsResponse.Extensions.OfType<NTSCookieExtension>().Count(),
+                            Is.EqualTo(expectedCookies),
+                            "one replacement cookie plus one per placeholder");
+
+                Assert.That(ntsResponse.Extensions.Count(),  Is.EqualTo(4 + expectedCookies));
 
 
                 // 1. Check Unique Identifier Extension
@@ -448,24 +469,29 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                 {
                     Assert.That(authenticatorAndEncryptedExtension.Authenticated,                 Is.False);
                     Assert.That(authenticatorAndEncryptedExtension.Encrypted,                     Is.False);
-                    Assert.That(authenticatorAndEncryptedExtension.EncryptedExtensions.Count(),   Is.EqualTo(1));
+                    Assert.That(authenticatorAndEncryptedExtension.EncryptedExtensions.Count(),   Is.EqualTo(expectedCookies),
+                                "the encrypted extensions are the replacement cookies");
                 }
                 else
                     Assert.Fail("NTS Authenticator and Encrypted Extension is invalid!");
 
 
-                // 4. Check NTS Cookie Extension
-                if (ntsResponse.Extensions.ElementAt(3) is NTSCookieExtension cookieExtension)
+                // 4. Check the NTS Cookie Extensions
+                //    Located by type rather than by index: the number of cookies follows the
+                //    request's placeholder count, so their positions are not fixed.
+                var cookieExtensions = ntsResponse.Extensions.OfType<NTSCookieExtension>().ToArray();
+
+                Assert.That(cookieExtensions, Is.Not.Empty, "NTS Cookie Extension is missing!");
+
+                foreach (var cookieExtension in cookieExtensions)
                 {
                     Assert.That(cookieExtension.Authenticated,                                    Is.True);
                     Assert.That(cookieExtension.Encrypted,                                        Is.True);
                 }
-                else
-                    Assert.Fail("NTS Cookie Extension is invalid!");
 
 
                 // 5. Check NTS Signed Response Extension
-                if (ntsResponse.Extensions.ElementAt(4) is NTSSignedResponseExtension signedResponseExtension)
+                if (ntsResponse.Extensions.OfType<NTSSignedResponseExtension>().FirstOrDefault() is NTSSignedResponseExtension signedResponseExtension)
                 {
                     Assert.That(signedResponseExtension.Authenticated,                            Is.False);
                     Assert.That(signedResponseExtension.Encrypted,                                Is.False);

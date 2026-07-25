@@ -47,12 +47,33 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         private const Byte    NonceLength         = 32;
 
+        // Layout of the decrypted cookie body (see ToByteArray()).
         private const UInt16  OffsetTimestamp     =                     0;
         private const UInt16  OffsetMasterKeyId   = OffsetTimestamp   + 8;
         private const UInt16  OffsetNonce         = OffsetMasterKeyId + 8;
         private const UInt16  OffsetAlgorithmId   = OffsetNonce       + NonceLength;
         private const UInt16  OffsetC2SKey        = OffsetAlgorithmId + 2;
         // OffsetS2CKey variable!
+
+        // Layout of the sealed cookie that actually goes on the wire (see Encrypt()):
+        //
+        //     MasterKeyId (8) | AEADLength (2) | Nonce (32) | AES-SIV-CMAC-256(body)
+        //
+        // The master key id and nonce stay in the clear because the server needs them to
+        // select the key and run the AEAD before it can trust anything else. Both, and the
+        // length, are covered as associated data, so none of them can be altered.
+        //
+        // The explicit length matters: a cookie rides inside an NTP extension field, and
+        // RFC 7822 pads those to a four-octet boundary. Without a length the server would
+        // feed that padding to the AEAD and every cookie whose size is not a multiple of
+        // four would fail to authenticate.
+        private const UInt16  SealedOffsetMasterKeyId  =                            0;
+        private const UInt16  SealedOffsetAEADLength   = SealedOffsetMasterKeyId  + 8;
+        private const UInt16  SealedOffsetNonce        = SealedOffsetAEADLength   + 2;
+        private const UInt16  SealedOffsetAEAD         = SealedOffsetNonce        + NonceLength;
+
+        /// <summary>The synthetic IV AES-SIV prepends to its ciphertext (RFC 5297 §2.6).</summary>
+        private const UInt16  SyntheticIVLength        = 16;
 
         #endregion
 
@@ -167,15 +188,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #endregion
 
-        #region (static) Parse    (Bytes, ...)
+        #region (static) Parse    (SealedCookie, MasterKey, ...)
 
         /// <summary>
-        /// Parse the given binary representation of a NTS cookie.
+        /// Unseal the given binary representation of a NTS cookie using the master key that
+        /// issued it, throwing when it cannot be authenticated.
         /// </summary>
-        public static NTSCookie Parse(Byte[] Bytes)
+        public static NTSCookie Parse(Byte[]     SealedCookie,
+                                      MasterKey  MasterKey)
         {
 
-            if (TryParse(Bytes,
+            if (TryParse(SealedCookie,
+                         MasterKey,
                          out var ntsCookie,
                          out var errorResponse))
             {
@@ -183,7 +207,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             }
 
             throw new ArgumentException("The given binary representation of a NTS cookie is invalid: " + errorResponse,
-                                        nameof(Bytes));
+                                        nameof(SealedCookie));
 
         }
 
@@ -334,17 +358,21 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #endregion
 
-        #region (static) TryParse (Bytes, out NTSCookie, out ErrorResponse, ...)
+        #region (private, static) TryParseBody (Bytes, out NTSCookie, out ErrorResponse)
 
         /// <summary>
-        /// Try to parse the given binary representation of a NTS cookie.
+        /// Parse the <em>decrypted</em> cookie body.
+        ///
+        /// Private by design: these bytes carry both session keys, so the only way to reach
+        /// them is through <see cref="TryParse(Byte[], MasterKey, out NTSCookie?, out String?)"/>,
+        /// which first verifies the AEAD. There is deliberately no public keyless parse.
         /// </summary>
-        /// <param name="Bytes">The array of bytes to be parsed.</param>
+        /// <param name="Bytes">The decrypted cookie body.</param>
         /// <param name="NTSCookie">The parsed NTS cookie.</param>
         /// <param name="ErrorResponse">An optional error response.</param>
-        public static Boolean TryParse(Byte[]                               Bytes,
-                                       [NotNullWhen(true)]  out NTSCookie?  NTSCookie,
-                                       [NotNullWhen(false)] out String?     ErrorResponse)
+        private static Boolean TryParseBody(Byte[]                               Bytes,
+                                            [NotNullWhen(true)]  out NTSCookie?  NTSCookie,
+                                            [NotNullWhen(false)] out String?     ErrorResponse)
         {
             try
             {
@@ -478,7 +506,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         #region ToByteArray ()
 
         /// <summary>
-        /// Return a binary representation of this NTS cookie.
+        /// Return the decrypted cookie body.
+        ///
+        /// This is the AEAD plaintext, not the wire format: it contains both session keys in
+        /// the clear. Use <see cref="Encrypt(MasterKey)"/> for anything that leaves the server.
         /// </summary>
         public Byte[] ToByteArray()
         {
@@ -548,39 +579,235 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         #endregion
 
 
+        #region Encrypt(MasterKey)
+
+        /// <summary>
+        /// Seal this cookie for the wire, as RFC 8915 §6 requires: the body is encrypted
+        /// and authenticated with an AEAD under the server's secret master key, so the
+        /// client — and anyone observing the network — sees only opaque bytes.
+        ///
+        /// The cookie travels in the clear inside every NTS request and carries both
+        /// session keys, so this encryption is the only thing keeping them secret.
+        /// </summary>
+        /// <param name="MasterKey">The server's current master key.</param>
         public Byte[] Encrypt(MasterKey MasterKey)
         {
 
-            var ntsCookie  = MasterKey.Id != this.MasterKeyId
+            if (MasterKey.Value is null || MasterKey.Value.Length != 32)
+                throw new ArgumentException($"The master key value must be 32 bytes long for {AEADAlgorithms.AES_SIV_CMAC_256}!",
+                                            nameof(MasterKey));
 
-                                 ? new NTSCookie(
-                                       MasterKey.Id,
-                                       C2SKey,
-                                       S2CKey,
-                                       Timestamp,
-                                       AEADAlgorithm,
-                                       Nonce
-                                 )
+            // Re-stamp the cookie when it is sealed under a newer master key than it was created with.
+            var ntsCookie      = MasterKey.Id != this.MasterKeyId
 
-                                 : this;
+                                     ? new NTSCookie(
+                                           MasterKey.Id,
+                                           C2SKey,
+                                           S2CKey,
+                                           Timestamp,
+                                           AEADAlgorithm,
+                                           Nonce
+                                       )
 
-            var bytes      = ntsCookie.ToByteArray();
+                                     : this;
 
-            //// Timestamp (Big-Endian)
-            //for (var j = 0; j < 8; j++)
-            //    bytes[OffsetMasterKeyId + j] = (Byte) (MasterKey.Id >> (56 - 8 * j));
+            var body           = ntsCookie.ToByteArray();
+            var aeadLength     = SyntheticIVLength + body.Length;
+
+            // The header that frames the ciphertext is authenticated but not encrypted, so
+            // neither the key id nor the length can be swapped without failing the AEAD.
+            var header         = new Byte[SealedOffsetNonce];
+            Buffer.BlockCopy(ToNetworkByteOrder(MasterKey.Id), 0, header, SealedOffsetMasterKeyId, 8);
+            header[SealedOffsetAEADLength]     = (Byte) (aeadLength >> 8);
+            header[SealedOffsetAEADLength + 1] = (Byte)  aeadLength;
+
+            var aeadOutput     = new AES_SIV(MasterKey.Value).
+                                     Encrypt(
+                                         [ header ],
+                                         ntsCookie.Nonce,
+                                         body
+                                     );
+
+            var sealedCookie   = new Byte[SealedOffsetAEAD + aeadOutput.Length];
+
+            Buffer.BlockCopy(header,           0, sealedCookie, 0,                 header.Length);
+            Buffer.BlockCopy(ntsCookie.Nonce,  0, sealedCookie, SealedOffsetNonce, NonceLength);
+            Buffer.BlockCopy(aeadOutput,       0, sealedCookie, SealedOffsetAEAD,  aeadOutput.Length);
+
+            return sealedCookie;
+
+        }
+
+        #endregion
+
+        #region (static) TryReadMasterKeyId (SealedCookie, out MasterKeyId, out ErrorResponse)
+
+        /// <summary>
+        /// Read just the master key id from a sealed cookie, so a server can pick the right
+        /// key before it is able to decrypt anything. The value is unauthenticated at this
+        /// point — it is only a lookup hint, and the AEAD in
+        /// <see cref="TryParse(Byte[], MasterKey, out NTSCookie?, out String?)"/> is what
+        /// actually verifies it.
+        /// </summary>
+        public static Boolean TryReadMasterKeyId(Byte[]                            SealedCookie,
+                                                 out UInt64                        MasterKeyId,
+                                                 [NotNullWhen(false)] out String?  ErrorResponse)
+        {
+
+            MasterKeyId    = 0;
+            ErrorResponse  = null;
+
+            if (SealedCookie.Length < SealedOffsetAEAD + SyntheticIVLength)
+            {
+                ErrorResponse = $"The given binary representation of a NTS cookie is too short: {SealedCookie.Length} bytes!";
+                return false;
+            }
+
+            for (var i = 0; i < 8; i++)
+                MasterKeyId |= (UInt64) SealedCookie[SealedOffsetMasterKeyId + i] << (56 - 8 * i);
+
+            return true;
+
+        }
+
+        #endregion
+
+        #region (static) TryParse (SealedCookie, MasterKey(s), out NTSCookie, out ErrorResponse)
+
+        /// <summary>
+        /// Unseal a cookie using the master key that issued it. Fails closed: a cookie that
+        /// was tampered with, or that this server never issued, yields no cookie at all.
+        /// </summary>
+        public static Boolean TryParse(Byte[]                                SealedCookie,
+                                       MasterKey                             MasterKey,
+                                       [NotNullWhen(true)]  out NTSCookie?   NTSCookie,
+                                       [NotNullWhen(false)] out String?      ErrorResponse)
+        {
+
+            NTSCookie      = null;
+            ErrorResponse  = null;
+
+            if (!TryReadMasterKeyId(SealedCookie, out var masterKeyId, out ErrorResponse))
+                return false;
+
+            if (masterKeyId != MasterKey.Id)
+            {
+                ErrorResponse = $"The NTS cookie was issued under master key {masterKeyId}, not {MasterKey.Id}!";
+                return false;
+            }
+
+            if (MasterKey.Value is null || MasterKey.Value.Length != 32)
+            {
+                ErrorResponse = "The master key value must be 32 bytes long!";
+                return false;
+            }
+
+            try
+            {
+
+                var aeadLength  = (SealedCookie[SealedOffsetAEADLength] << 8) | SealedCookie[SealedOffsetAEADLength + 1];
+
+                if (aeadLength < SyntheticIVLength ||
+                    SealedOffsetAEAD + aeadLength > SealedCookie.Length)
+                {
+                    ErrorResponse = $"The NTS cookie declares {aeadLength} bytes of ciphertext, which does not fit " +
+                                    $"its {SealedCookie.Length} bytes!";
+                    return false;
+                }
+
+                // Sliced to the declared length, so any RFC 7822 padding the extension field
+                // added around the cookie is left out of the AEAD.
+                var header      = new Byte[SealedOffsetNonce];
+                Buffer.BlockCopy(SealedCookie, 0, header, 0, header.Length);
+
+                var nonce       = new Byte[NonceLength];
+                Buffer.BlockCopy(SealedCookie, SealedOffsetNonce, nonce, 0, NonceLength);
+
+                var aeadOutput  = new Byte[aeadLength];
+                Buffer.BlockCopy(SealedCookie, SealedOffsetAEAD, aeadOutput, 0, aeadLength);
+
+                var body        = new AES_SIV(MasterKey.Value).
+                                      Decrypt(
+                                          [ header ],
+                                          nonce,
+                                          aeadOutput
+                                      );
+
+                return TryParseBody(body, out NTSCookie, out ErrorResponse);
+
+            }
+            catch (Exception e)
+            {
+                // A synthetic-IV mismatch means the cookie was forged or altered.
+                ErrorResponse = $"The NTS cookie failed its authenticity check: {e.Message}";
+                return false;
+            }
+
+        }
 
 
-            // TODO: AEAD-Encrypt `cookie` with master key
+        /// <summary>
+        /// Unseal a cookie by looking its master key up among the server's current and
+        /// still-accepted keys, then checking the cookie falls inside that key's validity
+        /// window.
+        /// </summary>
+        public static Boolean TryParse(Byte[]                                                   SealedCookie,
+                                       IReadOnlyDictionary<UInt64, MasterKey>?                  MasterKeys,
+                                       [NotNullWhen(true)]  out NTSCookie?                      NTSCookie,
+                                       [NotNullWhen(false)] out String?                         ErrorResponse)
+        {
+
+            NTSCookie      = null;
+            ErrorResponse  = null;
+
+            if (MasterKeys is null)
+            {
+                ErrorResponse = "No master keys available to validate the NTS cookie!";
+                return false;
+            }
+
+            if (!TryReadMasterKeyId(SealedCookie, out var masterKeyId, out ErrorResponse))
+                return false;
+
+            if (!MasterKeys.TryGetValue(masterKeyId, out var masterKey))
+            {
+                ErrorResponse = $"Unknown NTS cookie master key {masterKeyId}!";
+                return false;
+            }
+
+            if (!TryParse(SealedCookie, masterKey, out NTSCookie, out ErrorResponse))
+                return false;
+
+            if (NTSCookie.Timestamp.ToUnixTimestamp() <  masterKey.NotBefore.ToUnixTimestamp() ||
+                NTSCookie.Timestamp.ToUnixTimestamp() >= masterKey.NotAfter. ToUnixTimestamp())
+            {
+                ErrorResponse = $"The NTS cookie timestamp {NTSCookie.Timestamp:O} is outside the validity " +
+                                $"window of master key {masterKeyId}!";
+                NTSCookie     = null;
+                return false;
+            }
+
+            return true;
+
+        }
+
+        #endregion
+
+        #region (private, static) ToNetworkByteOrder(Value)
+
+        private static Byte[] ToNetworkByteOrder(UInt64 Value)
+        {
+
+            var bytes = new Byte[8];
+
+            for (var i = 0; i < 8; i++)
+                bytes[i] = (Byte) (Value >> (56 - 8 * i));
 
             return bytes;
 
         }
 
-        public NTSCookie Decrypt(MasterKey masterKey)
-        {
-            return this;
-        }
+        #endregion
 
 
         #region Operator overloading

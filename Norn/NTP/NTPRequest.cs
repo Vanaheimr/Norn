@@ -187,6 +187,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                 return false;
             }
 
+            // Validate the whole extension field chain before decoding any of it, so a
+            // malformed tail cannot be dropped while the rest of the packet is accepted.
+            if (!NTPExtensionFieldValidator.TryValidate(Buffer, out ErrorResponse))
+            {
+                NTPRequest = null;
+                return false;
+            }
+
             #endregion
 
             var ntpPacketBytes = new Byte[48];
@@ -195,24 +203,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
             #region Parse Extensions
 
-            var offset     = 48;
-            var extensions = new List<NTPExtension>();
+            var offset          = 48;
+            var extensions      = new List<NTPExtension>();
+            String? ntsCookieError = null;
 
             while (offset + 4 <= Buffer.Length)
             {
 
                 var type   = (ExtensionTypes) ((Buffer[offset]     << 8) | Buffer[offset + 1]);
                 var length = (UInt16)         ((Buffer[offset + 2] << 8) | Buffer[offset + 3]);
-
-                if (length < 4)
-                {
-                    ErrorResponse  = $"Illegal length of extension {length} at offset {offset}!";
-                    NTPRequest      = null;
-                    return false;
-                }
-
-                if (offset + length > Buffer.Length)
-                    break;
 
                 var copy = new Byte[length];
                 Array.Copy(Buffer, offset, copy, 0, length);
@@ -238,15 +237,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
                         var ntsCookieExtension = new NTSCookieExtension(data);
 
-                        if (NTSCookie.TryParse(ntsCookieExtension.Value, out var encryptedCookie, out var err) &&
-                            //encryptedCookie.MasterKeyId.HasValue &&
-                            MasterKeys is not null &&
-                            MasterKeys.TryGetValue(encryptedCookie.MasterKeyId, out var masterKey) &&
-                            encryptedCookie.Timestamp.ToUnixTimestamp() >= masterKey.NotBefore.ToUnixTimestamp() &&
-                            encryptedCookie.Timestamp.ToUnixTimestamp() <  masterKey.NotAfter. ToUnixTimestamp())
+                        // Unsealing the cookie authenticates it under the server's master key
+                        // and checks it against that key's validity window.
+                        if (NTSCookie.TryParse(ntsCookieExtension.Value, MasterKeys, out var ntsCookie, out var cookieError))
                         {
 
-                            var ntsCookie = encryptedCookie.Decrypt(masterKey);
                             NTSKey = ntsCookie.C2SKey;
 
                             extensions.Add(
@@ -259,6 +254,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                         }
                         else
                         {
+                            // Kept so the authenticator's "missing NTS key" failure can say why
+                            // the key is missing — otherwise every cookie problem looks identical.
+                            ntsCookieError = cookieError;
                             extensions.Add(ntsCookieExtension);
                         }
 
@@ -276,7 +274,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
                         if (NTSKey is null)
                         {
-                            ErrorResponse = "Missing NTS key for the AuthenticatorAndEncrypted extension!";
+                            ErrorResponse = ntsCookieError is not null
+                                                ? $"Missing NTS key for the AuthenticatorAndEncrypted extension: {ntsCookieError}"
+                                                :  "Missing NTS key for the AuthenticatorAndEncrypted extension!";
                             return false;
                         }
 

@@ -48,6 +48,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #region Data
 
+        /// <summary>
+        /// The most NTS Cookie extension fields this server will put in one response.
+        ///
+        /// RFC 8915 §5.7 ties the count to the number of valid Cookie Placeholder fields in
+        /// the request; capping it keeps a client from using placeholders to make responses
+        /// arbitrarily larger than requests. Eight matches the pool size §5.7 suggests
+        /// clients aim for.
+        /// </summary>
+        public  const            UInt16                                   MaxCookiesPerResponse  = 8;
+
         private                  Socket?                                  tcpSocket;
         private                  Socket?                                  udpSocket;
         private                  CancellationTokenSource?                 cts;
@@ -879,6 +889,51 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         #endregion
 
 
+        /// <summary>
+        /// Build an NTS NAK, as RFC 8915 §5.7 prescribes for a request whose cookie cannot be
+        /// validated or whose authenticator does not verify: a Kiss-o'-Death packet (RFC 5905
+        /// §7.4, stratum 0) carrying the kiss code "NTSN".
+        ///
+        /// The client's Unique Identifier is echoed so the client can match the NAK to the
+        /// request that caused it. No NTS Cookie and no NTS Authenticator extension field may
+        /// appear — the server has no validated key with which to produce one.
+        /// </summary>
+        private static NTPPacket BuildNTSNAK(NTPPacket  RequestPacket,
+                                             String     ErrorMessage)
+        {
+
+            var extensions  = new List<NTPExtension>();
+            var uniqueId    = RequestPacket.UniqueIdentifier();
+
+            if (uniqueId?.Length > 0)
+                extensions.Add(new UniqueIdentifierExtension(uniqueId));
+
+            return new NTPPacket(
+
+                       LI:                     0,
+                       VN:                     4,
+                       Mode:                   4, // Server
+                       Stratum:                0, // Kiss-o'-Death
+                       Poll:                   RequestPacket.Poll,
+                       Precision:              RequestPacket.Precision,
+                       RootDelay:              0,
+                       RootDispersion:         0,
+                       ReferenceIdentifier:    ReferenceIdentifier.From("NTSN"),
+                       ReferenceTimestamp:     0,
+                       OriginateTimestamp:     RequestPacket.TransmitTimestamp ?? 0,
+                       ReceiveTimestamp:       NTPPacket.GetCurrentNTPTimestamp(),
+                       TransmitTimestamp:      NTPPacket.GetCurrentNTPTimestamp(),
+                       Extensions:             extensions,
+
+                       Request:                RequestPacket,
+                       ResponseBytes:          null,
+                       ErrorMessage:           ErrorMessage
+
+                   );
+
+        }
+
+
         private NTPPacket BuildResponse(NTPPacket  RequestPacket,
                                         Boolean    SignedResponseRequested = false)
         {
@@ -894,66 +949,39 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             var n1 = RequestPacket.NTSCookieExtension();
 
             if (n1 is null)
-                return new NTPPacket(
-                           LI:                     0,
-                           VN:                     0,
-                           Mode:                   0,
-                           Stratum:                0,
-                           Poll:                   0,
-                           Precision:              0,
-                           RootDelay:              0,
-                           RootDispersion:         0,
-                           ReferenceIdentifier:    ReferenceIdentifier.Zero,
-                           ReferenceTimestamp:     0,
-                           OriginateTimestamp:     0,
-                           ReceiveTimestamp:       0,
-                           TransmitTimestamp:      0,
-                           Extensions:             [],
-                           KeyId:                  0,
-                           MessageDigest:          null,
-                           DestinationTimestamp:   0,
+                return BuildNTSNAK(RequestPacket, "Invalid NTS cookie!");
 
-                           Request:                RequestPacket,
-                           ResponseBytes:          null,
-                           ErrorMessage:           "Invalid NTS cookie!"
-                       );
-
-            if (!NTSCookie.TryParse(n1.Value, out var ntsCookie, out var errorResponse))
-                return new NTPPacket(
-                           LI:                     0,
-                           VN:                     0,
-                           Mode:                   0,
-                           Stratum:                0,
-                           Poll:                   0,
-                           Precision:              0,
-                           RootDelay:              0,
-                           RootDispersion:         0,
-                           ReferenceIdentifier:    ReferenceIdentifier.Zero,
-                           ReferenceTimestamp:     0,
-                           OriginateTimestamp:     0,
-                           ReceiveTimestamp:       0,
-                           TransmitTimestamp:      0,
-                           Extensions:             [],
-                           KeyId:                  0,
-                           MessageDigest:          null,
-                           DestinationTimestamp:   0,
-
-                           Request:                RequestPacket,
-                           ResponseBytes:          null,
-                           ErrorMessage:           "Invalid NTS cookie: " + errorResponse
-                       );
+            // Unsealing authenticates the cookie under this server's master key and checks
+            // it against that key's validity window, so a forged or expired cookie fails here.
+            if (!NTSCookie.TryParse(n1.Value, masterKeys, out var ntsCookie, out var errorResponse))
+                return BuildNTSNAK(RequestPacket, "Invalid NTS cookie: " + errorResponse);
 
 
-            // Generate a new NTS Cookie to be added to the response
-            encryptedExtensions.Add(
+            // RFC 8915 §5.7: "The number of NTS Cookie extension fields included SHOULD be
+            // equal to, and MUST NOT exceed, one plus the number of valid NTS Cookie
+            // Placeholder extension fields included in the request." Replacing the cookie the
+            // client just spent, plus one per placeholder, is what keeps its pool from draining.
+            //
+            // §5.5 makes a placeholder valid only when its body is the same length as a cookie,
+            // so a client cannot inflate the response by sending oversized placeholders.
+            // Matched on the wire type rather than the CLR type: placeholders arrive as the
+            // NTSCookiePlaceholderExtension subclass when parsed here, but the client builds
+            // them from the NTPExtension.NTSCookiePlaceholder factory, which returns the base
+            // type. The type field is the same either way.
+            var validPlaceholders = RequestPacket.Extensions.
+                                        Count(extension => extension.Type == ExtensionTypes.NTSCookiePlaceholder &&
+                                                           extension.Value.Length == n1.Value.Length);
+
+            var numberOfCookies   = (UInt16) Math.Min(1 + validPlaceholders, MaxCookiesPerResponse);
+
+            encryptedExtensions.AddRange(
                 GetCurrentMasterKey().
                     GenerateNTSCookieExtensions(
-                        NumberOfCookies:  1,
+                        NumberOfCookies:  numberOfCookies,
                         C2SKey:           ntsCookie.C2SKey,
                         S2CKey:           ntsCookie.S2CKey,
                         AEADAlgorithm:    ntsCookie.AEADAlgorithm
-                        //IsCritical:       true
-                    ).First()
+                    )
             );
 
 

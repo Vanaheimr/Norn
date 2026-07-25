@@ -295,11 +295,27 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                 var dnsStopwatch     = Stopwatch.StartNew();
 
-                var ipAddresses      = await DNSClient.Query_IPAddresses(
-                                                 Hostname,
-                                                 Timeout:            timeout,
-                                                 CancellationToken:  timeoutCTS.Token
-                                             ).ConfigureAwait(false);
+                // An NTS-KE host given as a bare IP address needs no lookup, and asking a
+                // resolver for it would fail. NTPRemoteEndPointResolver already handles
+                // literals for the UDP leg; this keeps the two legs consistent, so a server
+                // can be addressed by IP throughout.
+                IEnumerable<IIPAddress> ipAddresses;
+
+                // DomainName renders as an FQDN, so the trailing root dot has to come off
+                // before this can look like an address literal.
+                var hostnameText = Hostname.ToString().TrimEnd('.').Trim('[', ']');
+
+                if (System.Net.IPAddress.TryParse(hostnameText, out var literalIPAddress))
+                    ipAddresses = [ literalIPAddress.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6
+                                        ? IPv6Address.Parse(literalIPAddress.ToString())
+                                        : IPv4Address.Parse(literalIPAddress.ToString()) ];
+
+                else
+                    ipAddresses = await DNSClient.Query_IPAddresses(
+                                            Hostname,
+                                            Timeout:            timeout,
+                                            CancellationToken:  timeoutCTS.Token
+                                        ).ConfigureAwait(false);
 
                 resolvedIPAddresses  = this.IPVersionPreference switch {
                                            IPVersionPreference.IPv6Only    => [.. ipAddresses.Where  (ipAddress => ipAddress is IPv6Address        )],
