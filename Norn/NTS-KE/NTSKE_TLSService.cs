@@ -250,11 +250,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             var randomGenerator     = new CryptoApiRandomGenerator();
             var random              = new SecureRandom(randomGenerator);
-            var ecKeyPairGenerator  = new ECKeyPairGenerator();
-            var ecSpec              = SecNamedCurves.GetByName("secp256r1");
-            var ecDomainParameters  = new ECDomainParameters(ecSpec.Curve, ecSpec.G, ecSpec.N, ecSpec.H, ecSpec.GetSeed());
-            var keyGenParams        = new ECKeyGenerationParameters(ecDomainParameters, random);
-            ecKeyPairGenerator.Init(keyGenParams);
+            var ecKeyPairGenerator  = new ECKeyPairGenerator("ECDSA");
+
+            // Seeded from the curve's OID, not from an ECDomainParameters assembled out of the
+            // curve's components. The latter makes BouncyCastle encode the full curve
+            // specification into the certificate's SubjectPublicKeyInfo as explicit EC
+            // parameters — 335 octets rather than 91 — and Windows' SChannel/CNG only accepts
+            // named curves. A certificate carrying explicit parameters is rejected outright
+            // with CRYPT_E_ASN1_BADTAG, so no .NET SslStream client can complete the
+            // handshake, even though BouncyCastle and GnuTLS both accept it.
+            ecKeyPairGenerator.Init(new ECKeyGenerationParameters(SecObjectIdentifiers.SecP256r1, random));
+
             var keyPair             = ecKeyPairGenerator.GenerateKeyPair();
 
             var certGenerator       = new X509V3CertificateGenerator();
