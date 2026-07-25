@@ -143,6 +143,21 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
     {
 
+        #region Data
+
+        /// <summary>
+        /// The NTP prime epoch, 1900-01-01T00:00:00Z — the start of era 0 (RFC 5905 § 6).
+        /// </summary>
+        public static readonly DateTime  NTPEpoch        = new (1900, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        /// <summary>
+        /// Seconds per era, 2^32. The 32-bit second count on the wire wraps this often —
+        /// every 136 years, first on 2036-02-07T06:28:16Z.
+        /// </summary>
+        public const           Int64     SecondsPerEra   = 4294967296L;
+
+        #endregion
+
         #region Properties
 
         /// <summary>
@@ -506,14 +521,26 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         public static UInt64 GetCurrentNTPTimestamp(DateTime? Timestamp = null)
         {
 
-            var ntpEpoch  = new DateTime(1900, 1, 1, 0, 0, 0, DateTimeKind.Utc);
-            var now       = Timestamp ?? Illias.Timestamp.Now;
-            var ts        = now - ntpEpoch;
+            var now        = Timestamp ?? Illias.Timestamp.Now;
+            var ticks      = (now - NTPEpoch).Ticks;
 
-            var seconds   = (UInt64) ts.TotalSeconds;
-            var fraction  = (UInt64) ((ts.TotalSeconds - seconds) * 0x100000000L);
+            var seconds    = ticks / TimeSpan.TicksPerSecond;
+            var remainder  = ticks % TimeSpan.TicksPerSecond;
 
-            return (seconds << 32) | fraction;
+            if (remainder < 0)
+            {
+                seconds--;
+                remainder += TimeSpan.TicksPerSecond;
+            }
+
+            // Computed in integers rather than through a Double. The 64-bit format resolves to
+            // roughly 233 ps, and a Double carries only 53 bits of mantissa, so routing the
+            // fraction through one discarded everything below about a microsecond.
+            var fraction   = (UInt64) remainder * 0x100000000UL / (UInt64) TimeSpan.TicksPerSecond;
+
+            // Truncating the seconds to 32 bits *is* the era wrap: RFC 5905 § 6 puts only the
+            // low 32 bits on the wire and leaves the era to be recovered from context.
+            return ((UInt64) (UInt32) seconds << 32) | (UInt32) fraction;
 
         }
 
@@ -541,15 +568,40 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         /// <summary>
         /// Converts a 64-bit NTP timestamp to a DateTime (UTC).
         /// </summary>
-        public static DateTime NTPTimestampToDateTime(UInt64 NTPTimestamp)
+        public static DateTime NTPTimestampToDateTime(UInt64     NTPTimestamp,
+                                                     DateTime?  ApproximateTime = null)
         {
 
-            var secondsSinceEpoch  = (UInt32) (NTPTimestamp >> 32);
-            var fraction           = (UInt32) (NTPTimestamp & 0xFFFFFFFF);
-            var fractionSeconds    = fraction / (Double) 0x100000000L; // 2^32
+            // Zero is not a time. RFC 5905 uses it for "unspecified" — an unsynchronized
+            // server's reference timestamp, or an origin timestamp on a request that answered
+            // nothing — so it must not be dragged into a nearby era.
+            if (NTPTimestamp == 0)
+                return NTPEpoch;
 
-            return new DateTime(1900, 1, 1, 0, 0, 0, DateTimeKind.Utc).
-                       AddSeconds(secondsSinceEpoch + fractionSeconds);
+            var secondsOnTheWire  = (Int64)  (NTPTimestamp >> 32);
+            var fraction          = (UInt64) (UInt32) NTPTimestamp;
+
+            // RFC 5905 § 6: the wire carries only the low 32 bits of the second count, which
+            // wraps every 136 years — first on 2036-02-07T06:28:16Z. The era has to come from
+            // context, and the context available here is roughly when the timestamp was
+            // generated: pick the era that places it nearest that instant. Within ±68 years
+            // this is unambiguous, and no NTP timestamp worth reading is further out.
+            var reference         = ApproximateTime ?? Illias.Timestamp.Now;
+            var referenceSeconds  = (Int64) (reference - NTPEpoch).TotalSeconds;
+
+            var era               = (Int64) Math.Round((Double) (referenceSeconds - secondsOnTheWire) / SecondsPerEra);
+            var absoluteSeconds   = secondsOnTheWire + era * SecondsPerEra;
+
+            var ticks             = absoluteSeconds * TimeSpan.TicksPerSecond +
+                                    (Int64) (fraction * (UInt64) TimeSpan.TicksPerSecond / 0x100000000UL);
+
+            // A timestamp whose era lands outside DateTime's range says more about the sender
+            // than about the clock; report it in era 0 rather than throwing.
+            if (ticks < 0 || ticks > DateTime.MaxValue.Ticks - NTPEpoch.Ticks)
+                return NTPEpoch.AddTicks(secondsOnTheWire * TimeSpan.TicksPerSecond +
+                                         (Int64) (fraction * (UInt64) TimeSpan.TicksPerSecond / 0x100000000UL));
+
+            return NTPEpoch.AddTicks(ticks);
 
         }
 
