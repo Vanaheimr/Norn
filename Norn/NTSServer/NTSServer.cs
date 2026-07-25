@@ -58,6 +58,39 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </summary>
         public  const            UInt16                                   MaxCookiesPerResponse  = 8;
 
+        /// <summary>
+        /// The granularity of the clock this server reads, measured once on first use.
+        ///
+        /// Measured rather than assumed: <c>Stopwatch.Frequency</c> describes the high-resolution
+        /// timer, not the wall clock the timestamps actually come from, and on Windows those can
+        /// differ by five orders of magnitude. Reporting the timer's resolution as the clock's
+        /// would be a more precise claim than the clock can support.
+        /// </summary>
+        public static TimeSpan SystemClockResolution
+            => systemClockResolution.Value;
+
+        private static readonly Lazy<TimeSpan> systemClockResolution = new(() => {
+
+            var first = Illias.Timestamp.Now;
+            var spins = 0;
+
+            DateTimeOffset next;
+
+            do
+            {
+                next = Illias.Timestamp.Now;
+                spins++;
+            }
+            while (next == first && spins < 10_000_000);
+
+            var resolution = next - first;
+
+            return resolution > TimeSpan.Zero
+                       ? resolution
+                       : TimeSpan.FromTicks(1);
+
+        });
+
         private                  Socket?                                  tcpSocket;
         private                  Socket?                                  udpSocket;
         private                  CancellationTokenSource?                 cts;
@@ -132,6 +165,50 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </summary>
         public Boolean               EnableDualStack               { get; }
 
+        #region Clock characteristics (RFC 5905 § 7.3)
+
+        /// <summary>
+        /// The stratum this server reports. Default 1: it serves the local clock directly.
+        /// </summary>
+        public Byte                  Stratum                       { get; }
+
+        /// <summary>
+        /// What this server's time comes from. At stratum 1 this is a four-character source
+        /// identifier from RFC 5905 § 7.3 ("LOCL" for an uncalibrated local clock); at stratum 2
+        /// or above it identifies the upstream server, so clients can detect a timing loop.
+        /// </summary>
+        public ReferenceIdentifier   ReferenceIdentifier           { get; }
+
+        /// <summary>
+        /// Total round-trip delay to the reference clock. Zero when the reference *is* the local
+        /// clock, since there is no network path to traverse.
+        /// </summary>
+        public TimeSpan              RootDelay                     { get; }
+
+        /// <summary>
+        /// Maximum error relative to the reference clock. Never zero — that would claim a
+        /// perfect clock, and a client's root-distance calculation (§ 11.3) would then
+        /// understate its true uncertainty.
+        /// </summary>
+        public TimeSpan              RootDispersion                { get; }
+
+        /// <summary>
+        /// The leap indicator to report. 3 announces that this server is not synchronized.
+        /// </summary>
+        public Byte                  LeapIndicator                 { get; }
+
+        /// <summary>
+        /// When this server's clock was last set or corrected — the Reference Timestamp of
+        /// § 7.3, which tells a client how stale the synchronization is.
+        ///
+        /// Defaults to when the server started, which is when it began trusting this clock.
+        /// Settable so a process that does observe a real synchronization can report it;
+        /// reporting "now" on every reply, as this used to, makes the field meaningless.
+        /// </summary>
+        public DateTimeOffset        ClockLastSynchronized         { get; set; }
+
+        #endregion
+
         public TimeSpan              MasterKeyLifetime             { get; }
 
         public TimeSpan              MasterKeyRotationGracePeriod  { get; }
@@ -201,7 +278,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                          Int32?             MaxConcurrentNTSKEConnections = null,
                          X509Certificate?   TLSCertificate                = null,
                          ECPrivateKeyParameters? TLSPrivateKey            = null,
-                         String?            TLSServerSubjectName          = null)
+                         String?            TLSServerSubjectName          = null,
+                         Byte?              Stratum                       = null,
+                         ReferenceIdentifier? ReferenceIdentifier         = null,
+                         TimeSpan?          RootDelay                     = null,
+                         TimeSpan?          RootDispersion                = null,
+                         Byte?              LeapIndicator                 = null)
         {
 
             this.Description                  = Description                  ?? I18NString.Empty;
@@ -225,6 +307,26 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             this.tlsCertificate               = TLSCertificate;
             this.tlsPrivateKey                = TLSPrivateKey;
             this.tlsServerSubjectName         = TLSServerSubjectName;
+
+            // What this server can honestly say about its own clock (RFC 5905 § 7.3).
+            //
+            // The defaults describe what Norn actually is when nothing is configured: a server
+            // handing out the operating system's clock, with no upstream of its own. That makes
+            // it a stratum-1 server whose reference is the local clock ("LOCL" in the § 7.3
+            // reference identifier table), reachable over no network path, so a root delay of
+            // zero is the truth rather than a placeholder.
+            //
+            // Root dispersion is the one value that cannot be zero: it is the maximum error
+            // relative to the reference, and Norn cannot observe how well the OS clock is
+            // actually synchronized. The default is therefore the measured clock resolution
+            // plus a deliberately conservative allowance, and operators who know better should
+            // say so.
+            this.Stratum                      = Stratum                      ?? 1;
+            this.ReferenceIdentifier          = ReferenceIdentifier          ?? NTP.ReferenceIdentifier.From("LOCL");
+            this.RootDelay                    = RootDelay                    ?? TimeSpan.Zero;
+            this.RootDispersion               = RootDispersion               ?? SystemClockResolution + TimeSpan.FromMilliseconds(1);
+            this.LeapIndicator                = LeapIndicator                ?? 0;
+            this.ClockLastSynchronized        = Illias.Timestamp.Now;
 
             if (KeyPair is not null)
             {
@@ -1117,6 +1219,90 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         #endregion
 
 
+        #region (private) BuildResponseHeader(RequestPacket, Extensions, ...)
+
+        /// <summary>
+        /// The RFC 5905 § 7.3 header common to every response, plain or NTS-protected, so both
+        /// describe this server's clock the same way.
+        /// </summary>
+        private NTPPacket BuildResponseHeader(NTPPacket                  RequestPacket,
+                                              IEnumerable<NTPExtension>  Extensions,
+                                              UInt64?                    ReceiveTimestamp   = null,
+                                              UInt64?                    TransmitTimestamp  = null)
+
+            => new (
+
+                   LI:                   LeapIndicator,
+                   Mode:                 4, // Server
+                   Stratum:              Stratum,
+                   Poll:                 RequestPacket.Poll,
+
+                   // This server's own clock resolution, not the client's. Echoing the
+                   // request's precision reported the client's clock back to it as though it
+                   // described the server's.
+                   Precision:            ClockPrecisionExponent,
+
+                   RootDelay:            ToShortFormat(RootDelay),
+                   RootDispersion:       ToShortFormat(RootDispersion),
+                   ReferenceIdentifier:  ReferenceIdentifier,
+
+                   // When the clock was last set, per § 7.3 — not the moment of this reply,
+                   // which said nothing about synchronization at all.
+                   ReferenceTimestamp:   NTPPacket.GetCurrentNTPTimestamp(ClockLastSynchronized.UtcDateTime),
+
+                   OriginateTimestamp:   RequestPacket.TransmitTimestamp ?? 0,
+                   ReceiveTimestamp:     ReceiveTimestamp  ?? NTPPacket.GetCurrentNTPTimestamp(),
+                   TransmitTimestamp:    TransmitTimestamp ?? NTPPacket.GetCurrentNTPTimestamp(),
+                   Extensions:           Extensions,
+
+                   Request:              RequestPacket
+
+               );
+
+        #endregion
+
+        #region (private) Clock reporting helpers
+
+        /// <summary>
+        /// The Precision field of RFC 5905 § 7.3: a signed exponent, so that 2^Precision is the
+        /// clock's resolution in seconds.
+        /// </summary>
+        private static SByte ClockPrecisionExponent
+            => clockPrecisionExponent.Value;
+
+        private static readonly Lazy<SByte> clockPrecisionExponent = new(() => {
+
+            var seconds  = SystemClockResolution.TotalSeconds;
+            var exponent = Math.Floor(Math.Log2(seconds));
+
+            // Clamped to the range the field can express; a resolution outside it says the
+            // measurement went wrong, not that the clock is extraordinary.
+            return (SByte) Math.Clamp(exponent, -32, 0);
+
+        });
+
+
+        /// <summary>
+        /// Convert to the 32-bit 16.16 fixed-point "short format" of RFC 5905 § 6, used by the
+        /// Root Delay and Root Dispersion fields. Saturates rather than wrapping: a value too
+        /// large to express should read as "very uncertain", not as a small one.
+        /// </summary>
+        private static UInt32 ToShortFormat(TimeSpan Value)
+        {
+
+            if (Value <= TimeSpan.Zero)
+                return 0;
+
+            var scaled = Value.TotalSeconds * 65536.0;
+
+            return scaled >= UInt32.MaxValue
+                       ? UInt32.MaxValue
+                       : (UInt32) Math.Round(scaled);
+
+        }
+
+        #endregion
+
         /// <summary>
         /// Build an NTS NAK, as RFC 8915 §5.7 prescribes for a request whose cookie cannot be
         /// validated or whose authenticator does not verify: a Kiss-o'-Death packet (RFC 5905
@@ -1168,6 +1354,19 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             var extensions           = new List<NTPExtension>();
             var encryptedExtensions  = new List<NTPExtension>();
+
+            // A request carrying no NTS extension field at all is a plain NTPv4 request and
+            // must be answered as one. RFC 8915 § 5.7's NTS NAK is for a request that *tried*
+            // to use NTS and failed; returning a Kiss-o'-Death to a client that never asked for
+            // NTS tells it this server is unusable, and a plain NTP client — chronyd without
+            // the "nts" option, for one — will drop the server entirely.
+            if (!RequestPacket.Extensions.Any(extension => extension.Type is ExtensionTypes.UniqueIdentifier
+                                                                          or ExtensionTypes.NTSCookie
+                                                                          or ExtensionTypes.NTSCookiePlaceholder
+                                                                          or ExtensionTypes.AuthenticatorAndEncrypted))
+            {
+                return BuildResponseHeader(RequestPacket, []);
+            }
 
             var u1 = RequestPacket.UniqueIdentifier();
 
@@ -1222,18 +1421,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             var receiveTimestamp  = NTPPacket.GetCurrentNTPTimestamp();
             var transmitTimestamp = NTPPacket.GetCurrentNTPTimestamp();
 
-            var response1 = new NTPPacket(
-
-                                 Mode:                4, // 4 (Server)
-                                 Stratum:             2,
-                                 Poll:                RequestPacket.Poll,
-                                 Precision:           RequestPacket.Precision,
-                                 ReferenceTimestamp:  transmitTimestamp,
-                                 OriginateTimestamp:  RequestPacket.TransmitTimestamp ?? 0,
-                                 ReceiveTimestamp:    receiveTimestamp,
-                                 TransmitTimestamp:   transmitTimestamp
-
-                             );
+            var response1 = BuildResponseHeader(RequestPacket, extensions, receiveTimestamp, transmitTimestamp);
 
 
             var associatedData = new List<Byte[]>() { response1.ToByteArray(SkipExtensions: true) }.
