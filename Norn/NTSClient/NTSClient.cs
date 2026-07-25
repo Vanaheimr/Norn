@@ -79,6 +79,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public NTSCookiePoolPolicy                                            CookiePoolPolicy              { get; }
 
         /// <summary>
+        /// The clock this client stamps its requests from and reads its own arrival times with —
+        /// T1 and T4 of the RFC 5905 § 8 offset calculation.
+        ///
+        /// This is the wall clock only. The high-resolution timestamps captured around the UDP
+        /// exchange stay on <see cref="System.Diagnostics.Stopwatch"/> deliberately: they measure
+        /// how long the network took, which is a physical quantity, not a reading of the clock
+        /// under correction. Substituting them would fabricate round-trip times rather than
+        /// control the clock.
+        /// </summary>
+        public TimeProvider                                                   TimeProvider                  { get; }
+
+        /// <summary>
         /// The number of currently queued NTS cookies available for future NTP/NTS requests.
         /// </summary>
         public Int32 AvailableCookieCount
@@ -125,7 +137,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                          IPVersionPreference?                                           IPVersionPreference          = null,
                          TimeSpan?                                                      Timeout                      = null,
                          DNSClient?                                                     DNSClient                    = null,
-                         NTSCookiePoolPolicy?                                           CookiePoolPolicy             = null)
+                         NTSCookiePoolPolicy?                                           CookiePoolPolicy             = null,
+                         TimeProvider?                                                  TimeProvider                 = null)
         {
 
             this.Id                          = Id                  ?? RandomExtensions.RandomUInt16();
@@ -137,6 +150,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             this.Timeout                     = Timeout             ?? DefaultTimeout;
             this.DNSClient                   = DNSClient           ?? new DNSClient();
             this.CookiePoolPolicy            = (CookiePoolPolicy   ?? new NTSCookiePoolPolicy()).Normalize();
+            this.TimeProvider                = TimeProvider        ?? System.TimeProvider.System;
 
         }
 
@@ -184,11 +198,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                   UInt16              SignedResponseKeyId     = 1,
                                                   UInt64?             TransmitTimestamp       = null,
                                                   UInt16              CookiePlaceholderCount  = 0,
-                                                  UInt16              CookiePlaceholderLength = 100)
+                                                  UInt16              CookiePlaceholderLength = 100,
+                                                  TimeProvider?       TimeProvider            = null)
         {
 
+            // The caller normally supplies the transmit timestamp, having read the clock right
+            // before the send; the clock is only read here when it does not, and then from the
+            // given clock rather than the ambient one.
             var ntpPacket1  = new NTPRequest(
-                                  TransmitTimestamp: TransmitTimestamp ?? NTPPacket.GetCurrentNTPTimestamp()
+                                  TransmitTimestamp: TransmitTimestamp
+                                                        ?? NTPPacket.GetCurrentNTPTimestamp(TimeProvider ?? System.TimeProvider.System)
                               );
 
             var extensions  = new List<NTPExtension>();
@@ -802,7 +821,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                NTP_Port
                                            );
 
-            var transmitTimestamp  = NTPPacket.GetCurrentNTPTimestamp();
+            var transmitTimestamp  = NTPPacket.GetCurrentNTPTimestamp(TimeProvider);
 
             var requestPacket      = BuildNTSRequest(
                                          NTSKEResponse,
@@ -813,7 +832,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                           SignedResponseKeyId:    SignedResponseKeyId,
                                           TransmitTimestamp:      transmitTimestamp,
                                           CookiePlaceholderCount: cookiePlaceholderCount,
-                                          CookiePlaceholderLength: (UInt16) Math.Min(UInt16.MaxValue, Math.Max(0, cookie?.Length ?? 100))
+                                          CookiePlaceholderLength: (UInt16) Math.Min(UInt16.MaxValue, Math.Max(0, cookie?.Length ?? 100)),
+                                          TimeProvider:           TimeProvider
                                       );
 
             var requestData        = requestPacket.ToByteArray();
@@ -874,7 +894,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     }
 
                     var receiveResult1              = receiveResult1WithTimeout.Result.Value;
-                    var destinationTimestamp1       = NTPPacket.GetCurrentNTPTimestamp();
+                    // T4: this client's clock, the same one T1 came from — an offset computed
+                    // from two different clocks would be meaningless. The Stopwatch reading
+                    // beside it measures the network, not the clock; see the TimeProvider
+                    // property for why that one stays where it is.
+                    var destinationTimestamp1       = NTPPacket.GetCurrentNTPTimestamp(TimeProvider);
                     var receiveStopwatchTimestamp1  = Stopwatch.GetTimestamp();
 
                     if (NTPResponse.TryParse(receiveResult1.Buffer,
@@ -945,7 +969,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                             }
 
                             var receiveResult2              = receiveResult2WithTimeout.Result.Value;
-                            var destinationTimestamp2       = NTPPacket.GetCurrentNTPTimestamp();
+                            var destinationTimestamp2       = NTPPacket.GetCurrentNTPTimestamp(TimeProvider);
                             var receiveStopwatchTimestamp2  = Stopwatch.GetTimestamp();
 
                             if (!receiveResult1.Buffer.IsPrefixOf(receiveResult2.Buffer))

@@ -59,7 +59,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public  const            UInt16                                   MaxCookiesPerResponse  = 8;
 
         /// <summary>
-        /// The granularity of the clock this server reads, measured once on first use.
+        /// The granularity of the system clock, measured once on first use.
         ///
         /// Measured rather than assumed: <c>Stopwatch.Frequency</c> describes the high-resolution
         /// timer, not the wall clock the timestamps actually come from, and on Windows those can
@@ -69,27 +69,53 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public static TimeSpan SystemClockResolution
             => systemClockResolution.Value;
 
-        private static readonly Lazy<TimeSpan> systemClockResolution = new(() => {
+        private static readonly Lazy<TimeSpan> systemClockResolution =
+            new(() => MeasureClockResolution(System.TimeProvider.System) ?? UnknownClockResolution);
 
-            var first = Illias.Timestamp.Now;
-            var spins = 0;
+        /// <summary>
+        /// What to report when a clock's granularity cannot be observed at all — most likely a
+        /// substituted <see cref="System.TimeProvider"/> that does not advance on its own.
+        /// Deliberately coarse: a clock we cannot measure must not be described as a precise one.
+        /// </summary>
+        public static readonly TimeSpan UnknownClockResolution = TimeSpan.FromMilliseconds(1);
+
+        /// <summary>
+        /// Observe how finely the given clock advances, by reading it until it changes.
+        ///
+        /// Bounded by real elapsed time rather than by a read count, because both ends of the
+        /// range have to terminate: a 15.6 ms clock needs a great many reads before it moves,
+        /// and a frozen test clock never moves at all. Returns null in the latter case, so the
+        /// caller can say "unknown" instead of inventing a resolution.
+        /// </summary>
+        private static TimeSpan? MeasureClockResolution(TimeProvider  TimeProvider,
+                                                        TimeSpan?     MaxWait   = null)
+        {
+
+            var first     = TimeProvider.GetUtcNow();
+            var watchdog  = System.Diagnostics.Stopwatch.StartNew();
+            var deadline  = MaxWait ?? TimeSpan.FromMilliseconds(100);
 
             DateTimeOffset next;
 
             do
             {
-                next = Illias.Timestamp.Now;
-                spins++;
+                next = TimeProvider.GetUtcNow();
             }
-            while (next == first && spins < 10_000_000);
+            while (next == first && watchdog.Elapsed < deadline);
 
             var resolution = next - first;
 
             return resolution > TimeSpan.Zero
                        ? resolution
-                       : TimeSpan.FromTicks(1);
+                       : null;
 
-        });
+        }
+
+        /// <summary>
+        /// <see cref="ListenIPAddress"/> in the form the socket layer takes, converted once here
+        /// so the conversion happens at the boundary and nowhere else.
+        /// </summary>
+        private readonly         System.Net.IPAddress                     listenIPAddress;
 
         private                  Socket?                                  tcpSocket;
         private                  Socket?                                  udpSocket;
@@ -157,13 +183,26 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         /// <summary>
         /// The local IP address used for the TCP and UDP listener sockets.
+        ///
+        /// <see cref="IPvXAddress.Any"/> asks for both address families at once; an
+        /// <see cref="IPv4Address"/> or <see cref="IPv6Address"/> pins the listener to one.
         /// </summary>
-        public System.Net.IPAddress  ListenIPAddress               { get; }
+        public IIPAddress            ListenIPAddress               { get; }
 
         /// <summary>
         /// Whether an IPv6 listener socket should also accept IPv4 traffic.
         /// </summary>
         public Boolean               EnableDualStack               { get; }
+
+        /// <summary>
+        /// The clock this server reads and reports.
+        ///
+        /// Everything time-dependent goes through here — the response timestamps, master key
+        /// rotation, cookie timestamps and certificate validity — so a test can substitute a
+        /// clock for one server without the process-wide side effects of
+        /// <see cref="Illias.Timestamp.TravelBackInTime"/>.
+        /// </summary>
+        public TimeProvider          TimeProvider                  { get; }
 
         #region Clock characteristics (RFC 5905 § 7.3)
 
@@ -196,6 +235,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// The leap indicator to report. 3 announces that this server is not synchronized.
         /// </summary>
         public Byte                  LeapIndicator                 { get; }
+
+        /// <summary>
+        /// How finely <see cref="TimeProvider"/> advances, reported in the Precision field of
+        /// § 7.3. Measured on construction unless given, and <see cref="UnknownClockResolution"/>
+        /// when the clock cannot be observed to advance at all.
+        /// </summary>
+        public TimeSpan              ClockResolution               { get; }
 
         /// <summary>
         /// When this server's clock was last set or corrected — the Reference Timestamp of
@@ -260,13 +306,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <param name="KeyPair">An optional key pair to be used for NTS response signing.</param>
         /// <param name="ExternalURLs">An enumeration of external URLs to be used for NTP/NTS requests.</param>
         /// <param name="DNSClient">An optional DNS client to use.</param>
+        /// <param name="ListenIPAddress">The optional local IP address to listen on (default: 0.0.0.0). Pass <see cref="IPvXAddress.Any"/> to serve IPv4 and IPv6 together.</param>
+        /// <param name="ClockResolution">The optional granularity of the clock, when it is known better than it can be measured.</param>
+        /// <param name="TimeProvider">The optional clock this server reads and reports (default: <see cref="System.TimeProvider.System"/>).</param>
         public NTSServer(I18NString?        Description    = null,
                          IPPort?            NTSKEPort      = null,
                          IPPort?            NTSPort        = null,
                          KeyPair?           KeyPair        = null,
                          IEnumerable<URL>?  ExternalURLs   = null,
                          DNSClient?         DNSClient      = null,
-                         System.Net.IPAddress? ListenIPAddress               = null,
+                         IIPAddress?        ListenIPAddress               = null,
                          Boolean            EnableDualStack               = true,
                          String?            MasterKeysFilePath            = "masterKeys.json",
                          TimeSpan?          MasterKeyLifetime             = null,
@@ -283,15 +332,22 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                          ReferenceIdentifier? ReferenceIdentifier         = null,
                          TimeSpan?          RootDelay                     = null,
                          TimeSpan?          RootDispersion                = null,
-                         Byte?              LeapIndicator                 = null)
+                         Byte?              LeapIndicator                 = null,
+                         TimeSpan?          ClockResolution               = null,
+                         TimeProvider?      TimeProvider                  = null)
         {
 
+            this.TimeProvider                 = TimeProvider                 ?? System.TimeProvider.System;
             this.Description                  = Description                  ?? I18NString.Empty;
             this.TCPPort                      = NTSKEPort                    ?? IPPort.NTSKE;
             this.UDPPort                      = NTSPort                      ?? IPPort.NTP;
             this.ExternalURLs                 = ExternalURLs                 ?? [ URL.Parse($"udp://localhost:{this.UDPPort}") ];
             this.DNSClient                    = DNSClient                    ?? new DNSClient();
-            this.ListenIPAddress              = ListenIPAddress              ?? System.Net.IPAddress.Any;
+            // IPv4 0.0.0.0 unless asked otherwise. IPvXAddress.Any would listen on both families
+            // at once, which is often what an operator wants, but it needs a working IPv6 stack
+            // to bind at all — so it stays an explicit choice rather than a default.
+            this.ListenIPAddress              = ListenIPAddress              ?? IPv4Address.Any;
+            this.listenIPAddress              = this.ListenIPAddress.ToDotNet();
             this.EnableDualStack              = EnableDualStack;
             this.masterKeysFilePath           = MasterKeysFilePath;
             this.MasterKeyLifetime            = MasterKeyLifetime            ?? TimeSpan.FromDays(1);
@@ -321,12 +377,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             // actually synchronized. The default is therefore the measured clock resolution
             // plus a deliberately conservative allowance, and operators who know better should
             // say so.
+            this.ClockResolution              = ClockResolution              ?? MeasureClockResolution(this.TimeProvider)
+                                                                              ?? UnknownClockResolution;
             this.Stratum                      = Stratum                      ?? 1;
             this.ReferenceIdentifier          = ReferenceIdentifier          ?? NTP.ReferenceIdentifier.From("LOCL");
             this.RootDelay                    = RootDelay                    ?? TimeSpan.Zero;
-            this.RootDispersion               = RootDispersion               ?? SystemClockResolution + TimeSpan.FromMilliseconds(1);
+            this.RootDispersion               = RootDispersion               ?? this.ClockResolution + TimeSpan.FromMilliseconds(1);
             this.LeapIndicator                = LeapIndicator                ?? 0;
-            this.ClockLastSynchronized        = Illias.Timestamp.Now;
+            this.ClockLastSynchronized        = this.TimeProvider.GetUtcNow();
 
             if (KeyPair is not null)
             {
@@ -341,7 +399,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             try
             {
 
-                var invalidAfter = Timestamp.Now + this.MasterKeyRotationGracePeriod;
+                var invalidAfter = this.TimeProvider.GetUtcNow() + this.MasterKeyRotationGracePeriod;
 
                 foreach (var masterKeyText in MasterKeysFilePath.IsNotNullOrEmpty()
                                                   ? File.ReadAllLines(MasterKeysFilePath)
@@ -382,12 +440,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         {
 
             var socket = new Socket(
-                             ListenIPAddress.AddressFamily,
+                             listenIPAddress.AddressFamily,
                              SocketType,
                              ProtocolType
                          );
 
-            if (ListenIPAddress.AddressFamily == AddressFamily.InterNetworkV6 &&
+            if (listenIPAddress.AddressFamily == AddressFamily.InterNetworkV6 &&
                 EnableDualStack)
             {
                 socket.DualMode = true;
@@ -396,6 +454,23 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             return socket;
 
         }
+
+        #endregion
+
+        #region (private) AnyRemoteEndPoint()
+
+        /// <summary>
+        /// The wildcard endpoint used as the template for receiving a datagram.
+        ///
+        /// It has to match the listening socket's address family: the socket layer rejects a
+        /// mismatch outright, so an IPv4 wildcard against an IPv6 listener breaks every receive.
+        /// </summary>
+        private IPEndPoint AnyRemoteEndPoint()
+
+            => new (listenIPAddress.AddressFamily == AddressFamily.InterNetworkV6
+                        ? System.Net.IPAddress.IPv6Any
+                        : System.Net.IPAddress.Any,
+                    0);
 
         #endregion
 
@@ -642,7 +717,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                         C2SKey:            C2SKey,
                         S2CKey:            S2CKey,
                         AEADAlgorithm:     Negotiation.AEADAlgorithm!.Value,
-                        IsCritical:        false
+                        IsCritical:        false,
+                        TimeProvider:      TimeProvider
                     )
             );
 
@@ -696,7 +772,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             // seamlessly transition from one generation to the next without having to perform a new
             // NTS-KE handshake.
 
-            var now = Timestamp.Now;
+            var now = TimeProvider.GetUtcNow();
 
             if (currentMasterKey is null ||
                 currentMasterKey.Value.NotBefore > now ||
@@ -705,7 +781,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 lock (currentMasterKeyLock)
                 {
 
-                    now = Timestamp.Now;
+                    now = TimeProvider.GetUtcNow();
 
                     foreach (var masterKey in masterKeys.Values)
                     {
@@ -814,7 +890,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                        C2SKey,
                        S2CKey,
                        Enumerable.Range(0, NumberOfCookies).
-                                  Select(_ => NTSCookie.Create (MasterKey, C2SKey, S2CKey, AEADAlgorithm).
+                                  Select(_ => NTSCookie.Create (MasterKey, C2SKey, S2CKey, AEADAlgorithm, TimeProvider).
                                                         Encrypt(MasterKey)),
                        ExternalURLs,
                        this.currentPublicKey is not null
@@ -873,7 +949,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             udpSocket.Bind(
                 new IPEndPoint(
-                    ListenIPAddress,
+                    listenIPAddress,
                     UDPPort.ToUInt16()
                 )
             );
@@ -889,7 +965,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     {
 
                         var buffer          = new Byte[BufferSize];
-                        var remoteEP        = new IPEndPoint(System.Net.IPAddress.Any, 0);
+                        var remoteEP        = AnyRemoteEndPoint();
 
                         var udpPacket       = await udpSocket.ReceiveFromAsync(
                                                         new ArraySegment<Byte>(buffer),
@@ -1000,7 +1076,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             tcpSocket.Bind(
                 new IPEndPoint(
-                    ListenIPAddress,
+                    listenIPAddress,
                     TCPPort.ToUInt16()
                 )
             );
@@ -1049,7 +1125,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                 var tlsServer            = new NTSKE_TLSService (
                                                                tlsCertificate,
                                                                tlsPrivateKey,
-                                                               tlsServerSubjectName
+                                                               tlsServerSubjectName,
+                                                               TimeProvider
                                                            );
 
                                 await Task.Run(
@@ -1251,8 +1328,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                    ReferenceTimestamp:   NTPPacket.GetCurrentNTPTimestamp(ClockLastSynchronized.UtcDateTime),
 
                    OriginateTimestamp:   RequestPacket.TransmitTimestamp ?? 0,
-                   ReceiveTimestamp:     ReceiveTimestamp  ?? NTPPacket.GetCurrentNTPTimestamp(),
-                   TransmitTimestamp:    TransmitTimestamp ?? NTPPacket.GetCurrentNTPTimestamp(),
+                   ReceiveTimestamp:     ReceiveTimestamp  ?? NTPPacket.GetCurrentNTPTimestamp(TimeProvider),
+                   TransmitTimestamp:    TransmitTimestamp ?? NTPPacket.GetCurrentNTPTimestamp(TimeProvider),
                    Extensions:           Extensions,
 
                    Request:              RequestPacket
@@ -1267,19 +1344,20 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// The Precision field of RFC 5905 § 7.3: a signed exponent, so that 2^Precision is the
         /// clock's resolution in seconds.
         /// </summary>
-        private static SByte ClockPrecisionExponent
-            => clockPrecisionExponent.Value;
+        private SByte ClockPrecisionExponent
+            => ToPrecisionExponent(ClockResolution);
 
-        private static readonly Lazy<SByte> clockPrecisionExponent = new(() => {
+        internal static SByte ToPrecisionExponent(TimeSpan ClockResolution)
+        {
 
-            var seconds  = SystemClockResolution.TotalSeconds;
+            var seconds  = ClockResolution.TotalSeconds;
             var exponent = Math.Floor(Math.Log2(seconds));
 
             // Clamped to the range the field can express; a resolution outside it says the
             // measurement went wrong, not that the clock is extraordinary.
             return (SByte) Math.Clamp(exponent, -32, 0);
 
-        });
+        }
 
 
         /// <summary>
@@ -1312,8 +1390,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// request that caused it. No NTS Cookie and no NTS Authenticator extension field may
         /// appear — the server has no validated key with which to produce one.
         /// </summary>
-        private static NTPPacket BuildNTSNAK(NTPPacket  RequestPacket,
-                                             String     ErrorMessage)
+        private NTPPacket BuildNTSNAK(NTPPacket  RequestPacket,
+                                      String     ErrorMessage)
         {
 
             var extensions  = new List<NTPExtension>();
@@ -1335,8 +1413,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                        ReferenceIdentifier:    ReferenceIdentifier.From("NTSN"),
                        ReferenceTimestamp:     0,
                        OriginateTimestamp:     RequestPacket.TransmitTimestamp ?? 0,
-                       ReceiveTimestamp:       NTPPacket.GetCurrentNTPTimestamp(),
-                       TransmitTimestamp:      NTPPacket.GetCurrentNTPTimestamp(),
+                       ReceiveTimestamp:       NTPPacket.GetCurrentNTPTimestamp(TimeProvider),
+                       TransmitTimestamp:      NTPPacket.GetCurrentNTPTimestamp(TimeProvider),
                        Extensions:             extensions,
 
                        Request:                RequestPacket,
@@ -1407,7 +1485,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                         NumberOfCookies:  numberOfCookies,
                         C2SKey:           ntsCookie.C2SKey,
                         S2CKey:           ntsCookie.S2CKey,
-                        AEADAlgorithm:    ntsCookie.AEADAlgorithm
+                        AEADAlgorithm:    ntsCookie.AEADAlgorithm,
+                        TimeProvider:     TimeProvider
                     )
             );
 
@@ -1418,8 +1497,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 );
 
 
-            var receiveTimestamp  = NTPPacket.GetCurrentNTPTimestamp();
-            var transmitTimestamp = NTPPacket.GetCurrentNTPTimestamp();
+            var receiveTimestamp  = NTPPacket.GetCurrentNTPTimestamp(TimeProvider);
+            var transmitTimestamp = NTPPacket.GetCurrentNTPTimestamp(TimeProvider);
 
             var response1 = BuildResponseHeader(RequestPacket, extensions, receiveTimestamp, transmitTimestamp);
 
