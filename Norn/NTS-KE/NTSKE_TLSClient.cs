@@ -49,6 +49,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #region Data
 
+        /// <summary>
+        /// The ALPN protocol identifier RFC 8915 § 4 assigns to NTS-KE, registered with IANA as
+        /// the seven octets 0x6E 0x74 0x73 0x6B 0x65 0x2F 0x31.
+        /// </summary>
+        public const String ApplicationProtocol = "ntske/1";
+
         private readonly RemoteTLSServerCertificateValidationHandler<NTSKE_TLSClient>? remoteCertificateValidator = RemoteCertificateValidator;
 
         #endregion
@@ -81,6 +87,29 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </summary>
         public String?  NegotiatedTLSVersion
             => TLSInfo?.NegotiatedTLSVersion;
+
+        /// <summary>
+        /// Whether the server selected <see cref="ApplicationProtocol"/>, which is the only thing
+        /// in the handshake that says the peer agreed to speak NTS-KE at all.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// RFC 8915 § 3 calls the Application-Layer Protocol Negotiation extension "integral to
+        /// NTS" and its support "REQUIRED for interoperability", and § 4 describes the exchange as
+        /// one "with the client offering (via an ALPN extension), and the server accepting, an
+        /// application-layer protocol of ntske/1". Neither says in so many words what a client
+        /// does when the server does not accept it — which is exactly why this needs to be
+        /// somewhere a caller can see rather than left implicit.
+        /// </para>
+        /// <para>
+        /// False also covers the server that sent no ALPN extension at all. RFC 7301 lets a
+        /// server that does not implement ALPN stay silent and complete the handshake, so silence
+        /// is the common case rather than an exotic one — and a server that does not implement
+        /// ALPN is, by § 3, not an NTS-KE server.
+        /// </para>
+        /// </remarks>
+        public Boolean  NTSKEApplicationProtocolSelected
+            => TLSInfo?.NegotiatedApplicationProtocol == ApplicationProtocol;
 
         /// <summary>
         /// The NTP-KE Client-2-Server Key

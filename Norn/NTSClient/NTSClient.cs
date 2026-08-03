@@ -501,6 +501,41 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     await tlsHandshakeTask.ConfigureAwait(false);
                     tlsHandshakeDuration   = tlsStopwatch.Elapsed;
 
+                    // Before a single record goes out, because the ALPN identifier is the only
+                    // thing in the handshake that says the peer agreed to speak NTS-KE. RFC 8915
+                    // § 3 makes the extension "integral to NTS" and REQUIRED for interoperability;
+                    // a server that completes the handshake without selecting ntske/1 has agreed
+                    // to nothing, and everything this client would do next — send records, read a
+                    // reply, derive keys from the exporter — assumes it did.
+                    //
+                    // This used to be recorded and never read. It went unnoticed because no test
+                    // could reach it: nothing in the conformance suite terminated TLS on this
+                    // client's far side until there was a server that kept the request.
+                    if (!ntsTlsClient.NTSKEApplicationProtocolSelected)
+                    {
+
+                        try
+                        {
+                            tlsClientProtocol.Close();
+                        }
+                        catch
+                        { }
+
+                        return NTSKEResult.Failed(
+                                   $"The TLS handshake completed, but the server did not select the " +
+                                   $"'{NTSKE_TLSClient.ApplicationProtocol}' application protocol " +
+                                   $"({(ntsTlsClient.TLSInfo?.NegotiatedApplicationProtocol is String selected &&
+                                        selected.IsNotNullOrEmpty()
+                                            ? $"it selected '{selected}'"
+                                            : "it selected none")}), " +
+                                   $"so it has not agreed to speak NTS-KE.",
+                                   NTSKEErrorCategory.TLSHandshake,
+                                   TakeTimingInfoSnapshot(),
+                                   ntsTlsClient.TLSInfo
+                               );
+
+                    }
+
                     var ntsKEStopwatch     = Stopwatch.StartNew();
                     var ntsKERequest       = BuildNTSKERequest(RequestNTSPublicKeys);
                     await tlsClientProtocol.Stream.WriteAsync(ntsKERequest, timeoutCTS.Token).ConfigureAwait(false);
