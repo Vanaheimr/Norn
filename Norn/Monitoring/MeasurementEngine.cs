@@ -447,7 +447,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                        PublicKeyAlgorithm       = certificate.PublicKey.Oid.FriendlyName,
                        PublicKeySize            = certificate.PublicKey.GetRSAPublicKey()?.KeySize ??
                                                   certificate.PublicKey.GetECDsaPublicKey()?.KeySize,
-                       SubjectAlternativeNames  = certificate.DecodeSubjectAlternativeNames(),
+                       // Qualified because Styx and Hermod both offer this extension method,
+                       // with the same signature and the same behaviour, and this file imports
+                       // both namespaces. Styx's, to keep company with the GetDNSNames used for
+                       // the hostname check in NTSKE_TLSClient — either would do, and picking
+                       // silently is what leaves the next reader wondering whether it matters.
+                       SubjectAlternativeNames  = Illias.CertificateExtensions.DecodeSubjectAlternativeNames(certificate),
                        PolicyErrors             = TLSInfo?.CertificatePolicyErrors?.ToString()
                    };
 

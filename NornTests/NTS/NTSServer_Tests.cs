@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2010-2026 GraphDefined GmbH <achim.friedland@graphdefined.com>
  * This file is part of Norn <https://www.github.com/Vanaheimr/Norn>
  *
@@ -127,7 +127,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                                                                               sslPolicyErrors) => {
 
                                                                                   var sans = serverCertificate is not null
-                                                                                                 ? serverCertificate.DecodeSubjectAlternativeNames()
+                                                                                                 ? Illias.CertificateExtensions.DecodeSubjectAlternativeNames(serverCertificate)
                                                                                                  : [];
 
                                                                                   if (serverCertificate?.Subject.Contains("ntpKE.example.org") == true &&
@@ -364,7 +364,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                                                                               sslPolicyErrors) => {
 
                                                                                   var sans = serverCertificate is not null
-                                                                                                 ? serverCertificate.DecodeSubjectAlternativeNames()
+                                                                                                 ? Illias.CertificateExtensions.DecodeSubjectAlternativeNames(serverCertificate)
                                                                                                  : [];
 
                                                                                   if (serverCertificate?.Subject.Contains("ntpKE.example.org") == true &&

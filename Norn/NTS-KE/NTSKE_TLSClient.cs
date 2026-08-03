@@ -319,13 +319,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             var normalizedHostname = Hostname.TrimEnd('.').ToLowerInvariant();
 
-            // GetDnsNames decodes the SAN extension itself. This used to filter
+            // GetDNSNames decodes the SAN extension itself. This used to filter
             // DecodeSubjectAlternativeNames for a "DNS-Name=" prefix, which came from
             // AsnEncodedData.Format() and is localized by the operating system — an English
             // installation writes "DNS Name=", so the filter found nothing there and the check
             // fell through to GetNameInfo, which reports a single name and so rejected
             // certificates valid for any of their other SAN entries.
-            var dnsNames           = Certificate.GetDnsNames().ToArray();
+            //
+            // Styx's, returning strings, rather than Hermod's GetDNSDomainNames: the names here
+            // are matched as RFC 6125 patterns, and "*.example.com" is not a domain name that
+            // DomainName.Parse should be asked to accept.
+            var dnsNames           = Certificate.GetDNSNames().ToArray();
 
             if (dnsNames.Length > 0)
                 return dnsNames.Any(dnsName => DNSNameMatches(dnsName, normalizedHostname));
