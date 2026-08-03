@@ -688,10 +688,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             if (advertiseExternalURLs)
             {
-                foreach (var externalURL in ExternalURLs.Where(url => url.Protocol == URLProtocols.udp))
+                foreach (var externalURL in ExternalURLs.Where(url => url.Scheme == URIScheme.udp))
                 {
 
-                    var hostname = externalURL.Hostname.Name.Trim('[', ']');
+                    // The record carries a bare ASCII host, so any brackets around an IPv6
+                    // literal have to come off — URLHost keeps them for round-tripping.
+                    var hostname = externalURL.Host.ToString().Trim('[', ']');
 
                     if (hostname.IsNotNullOrEmpty())
                         ntsKERecords.Add(
