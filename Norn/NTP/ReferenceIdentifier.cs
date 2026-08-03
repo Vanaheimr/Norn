@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2010-2026 GraphDefined GmbH <achim.friedland@graphdefined.com>
  * This file is part of Vanaheimr Norn <https://www.github.com/Vanaheimr/Norn>
  *
@@ -219,8 +219,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                                  "RSTR" => $"'{ascii}' Access denied due to local policy",
                                  "INIT" => $"'{ascii}' The association has not yet synchronized for the first time",
                                  "MCST" => $"'{ascii}' The association belongs to a dynamically discovered server",
-                                 "NKEY" => $"'{ascii}' No key found.Either the key was never installed or is not trusted",
-                                 "RATE" => $"'{ascii}' Rate exceeded.The server has temporarily denied access because the client exceeded the rate threshold",
+                                 "NKEY" => $"'{ascii}' No key found. Either the key was never installed or is not trusted",
+                                 "RATE" => $"'{ascii}' Rate exceeded. The server has temporarily denied access because the client exceeded the rate threshold",
                                  "RMOT" => $"'{ascii}' Alteration of association from a remote host running ntpdc",
                                  "STEP" => $"'{ascii}' A step change in system time has occurred, but the association has not yet resynchronized",
 
