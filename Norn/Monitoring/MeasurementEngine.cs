@@ -56,6 +56,28 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         private readonly MonitoringConfig                                    config        = Configuration;
         private readonly TimeProvider                                        timeProvider  = TimeProvider ?? System.TimeProvider.System;
 
+        /// <summary>
+        /// What each server has told this engine about how welcome it is, per RFC 5905 § 7.4.
+        /// </summary>
+        private readonly ConcurrentDictionary<DomainName, NTPServerAccessState> accessStates = [];
+
+        #endregion
+
+        #region Properties
+
+        /// <summary>
+        /// What a server has told this engine with its kiss codes: the poll rate it asked for,
+        /// and whether it asked to be left alone.
+        /// </summary>
+        /// <remarks>
+        /// Created on first sight of the server, so this never returns null and never means
+        /// "nothing has happened yet" by absence — a fresh state is one that has heard nothing,
+        /// which is the same thing said explicitly.
+        /// </remarks>
+        public NTPServerAccessState AccessStateFor(DomainName Hostname)
+
+            => accessStates.GetOrAdd(Hostname, _ => new NTPServerAccessState());
+
         #endregion
 
 
@@ -122,6 +144,34 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
             try
             {
+
+                // ──── Step 0: Has this server asked to be left alone? ────
+                //
+                // Before the DNS lookup, and long before the query, because RFC 5905 § 7.4 a says
+                // to "stop sending packets to that server" and § 7.4 b says to poll it less
+                // often. A round that measured anyway and threw the result away would satisfy
+                // neither: the packets are the thing being asked for.
+                var access = AccessStateFor(Server.Hostname);
+
+                if (config.RespectKissOfDeath &&
+                    !access.MayQuery(timeProvider.GetUtcNow()))
+                {
+
+                    totalStopwatch.Stop();
+
+                    return new NTSMeasurementResult(Server.Hostname, RoundId, Timestamp: timeProvider.GetUtcNow()) {
+                               Success        = false,
+                               Skipped        = true,
+                               ErrorMessage   = Error.Create(
+                                                    access.Demobilized
+                                                        ? $"Not querying {Server.Hostname}: it answered '{access.LastKiss?.Code}' and the association is demobilized."
+                                                        : $"Not querying {Server.Hostname} yet: it answered '{access.LastKiss?.Code}' and asked for a poll interval of {access.PollInterval.TotalSeconds:0} seconds."
+                                                ),
+                               ErrorCategory  = MonitoringErrorCategory.KissOfDeath,
+                               TotalDuration  = totalStopwatch.Elapsed
+                           };
+
+                }
 
                 // ──── Step 1: DNS Resolution ────
                 var dnsResult = await MeasureDNS(
@@ -577,17 +627,26 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                 if (!ntsQueryResult.Success ||
                     ntpResponse.ErrorMessage is not null)
                 {
+
                     var errorMessage = ntsQueryResult.ErrorMessage ?? ntpResponse.ErrorMessage ?? "NTP query failed!";
+
+                    // A kiss, and not merely a stratum-0 packet: RFC 8633 § 5.4 makes the origin
+                    // timestamp the price of being believed, and NTSQueryResult.KissOfDeath is
+                    // where that is checked. Reporting an unverifiable one as a kiss would let
+                    // an off-path attacker decide how often this engine measures — and, with
+                    // "DENY", whether it measures at all.
+                    var kiss         = ntsQueryResult.KissOfDeath;
+
+                    if (kiss is not null && config.RespectKissOfDeath)
+                        AccessStateFor(Server.Hostname).Apply(kiss.Value, timeProvider.GetUtcNow());
 
                     return new NTPMeasurementResult {
                                 Success          = false,
                                 StopwatchRTT     = stopwatchRTT,
                                 ErrorMessage     = Error.Create(errorMessage),
-                                KissOfDeath      = ntpResponse.Stratum == 0,
-                                KissOfDeathCode  = ntpResponse.Stratum == 0
-                                                       ? ntpResponse.ReferenceIdentifier.ToString(ntpResponse.Stratum)
-                                                       : null,
-                                ErrorCategory    = ntpResponse.Stratum == 0
+                                KissOfDeath      = kiss is not null,
+                                KissOfDeathCode  = kiss?.Code,
+                                ErrorCategory    = kiss is not null
                                                        ? MonitoringErrorCategory.KissOfDeath
                                                        : MapNTSQueryErrorCategory(ntsQueryResult.ErrorCategory),
                                  RemoteHost       = remoteInfo.Host,

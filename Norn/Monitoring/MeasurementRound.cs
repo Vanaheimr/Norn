@@ -90,6 +90,25 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
             => (UInt16) ServerResults.Count(r => r.Success);
 
         /// <summary>
+        /// Number of servers this round deliberately did not query, because they had asked not to
+        /// be — see <see cref="NTSMeasurementResult.Skipped"/>.
+        /// </summary>
+        /// <remarks>
+        /// Reported separately so that <see cref="ServersReachable"/> can be read against
+        /// <see cref="ServersMeasured"/> rather than against the number configured. A server that
+        /// was never asked is neither reachable nor unreachable, and counting it as the latter
+        /// would show a client obeying RFC 5905 § 7.4 as an outage.
+        /// </remarks>
+        public UInt16                                  ServersSkipped
+            => (UInt16) ServerResults.Count(r => r.Skipped);
+
+        /// <summary>
+        /// Number of servers this round actually queried.
+        /// </summary>
+        public UInt16                                  ServersMeasured
+            => (UInt16) ServerResults.Count(r => !r.Skipped);
+
+        /// <summary>
         /// Number of servers at Stratum 1.
         /// </summary>
         public UInt16                                  ServersAtStratum1

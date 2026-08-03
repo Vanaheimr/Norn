@@ -23,6 +23,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
     /// </summary>
     public class NTSServerMetrics(Int64 NTPRequestsReceived,
                                   Int64 NTPRequestsRejected,
+                                  Int64 NTPRequestsRateLimited,
+                                  Int64 NTPKissesOfDeathSent,
                                   Int64 NTPRequestsInvalid,
                                   Int64 NTPResponsesSent,
                                   Int64 NTPSignedResponsesSent,
@@ -36,6 +38,19 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         public Int64 NTPRequestsReceived       { get; } = NTPRequestsReceived;
         public Int64 NTPRequestsRejected       { get; } = NTPRequestsRejected;
+
+        /// <summary>
+        /// How many requests the RFC 8633 § 5.4 rate limiter refused, whether or not the client
+        /// was told about it.
+        /// </summary>
+        public Int64 NTPRequestsRateLimited    { get; } = NTPRequestsRateLimited;
+
+        /// <summary>
+        /// How many of those refusals were answered with a "RATE" Kiss-o'-Death. Always the
+        /// smaller number, and by design: the kisses are throttled far harder than the drops.
+        /// </summary>
+        public Int64 NTPKissesOfDeathSent      { get; } = NTPKissesOfDeathSent;
+
         public Int64 NTPRequestsInvalid        { get; } = NTPRequestsInvalid;
         public Int64 NTPResponsesSent          { get; } = NTPResponsesSent;
         public Int64 NTPSignedResponsesSent    { get; } = NTPSignedResponsesSent;
@@ -45,6 +60,43 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public Int64 NTSKEHandshakeFailures    { get; } = NTSKEHandshakeFailures;
         public Int64 NTSKERequestsInvalid      { get; } = NTSKERequestsInvalid;
         public Int64 NTSKEResponsesSent        { get; } = NTSKEResponsesSent;
+
+
+        /// <summary>
+        /// The counters that are not zero, in one line.
+        /// </summary>
+        /// <remarks>
+        /// These end up in test failure messages and log lines, where the default
+        /// "NTSServerMetrics" says nothing at all, and where a full listing of eleven counters
+        /// buries the one that moved.
+        /// </remarks>
+        public override String ToString()
+        {
+
+            var counters = new (String Name, Int64 Value)[] {
+                               ("received",         NTPRequestsReceived),
+                               ("rejected",         NTPRequestsRejected),
+                               ("rate-limited",     NTPRequestsRateLimited),
+                               ("kisses",           NTPKissesOfDeathSent),
+                               ("invalid",          NTPRequestsInvalid),
+                               ("sent",             NTPResponsesSent),
+                               ("signed",           NTPSignedResponsesSent),
+                               ("failures",         NTPRequestFailures),
+                               ("ke-accepted",      NTSKEConnectionsAccepted),
+                               ("ke-rejected",      NTSKEConnectionsRejected),
+                               ("ke-handshakes",    NTSKEHandshakeFailures),
+                               ("ke-invalid",       NTSKERequestsInvalid),
+                               ("ke-sent",          NTSKEResponsesSent)
+                           }.
+                           Where (counter => counter.Value != 0).
+                           Select(counter => $"{counter.Name}: {counter.Value}").
+                           ToArray();
+
+            return counters.Length != 0
+                       ? String.Join(", ", counters)
+                       : "all counters zero";
+
+        }
 
     }
 

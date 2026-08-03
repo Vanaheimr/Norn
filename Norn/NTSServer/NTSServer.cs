@@ -20,6 +20,7 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Diagnostics.CodeAnalysis;
 using System.Security.Cryptography;
 using System.Collections.Concurrent;
 
@@ -141,6 +142,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         private                  Int64                                    ntpRequestsReceived;
         private                  Int64                                    ntpRequestsRejected;
+        private                  Int64                                    ntpRequestsRateLimited;
+        private                  Int64                                    ntpKissesOfDeathSent;
         private                  Int64                                    ntpRequestsInvalid;
         private                  Int64                                    ntpResponsesSent;
         private                  Int64                                    ntpSignedResponsesSent;
@@ -261,6 +264,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             => InterleavedTimestamps?.Policy ?? InterleavedModePolicy.Disabled;
 
         /// <summary>
+        /// The RFC 8633 § 5.4 request rate limiter, or null when this server answers everything
+        /// it can.
+        /// </summary>
+        /// <remarks>
+        /// Off unless an operator asks for it, unlike the interleaved mode. The interleaved mode
+        /// costs memory this server can cap on its own; a rate limit costs answers, and how many
+        /// answers a client is entitled to is not something the protocol can decide.
+        /// </remarks>
+        public NTPRateLimiter?        RateLimiter                  { get; }
+
+        /// <summary>
         /// When this server's clock was last set or corrected — the Reference Timestamp of
         /// § 7.3, which tells a client how stale the synchronization is.
         ///
@@ -299,6 +313,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             => new (
                    NTPRequestsReceived:       System.Threading.Interlocked.Read(ref ntpRequestsReceived),
                    NTPRequestsRejected:       System.Threading.Interlocked.Read(ref ntpRequestsRejected),
+                   NTPRequestsRateLimited:    System.Threading.Interlocked.Read(ref ntpRequestsRateLimited),
+                   NTPKissesOfDeathSent:      System.Threading.Interlocked.Read(ref ntpKissesOfDeathSent),
                    NTPRequestsInvalid:        System.Threading.Interlocked.Read(ref ntpRequestsInvalid),
                    NTPResponsesSent:          System.Threading.Interlocked.Read(ref ntpResponsesSent),
                    NTPSignedResponsesSent:    System.Threading.Interlocked.Read(ref ntpSignedResponsesSent),
@@ -325,6 +341,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <param name="DNSClient">An optional DNS client to use.</param>
         /// <param name="ListenIPAddress">The optional local IP address to listen on (default: 0.0.0.0). Pass <see cref="IPvXAddress.Any"/> to serve IPv4 and IPv6 together.</param>
         /// <param name="ClockResolution">The optional granularity of the clock, when it is known better than it can be measured.</param>
+        /// <param name="InterleavedMode">Who may be answered in the RFC 9769 interleaved mode (default: everyone).</param>
+        /// <param name="RateLimiter">An optional RFC 8633 § 5.4 request rate limiter (default: none, so every request is answered).</param>
         /// <param name="TimeProvider">The optional clock this server reads and reports (default: <see cref="System.TimeProvider.System"/>).</param>
         public NTSServer(I18NString?        Description    = null,
                          IPPort?            NTSKEPort      = null,
@@ -352,6 +370,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                          Byte?              LeapIndicator                 = null,
                          TimeSpan?          ClockResolution               = null,
                          InterleavedModePolicy? InterleavedMode           = null,
+                         NTPRateLimiter?    RateLimiter                   = null,
                          TimeProvider?      TimeProvider                  = null)
         {
 
@@ -414,6 +433,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             this.InterleavedTimestamps        = interleavedMode != InterleavedModePolicy.Disabled
                                                     ? new InterleavedTimestamps(interleavedMode)
                                                     : null;
+
+            this.RateLimiter                  = RateLimiter;
 
             if (KeyPair is not null)
             {
@@ -1019,6 +1040,45 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                         var udpPacketLocal  = udpPacket;
 
 
+                        // RFC 8633 § 5.4, and deliberately the very first thing done with the
+                        // datagram: the point of a rate limit is to not spend work on the traffic
+                        // it refuses, and the expensive work here — unsealing a cookie, verifying
+                        // an authenticator — is all downstream of the parse below.
+                        if (RateLimiter is not null &&
+                            udpPacketLocal.RemoteEndPoint is IPEndPoint limitedEndPoint)
+                        {
+
+                            var decision = RateLimiter.Check(limitedEndPoint.Address);
+
+                            if (decision != RateLimitDecision.Answer)
+                            {
+
+                                System.Threading.Interlocked.Increment(ref ntpRequestsRateLimited);
+
+                                if (decision == RateLimitDecision.KissOfDeath &&
+                                    TryBuildRateKiss(buffer,
+                                                     udpPacketLocal.ReceivedBytes,
+                                                     out var kissOfDeath))
+                                {
+
+                                    await udpSocket.SendToAsync(
+                                              new ArraySegment<Byte>(kissOfDeath),
+                                              SocketFlags.None,
+                                              udpPacketLocal.RemoteEndPoint,
+                                              cts.Token
+                                          );
+
+                                    System.Threading.Interlocked.Increment(ref ntpKissesOfDeathSent);
+
+                                }
+
+                                continue;
+
+                            }
+
+                        }
+
+
                         if (!await ntpRequestSemaphore.WaitAsync(0, cts.Token).ConfigureAwait(false))
                         {
                             System.Threading.Interlocked.Increment(ref ntpRequestsRejected);
@@ -1451,6 +1511,156 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             return scaled >= UInt32.MaxValue
                        ? UInt32.MaxValue
                        : (UInt32) Math.Round(scaled);
+
+        }
+
+        #endregion
+
+        #region (private) TryBuildRateKiss(Datagram, Length, out Response)
+
+        /// <summary>
+        /// Build the "RATE" Kiss-o'-Death of RFC 5905 § 7.4 for a request the rate limiter
+        /// refused, straight from the unparsed datagram.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Straight from the datagram because the parse is what the limiter is saving. Only four
+        /// things are read out of it, and all four are needed for the kiss to be usable rather
+        /// than merely well-formed.
+        /// </para>
+        /// <para>
+        /// The origin timestamp is the load-bearing one. RFC 8633 § 5.4: "a client MUST only
+        /// accept a KoD packet if it has a valid origin timestamp" — the same test that protects
+        /// an ordinary response from being spoofed protects the client from a forged demand to
+        /// back off, so a kiss that does not echo the request is a kiss a conformant client is
+        /// right to ignore.
+        /// </para>
+        /// <para>
+        /// The Unique Identifier is the same argument one layer up. An NTS client discards
+        /// anything that does not echo its identifier, so without it the kiss reaches exactly the
+        /// clients that authenticate nothing. Finding it costs a walk over the extension fields
+        /// and no cryptography, and only happens on the rare packet that is actually answered
+        /// with a kiss.
+        /// </para>
+        /// <para>
+        /// What this cannot do is authenticate the kiss: the S2C key lives inside the cookie, and
+        /// unsealing that is precisely the work being declined. So the kiss is unauthenticated,
+        /// like RFC 8915 § 5.7's NTS NAK, and a client should treat it the way § 5.4 says to
+        /// treat any KoD — as a hint to back off within limits it sets itself, never as an
+        /// instruction it follows to the letter.
+        /// </para>
+        /// </remarks>
+        private Boolean TryBuildRateKiss(Byte[]                          Datagram,
+                                         Int32                           Length,
+                                         [NotNullWhen(true)] out Byte[]? Response)
+        {
+
+            Response = null;
+
+            if (RateLimiter is null || Length < 48)
+                return false;
+
+            var version  = (Byte) ((Datagram[0] >> 3) & 0x07);
+            var mode     = (Byte)  (Datagram[0]       & 0x07);
+
+            // Only a client request draws a kiss. Answering a mode this server does not serve —
+            // or a broadcast — would be a packet sent for no reason at all.
+            if (mode != 3 || version is < 1 or > 4)
+                return false;
+
+            var clientTransmit = 0UL;
+
+            for (var i = 0; i < 8; i++)
+                clientTransmit = (clientTransmit << 8) | Datagram[40 + i];
+
+            var extensions = new List<NTPExtension>();
+            var uniqueId   = FindUniqueIdentifier(Datagram, Length);
+
+            if (uniqueId is not null)
+                extensions.Add(new UniqueIdentifierExtension(uniqueId));
+
+            var now = NTPPacket.GetCurrentNTPTimestamp(TimeProvider);
+
+            Response = new NTPPacket(
+
+                           LI:                   0,
+                           VN:                   version,
+                           Mode:                 4, // Server
+                           Stratum:              0, // Kiss-o'-Death
+
+                           // The rate this server is willing to serve, as the poll exponent a
+                           // client should move to. § 7.4 leaves the value to the server and
+                           // RFC 8633 § 5.4 leaves the response to the client; this is the
+                           // honest number, which is the most either can ask for.
+                           Poll:                 RateLimiter.KissPollExponent,
+
+                           Precision:            ClockPrecisionExponent,
+                           RootDelay:            0,
+                           RootDispersion:       0,
+                           ReferenceIdentifier:  NTP.ReferenceIdentifier.From("RATE"),
+                           ReferenceTimestamp:   0,
+                           OriginateTimestamp:   clientTransmit,
+                           ReceiveTimestamp:     now,
+                           TransmitTimestamp:    now,
+                           Extensions:           extensions
+
+                       ).ToByteArray();
+
+            return true;
+
+        }
+
+        #endregion
+
+        #region (private static) FindUniqueIdentifier(Datagram, Length)
+
+        /// <summary>
+        /// Find the RFC 8915 § 5.3 Unique Identifier in an unparsed datagram, or null if there
+        /// is nothing there that convincingly is one.
+        /// </summary>
+        /// <remarks>
+        /// A deliberately incurious walk over the RFC 7822 extension field chain. Anything that
+        /// does not add up — a length that is not a positive multiple of four, a field running
+        /// past the end of the datagram, an identifier shorter than the 32 octets § 5.3 requires
+        /// — ends the walk rather than raising anything, because the caller has already decided
+        /// this packet is not worth work and an absent identifier is a perfectly good answer.
+        /// </remarks>
+        private static Byte[]? FindUniqueIdentifier(Byte[]  Datagram,
+                                                    Int32   Length)
+        {
+
+            var offset = 48;
+
+            while (offset + 4 <= Length)
+            {
+
+                var type          = (UInt16) ((Datagram[offset]     << 8) | Datagram[offset + 1]);
+                var fieldLength   = (UInt16) ((Datagram[offset + 2] << 8) | Datagram[offset + 3]);
+
+                if (fieldLength < 4 ||
+                    fieldLength % 4 != 0 ||
+                    offset + fieldLength > Length)
+                {
+                    return null;
+                }
+
+                if (type == (UInt16) ExtensionTypes.UniqueIdentifier)
+                {
+
+                    var bodyLength = fieldLength - 4;
+
+                    if (bodyLength < 32 || bodyLength > 64)
+                        return null;
+
+                    return Datagram[(offset + 4)..(offset + fieldLength)];
+
+                }
+
+                offset += fieldLength;
+
+            }
+
+            return null;
 
         }
 

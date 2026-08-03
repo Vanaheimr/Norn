@@ -72,6 +72,25 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         public TimeSpan                    NTPTimeout                 { get; set; } = TimeSpan.FromSeconds(5);
 
         /// <summary>
+        /// Whether to obey a server's Kiss-o'-Death: back off after "RATE", stop querying after
+        /// "DENY" or "RSTR".
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// On, because RFC 5905 § 7.4 says MUST and RFC 8633 § 5.4 says it again for the benefit
+        /// of exactly this kind of client: "It is RECOMMENDED that all NTP devices respect these
+        /// packets and back off when asked to do so by a server." A monitoring drone polling on a
+        /// schedule of its own is the archetype of the client an operator sends a RATE kiss to.
+        /// </para>
+        /// <para>
+        /// The switch exists because a measurement of a server one has been asked to leave alone
+        /// is still a legitimate thing to want — against one's own servers, or when investigating
+        /// why the kisses are arriving. It should not be turned off against somebody else's.
+        /// </para>
+        /// </remarks>
+        public Boolean                     RespectKissOfDeath         { get; set; } = true;
+
+        /// <summary>
         /// Timeout for NTS-KE handshake (TLS + protocol).
         /// </summary>
         public TimeSpan                    NTSKETimeout               { get; set; } = TimeSpan.FromSeconds(10);

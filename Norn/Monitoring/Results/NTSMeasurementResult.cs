@@ -102,6 +102,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         public Error?                        ErrorMessage              { get; init; }
 
         /// <summary>
+        /// Whether no measurement was attempted at all.
+        /// </summary>
+        /// <remarks>
+        /// A skipped round is not a failed one, and conflating the two would misreport the server
+        /// being skipped. The reason is always this engine's own restraint — a Kiss-o'-Death
+        /// asking it to poll less often or not at all, per RFC 5905 § 7.4 — so an availability
+        /// figure computed over these would be measuring the client, not the server.
+        /// </remarks>
+        public Boolean                       Skipped                   { get; init; }
+
+        /// <summary>
         /// Structured overall error category if the measurement failed.
         /// </summary>
         public MonitoringErrorCategory       ErrorCategory             { get; init; } = MonitoringErrorCategory.None;

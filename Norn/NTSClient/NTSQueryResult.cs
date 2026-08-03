@@ -77,6 +77,38 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </remarks>
         public InterleavedMeasurement?      InterleavedMeasurement  { get; }
 
+        /// <summary>
+        /// The Kiss-o'-Death this query drew, if it drew one this client has grounds to believe.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Not simply "the response had stratum 0". RFC 8633 § 5.4: "a client MUST only accept a
+        /// KoD packet if it has a valid origin timestamp", so a stratum-0 packet that does not
+        /// echo the request leaves this null however plausible its kiss code — see
+        /// <see cref="NTPKissOfDeath.TryRead"/>. <see cref="ErrorCategory"/> is the coarser
+        /// signal and answers a different question: whether the query failed, not whether the
+        /// server said something worth obeying.
+        /// </para>
+        /// <para>
+        /// What to do about it is <see cref="NTPServerAccessState"/>'s business. This property
+        /// only reports what arrived.
+        /// </para>
+        /// </remarks>
+        public NTPKissOfDeath?              KissOfDeath
+        {
+            get
+            {
+
+                if (Response is null)
+                    return null;
+
+                return NTPKissOfDeath.TryRead(Response, Response.Request, out var kiss)
+                           ? kiss
+                           : null;
+
+            }
+        }
+
         public NTSQueryDiagnostics          Diagnostics             { get; }
 
         #endregion
