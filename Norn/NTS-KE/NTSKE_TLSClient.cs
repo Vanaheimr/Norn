@@ -319,14 +319,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             var normalizedHostname = Hostname.TrimEnd('.').ToLowerInvariant();
 
-            // Read the SAN extension through the typed API rather than by parsing its
-            // formatted text. AsnEncodedData.Format() renders through the operating system —
-            // on Windows via CryptFormatObject — and its output is localized: a German
-            // installation writes "DNS-Name=", an English one "DNS Name=". Matching on either
-            // spelling silently finds no names at all on every other machine, and the check
-            // then falls through to GetNameInfo, which reports a single name and so rejects a
-            // certificate valid for any of its other SAN entries.
-            var dnsNames           = GetDnsNames(Certificate);
+            // GetDnsNames decodes the SAN extension itself. This used to filter
+            // DecodeSubjectAlternativeNames for a "DNS-Name=" prefix, which came from
+            // AsnEncodedData.Format() and is localized by the operating system — an English
+            // installation writes "DNS Name=", so the filter found nothing there and the check
+            // fell through to GetNameInfo, which reports a single name and so rejected
+            // certificates valid for any of their other SAN entries.
+            var dnsNames           = Certificate.GetDnsNames().ToArray();
 
             if (dnsNames.Length > 0)
                 return dnsNames.Any(dnsName => DNSNameMatches(dnsName, normalizedHostname));
@@ -335,36 +334,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             return !String.IsNullOrWhiteSpace(certificateName) &&
                    DNSNameMatches(certificateName, normalizedHostname);
-
-        }
-
-        /// <summary>
-        /// The dNSName entries of the certificate's Subject Alternative Name extension, decoded
-        /// from the extension itself so the result does not depend on the machine's language.
-        /// </summary>
-        /// <param name="Certificate">The certificate to read.</param>
-        internal static String[] GetDnsNames(X509Certificate2 Certificate)
-        {
-
-            // 2.5.29.17 — id-ce-subjectAltName
-            var extension = Certificate.Extensions.FirstOrDefault(extension => extension.Oid?.Value == "2.5.29.17");
-
-            if (extension is null)
-                return [];
-
-            try
-            {
-                return [.. new X509SubjectAlternativeNameExtension(
-                               extension.RawData,
-                               extension.Critical
-                           ).EnumerateDnsNames()];
-            }
-            catch (System.Security.Cryptography.CryptographicException)
-            {
-                // A malformed extension is not a name match; treating it as "no names" lets the
-                // caller fall back rather than fail the whole handshake on a decode error.
-                return [];
-            }
 
         }
 
