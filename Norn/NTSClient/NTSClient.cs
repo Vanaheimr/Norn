@@ -821,6 +821,33 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                NTP_Port
                                            );
 
+            // RFC 8915 § 4.1.7: the NTPv4 Server Negotiation record names the server "with
+            // which the client should associate and that will accept the supplied cookies".
+            // Nobody else was said to accept them.
+            //
+            // So when the key exchange directed this client elsewhere and that server cannot
+            // be resolved, there is no measurement to be had. Sending the request to the
+            // fallback host instead — the host the key exchange happened on — spends a cookie
+            // on a server that in any real deployment holds different master keys, and turns
+            // a plain misconfiguration into an authentication failure reported against the
+            // wrong machine. On a single host serving both roles it would even appear to
+            // work, which is worse: the redirect would be silently ineffective.
+            //
+            // The fallback below remains right for every other case, including a plain NTP
+            // query with no key exchange behind it.
+            if (remoteEndPoint is null &&
+                NTSKEResponse?.NTPv4ServerNames.Any() == true)
+            {
+
+                return NTSQueryResult.FailedWithPacket(
+                           $"The NTS-KE server directed this client to {remoteDescription}, which could not be resolved.",
+                           NTSQueryErrorCategory.DNS,
+                           RemainingCookiesAfterQuery: AvailableCookieCount,
+                           CookiePoolDiagnostics:      CookiePoolDiagnostics
+                       );
+
+            }
+
             var transmitTimestamp  = NTPPacket.GetCurrentNTPTimestamp(TimeProvider);
 
             var requestPacket      = BuildNTSRequest(

@@ -152,7 +152,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             this.WarningMessages = NTSKERecords.
                                        Where (ntsKERecord => ntsKERecord.Type == NTSKE_RecordTypes.Warning).
-                                       Select(FormatRecordBody);
+                                       Select(FormatWarning);
 
         }
 
@@ -181,6 +181,20 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
 
         #region (private static) FormatRecordBody(Record)
+
+        /// <summary>
+        /// Render a Warning record for a human.
+        /// </summary>
+        /// <remarks>
+        /// RFC 8915 § 4.1.4 defines the body as a 16-bit unsigned integer, not as text, so
+        /// decoding it as a string yields control characters where the code should be.
+        /// </remarks>
+        private static String FormatWarning(NTSKE_Record Record)
+
+            => Record.Body.Length == 2
+                   ? $"warning code {(UInt16) ((Record.Body[0] << 8) | Record.Body[1])}"
+                   : $"malformed warning record ({FormatRecordBody(Record)})";
+
 
         private static String FormatRecordBody(NTSKE_Record Record)
         {

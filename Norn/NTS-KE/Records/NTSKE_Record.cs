@@ -351,14 +351,19 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <summary>
         /// NTS Warning
         /// </summary>
-        /// <param name="IsCritical">Whether an unrecognized record must cause an error.</param>
-        /// <param name="WarningMessage">The warning message.</param>
-        public static NTSKE_Record  Warning(String   WarningMessage,
-                                            Boolean  IsCritical   = false)
+        /// <remarks>
+        /// RFC 8915 § 4.1.4: "Its body is exactly two octets long, consisting of an unsigned
+        /// 16-bit integer in network byte order, denoting a warning code. The Critical Bit
+        /// MUST be set." The body is therefore a code and never a message — and the memo
+        /// defines no codes, nor has IANA assigned any since, so a client receiving one of
+        /// these has no option but to abandon the key exchange.
+        /// </remarks>
+        /// <param name="WarningCode">The warning code.</param>
+        public static NTSKE_Record  Warning(UInt16 WarningCode)
 
             => new NTSKERecords.Warning(
-                   IsCritical,
-                   WarningMessage
+                   true,
+                   ToNetworkByteOrder(WarningCode)
                );
 
         /// <summary>

@@ -60,7 +60,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             ErrorCategory    = NTSKEErrorCategory.None;
             WarningMessages  = records.
                                    Where (record => record.Type == NTSKE_RecordTypes.Warning).
-                                   Select(FormatRecordBody).
+                                   Select(FormatWarning).
                                    ToArray();
 
 
@@ -86,6 +86,34 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                 ErrorMessage   = $"NTS-KE server returned an Error record: {FormatRecordBody(errorRecord)}";
                 ErrorCategory  = NTSKEErrorCategory.ServerError;
+                return false;
+
+            }
+
+
+            // RFC 8915 § 4.1.4: "Unrecognized warning codes MUST be treated as errors."
+            //
+            // The IANA "Network Time Security Warning Codes" registry has never assigned a
+            // code: 0 to 32767 is unassigned and the rest is reserved for private use. So
+            // there is nothing for a conformant client to recognize, and every warning it
+            // receives ends the key exchange.
+            //
+            // Failing closed is the only safe reading of a record type whose entire purpose
+            // is to carry meanings defined later. A client that logs an unknown warning and
+            // carries on is precisely the client that will ignore the first code IANA ever
+            // assigns — which is why the RFC settles the question in advance instead of
+            // leaving it to each implementation's judgement.
+            //
+            // Checked after the Error record so that a server sending both is reported by the
+            // one carrying a defined code.
+            var warningRecord = records.FirstOrDefault(record => record.Type == NTSKE_RecordTypes.Warning);
+            if (warningRecord is not null)
+            {
+
+                ErrorMessage   = $"NTS-KE server returned a Warning record: {FormatWarning(warningRecord)}. " +
+                                  "No warning code is registered, so it cannot be recognized and the " +
+                                  "key exchange must be abandoned.";
+                ErrorCategory  = NTSKEErrorCategory.ServerWarning;
                 return false;
 
             }
@@ -207,6 +235,23 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                    Record.Body.SequenceEqual(expectedBytes);
 
         }
+
+        #endregion
+
+        #region (private static) FormatWarning(Record)
+
+        /// <summary>
+        /// Render a Warning record for a human.
+        /// </summary>
+        /// <remarks>
+        /// RFC 8915 § 4.1.4 defines the body as a 16-bit unsigned integer, not as text, so
+        /// decoding it as a string yields control characters where the code should be.
+        /// </remarks>
+        private static String FormatWarning(NTSKE_Record Record)
+
+            => Record.Body.Length == 2
+                   ? $"warning code {(UInt16) ((Record.Body[0] << 8) | Record.Body[1])}"
+                   : $"malformed warning record ({FormatRecordBody(Record)})";
 
         #endregion
 

@@ -200,14 +200,20 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
         #endregion
 
-        #region NTSKERecordValidator_Accepts_Warning_Record()
+        #region NTSKERecordValidator_Rejects_Warning_Record()
 
+        /// <summary>
+        /// RFC 8915 § 4.1.4: "Unrecognized warning codes MUST be treated as errors", and
+        /// "This memo defines no warning codes" — nor has IANA assigned any since, so every
+        /// code a server could send is unrecognized and a Warning record ends the key
+        /// exchange however good the rest of the response is.
+        /// </summary>
         [Test]
-        public void NTSKERecordValidator_Accepts_Warning_Record()
+        public void NTSKERecordValidator_Rejects_Warning_Record()
         {
 
             var records = CreateValidResponseRecords(
-                              NTSKE_Record.Warning("Server warning")
+                              NTSKE_Record.Warning(1)
                           );
 
             Assert.That(
@@ -217,16 +223,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                     out var errorCategory,
                     out var warningMessages
                 ),
-                Is.True,
-                errorMessage
+                Is.False,
+                "an unrecognized warning code must be treated as an error"
             );
 
-            Assert.That(errorCategory,     Is.EqualTo(NTSKEErrorCategory.None));
-            Assert.That(warningMessages,   Does.Contain("Server warning"));
+            Assert.That(errorCategory,     Is.EqualTo(NTSKEErrorCategory.ServerWarning));
+            Assert.That(errorMessage,      Does.Contain("warning code 1"));
+            Assert.That(warningMessages,   Does.Contain("warning code 1"));
 
             var response = new NTSKE_Response(records, [], []);
 
-            Assert.That(response.WarningMessages, Does.Contain("Server warning"));
+            Assert.That(response.WarningMessages, Does.Contain("warning code 1"));
 
         }
 

@@ -53,14 +53,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS.NTSKERecords
         /// <summary>
         /// Create a new NTS-KE Warning record.
         /// </summary>
-        /// <param name="IsCritical">Whether an unrecognized record must cause an error.</param>
-        /// <param name="WarningMessage">The warning message.</param>
-        public Warning(Boolean  IsCritical,
-                       String   WarningMessage)
+        /// <remarks>
+        /// RFC 8915 § 4.1.4 makes the body "exactly two octets long, consisting of an
+        /// unsigned 16-bit integer in network byte order" and requires the Critical Bit,
+        /// so a warning is a code rather than a message.
+        /// </remarks>
+        /// <param name="WarningCode">The warning code.</param>
+        public Warning(UInt16 WarningCode)
 
-            : base(IsCritical,
+            : base(true,
                    NTSKE_RecordTypes.Warning,
-                   WarningMessage.ToUTF8Bytes())
+                   [ (Byte) (WarningCode >> 8), (Byte) WarningCode ])
 
         { }
 

@@ -256,28 +256,45 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
                            ? ascii switch {
 
-                              // https://datatracker.ietf.org/doc/html/rfc4330
+                              // The IANA "NTP Reference Identifier Codes" registry, whose
+                              // registration policy and character rules were settled by RFC 9748:
+                              // https://www.iana.org/assignments/ntp-parameters/
+                              //
+                              // Note this is not RFC 4330's table, which most implementations
+                              // copied and which has since diverged from the registry in both
+                              // directions.
 
                               // Code                 External Reference Source
                               // ---------------------------------------------------------------------------------
+                                "GOES" => $"'{ascii}' Geosynchronous Orbit Environment Satellite",
+                                "GPS"  => $"'{ascii}' Global Positioning System",
+                                "GAL"  => $"'{ascii}' Galileo Positioning System",
+                                "PPS"  => $"'{ascii}' Generic pulse-per-second",
+                                "IRIG" => $"'{ascii}' Inter-Range Instrumentation Group",
+                                "WWVB" => $"'{ascii}' LF Radio WWVB Ft. Collins (US) 60 kHz",
+                                "DCF"  => $"'{ascii}' LF Radio DCF77 Mainflingen (DE) 77.5 kHz",
+                                "HBG"  => $"'{ascii}' LF Radio HBG Prangins (CH) 75 kHz",
+                                "MSF"  => $"'{ascii}' LF Radio MSF Anthorn (UK) 60 kHz",
+                                "JJY"  => $"'{ascii}' LF Radio JJY Fukushima (JP) 40 kHz, Saga (JP) 60 kHz",
+                                "LORC" => $"'{ascii}' MF Radio LORAN C station, 100 kHz",
+                                "TDF"  => $"'{ascii}' MF Radio Allouis (FR) 162 kHz",
+                                "CHU"  => $"'{ascii}' HF Radio CHU Ottawa (CA)",
+                                "WWV"  => $"'{ascii}' HF Radio WWV Ft. Collins (US)",
+                                "WWVH" => $"'{ascii}' HF Radio WWVH Kauai (US)",
+                                "NIST" => $"'{ascii}' NIST telephone modem",
+                                "ACTS" => $"'{ascii}' NIST telephone modem",
+                                "USNO" => $"'{ascii}' USNO telephone modem",
+                                "PTB"  => $"'{ascii}' European telephone modem",
+                                "DFM"  => $"'{ascii}' UTC(DFM)",
+
+                              // Not registered with IANA, but emitted by essentially every
+                              // implementation in the field, so a client that cannot read them
+                              // is the one with the problem.
                                 "LOCL" => $"'{ascii}' uncalibrated local clock",
                                 "CESM" => $"'{ascii}' calibrated Cesium clock",
                                 "RBDM" => $"'{ascii}' calibrated Rubidium clock",
-                                "PPS"  => $"'{ascii}' calibrated quartz clock or other pulse-per-second source",
-                                "IRIG" => $"'{ascii}' Inter-Range Instrumentation Group",
-                                "ACTS" => $"'{ascii}' NIST telephone modem service",
-                                "USNO" => $"'{ascii}' USNO telephone modem service",
-                                "PTB"  => $"'{ascii}' PTB (Germany) telephone modem service",
-                                "TDF"  => $"'{ascii}' Allouis (France) Radio 164 kHz",
-                                "DCF"  => $"'{ascii}' Mainflingen (Germany) Radio 77.5 kHz",
-                                "MSF"  => $"'{ascii}' Rugby (UK) Radio 60 kHz",
-                                "WWV"  => $"'{ascii}' Ft. Collins (US) Radio 2.5, 5, 10, 15, 20 MHz",
-                                "WWVB" => $"'{ascii}' Boulder (US) Radio 60 kHz",
-                                "WWVH" => $"'{ascii}' Kauai Hawaii (US) Radio 2.5, 5, 10, 15 MHz",
-                                "CHU"  => $"'{ascii}' Ottawa (Canada) Radio 3330, 7335, 14670 kHz",
-                                "LORC" => $"'{ascii}' LORAN-C radionavigation system",
                                 "OMEG" => $"'{ascii}' OMEGA radionavigation system",
-                                "GPS"  => $"'{ascii}' Global Positioning Service",
+
                                  _     => ascii
 
                              }
