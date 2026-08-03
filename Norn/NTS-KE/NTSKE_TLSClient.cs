@@ -310,56 +310,32 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         }
 
+        /// <summary>
+        /// Whether the server's certificate was issued for the host this client dialled —
+        /// RFC 9525 § 6.3, matching the reference identifier against the presented ones.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The matching itself is <see cref="DNSNamePattern"/>'s. It used to be a dozen lines
+        /// here, and it was the wrong dozen lines to own: comparing a wildcard against a host
+        /// name is a rule with exactly one correct reading and several plausible wrong ones,
+        /// every wrong one accepts a certificate issued for somebody else, and none of them
+        /// looks wrong on the page. It belongs somewhere it can be tested once.
+        /// </para>
+        /// <para>
+        /// The subject alternative names are the only names consulted. The Common Name fallback
+        /// through GetNameInfo is gone: RFC 9525 § 6.1 dropped it, browsers stopped honouring it
+        /// years before that, and a client that keeps it accepts certificates that no
+        /// certificate authority may issue any more. It was also worse than it looked here —
+        /// GetNameInfo reports one name, so a certificate valid for several was judged on
+        /// whichever the platform picked.
+        /// </para>
+        /// </remarks>
         private static Boolean HostnameMatches(X509Certificate2  Certificate,
                                                String            Hostname)
-        {
 
-            if (String.IsNullOrWhiteSpace(Hostname))
-                return false;
-
-            var normalizedHostname = Hostname.TrimEnd('.').ToLowerInvariant();
-
-            // GetDNSNames decodes the SAN extension itself. This used to filter
-            // DecodeSubjectAlternativeNames for a "DNS-Name=" prefix, which came from
-            // AsnEncodedData.Format() and is localized by the operating system — an English
-            // installation writes "DNS Name=", so the filter found nothing there and the check
-            // fell through to GetNameInfo, which reports a single name and so rejected
-            // certificates valid for any of their other SAN entries.
-            //
-            // Styx's, returning strings, rather than Hermod's GetDNSDomainNames: the names here
-            // are matched as RFC 6125 patterns, and "*.example.com" is not a domain name that
-            // DomainName.Parse should be asked to accept.
-            var dnsNames           = Certificate.GetDNSNames().ToArray();
-
-            if (dnsNames.Length > 0)
-                return dnsNames.Any(dnsName => DNSNameMatches(dnsName, normalizedHostname));
-
-            var certificateName = Certificate.GetNameInfo(X509NameType.DnsName, false);
-
-            return !String.IsNullOrWhiteSpace(certificateName) &&
-                   DNSNameMatches(certificateName, normalizedHostname);
-
-        }
-
-        private static Boolean DNSNameMatches(String  Pattern,
-                                              String  Hostname)
-        {
-
-            var normalizedPattern = Pattern.TrimEnd('.').ToLowerInvariant();
-
-            if (normalizedPattern.Equals(Hostname, StringComparison.Ordinal))
-                return true;
-
-            if (!normalizedPattern.StartsWith("*."))
-                return false;
-
-            var suffix = normalizedPattern[1..];
-
-            return Hostname.EndsWith(suffix, StringComparison.Ordinal) &&
-                   Hostname.Length > suffix.Length &&
-                  !Hostname[..^suffix.Length].Contains('.');
-
-        }
+            => DomainName.TryParse(Hostname, out var hostName, out _) &&
+               Certificate.MatchesHostName(hostName);
 
     }
 
