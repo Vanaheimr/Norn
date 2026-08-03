@@ -114,6 +114,19 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             }
         }
 
+        /// <summary>
+        /// The RFC 9769 interleaved association, or null when the interleaved mode is off.
+        /// </summary>
+        /// <remarks>
+        /// State that outlives a single query, which is what makes the mode possible at all: the
+        /// server's accurate transmit timestamp arrives one exchange after the transmission it
+        /// describes, so a client that forgets the previous exchange can never use it.
+        ///
+        /// It follows that the interleaved mode belongs to a client <em>instance</em>, and that
+        /// a program creating a fresh client for every query gets nothing from switching it on.
+        /// </remarks>
+        public InterleavedAssociation? InterleavedAssociation { get; }
+
         #endregion
 
         #region Constructor(s)
@@ -129,6 +142,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <param name="IPVersionPreference">The IP version preference for NTS-KE and NTP/NTS network connections.</param>
         /// <param name="Timeout">An optional timeout for the NTS-KE/NTS requests.</param>
         /// <param name="DNSClient">An optional DNS client to use.</param>
+        /// <param name="InterleavedMode">
+        /// Whether to use the RFC 9769 interleaved client/server mode, which trades one exchange
+        /// of latency for a server transmit timestamp taken after the packet was actually sent.
+        /// Off by default and opt-in per association, as chrony's <c>xleave</c> is: it only pays
+        /// for a client that queries the same server repeatedly, and a single query can never
+        /// use it at all.
+        /// </param>
         public NTSClient(DomainName                                                     Hostname,
                          IPPort?                                                        NTSKE_Port                   = null,
                          IPPort?                                                        NTP_Port                     = null,
@@ -138,6 +158,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                          TimeSpan?                                                      Timeout                      = null,
                          DNSClient?                                                     DNSClient                    = null,
                          NTSCookiePoolPolicy?                                           CookiePoolPolicy             = null,
+                         Boolean                                                        InterleavedMode              = false,
                          TimeProvider?                                                  TimeProvider                 = null)
         {
 
@@ -151,6 +172,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             this.DNSClient                   = DNSClient           ?? new DNSClient();
             this.CookiePoolPolicy            = (CookiePoolPolicy   ?? new NTSCookiePoolPolicy()).Normalize();
             this.TimeProvider                = TimeProvider        ?? System.TimeProvider.System;
+            this.InterleavedAssociation      = InterleavedMode ? new InterleavedAssociation() : null;
 
         }
 
@@ -197,6 +219,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                   SignedResponseMode  RequestSignedResponse   = SignedResponseMode.None,
                                                   UInt16              SignedResponseKeyId     = 1,
                                                   UInt64?             TransmitTimestamp       = null,
+                                                  UInt64?             OriginateTimestamp      = null,
+                                                  UInt64?             ReceiveTimestamp        = null,
                                                   UInt16              CookiePlaceholderCount  = 0,
                                                   UInt16              CookiePlaceholderLength = 100,
                                                   TimeProvider?       TimeProvider            = null)
@@ -206,8 +230,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             // before the send; the clock is only read here when it does not, and then from the
             // given clock rather than the ambient one.
             var ntpPacket1  = new NTPRequest(
-                                  TransmitTimestamp: TransmitTimestamp
-                                                        ?? NTPPacket.GetCurrentNTPTimestamp(TimeProvider ?? System.TimeProvider.System)
+                                  OriginateTimestamp: OriginateTimestamp,
+                                  ReceiveTimestamp:   ReceiveTimestamp,
+                                  TransmitTimestamp:  TransmitTimestamp
+                                                          ?? NTPPacket.GetCurrentNTPTimestamp(TimeProvider ?? System.TimeProvider.System)
                               );
 
             var extensions  = new List<NTPExtension>();
@@ -848,7 +874,27 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             }
 
-            var transmitTimestamp  = NTPPacket.GetCurrentNTPTimestamp(TimeProvider);
+            // RFC 9769 § 2. In the interleaved mode all three timestamp fields carry values
+            // from the previous exchange rather than the clock as it reads now: the origin is
+            // the server's receive timestamp, the receive field this client's arrival time for
+            // that response, and the transmit field this client's accurate transmit timestamp
+            // of the previous request. Figure 1 of § 2 shows the pattern.
+            //
+            // Which means the transmit field is a cookie for the server to echo, not a claim
+            // about when this packet was sent. The value that matters for the measurement is
+            // taken after the send, below.
+            var interleaved        = InterleavedAssociation;
+            var interleavedRequest = interleaved?.CanSendInterleaved == true;
+
+            var (requestOrigin,
+                 requestReceive,
+                 requestTransmitField) = interleavedRequest
+                                             ? interleaved!.NextRequestTimestamps()
+                                             : (0UL, 0UL, 0UL);
+
+            var transmitTimestamp  = interleavedRequest
+                                         ? requestTransmitField
+                                         : NTPPacket.GetCurrentNTPTimestamp(TimeProvider);
 
             var requestPacket      = BuildNTSRequest(
                                          NTSKEResponse,
@@ -858,6 +904,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                           RequestSignedResponse:  SignedResponseMode,
                                           SignedResponseKeyId:    SignedResponseKeyId,
                                           TransmitTimestamp:      transmitTimestamp,
+                                          OriginateTimestamp:     requestOrigin,
+                                          ReceiveTimestamp:       requestReceive,
                                           CookiePlaceholderCount: cookiePlaceholderCount,
                                           CookiePlaceholderLength: (UInt16) Math.Min(UInt16.MaxValue, Math.Max(0, cookie?.Length ?? 100)),
                                           TimeProvider:           TimeProvider
@@ -897,11 +945,29 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                     }
 
+                    // T1, and the client's half of what RFC 9769 is for: read after the send
+                    // rather than before, so the cost of building, sealing and writing the
+                    // packet is not charged to the network. In the interleaved mode this is
+                    // the value the *next* request will carry in its transmit field, and the
+                    // one the measurement completed by the next response will use.
+                    var actualRequestTransmit       = NTPPacket.GetCurrentNTPTimestamp(TimeProvider);
+
                     var receiveResult1WithTimeout   = await ReceiveUdpResponseAsync(
                                                                 udpClient,
                                                                 timeout,
                                                                 CancellationToken
                                                             ).ConfigureAwait(false);
+
+                    if (interleaved is not null &&
+                        (receiveResult1WithTimeout.TimedOut || receiveResult1WithTimeout.Result is null))
+                    {
+                        // § 2: "The protocol recovers from packet loss. When a client request or
+                        // server response is lost, the client will use the same origin timestamp
+                        // in the next request." So the association is kept — but not forever;
+                        // past the limit the held timestamps are too old for the server to still
+                        // have the matching pair, and the next request starts over.
+                        interleaved.RecordUnansweredRequest();
+                    }
 
                     if (receiveResult1WithTimeout.TimedOut ||
                         receiveResult1WithTimeout.Result is null)
@@ -939,12 +1005,25 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                              ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp1))
                     {
 
+                        // RFC 9769 § 2: which of the request's two timestamps came back as the
+                        // origin says which mode the response is in, and that decides how the
+                        // rest of it must be read. Decided before validation, because two of
+                        // the validator's checks depend on the answer.
+                        var responseMode = interleaved is null
+                                               ? InterleavedResponseMode.Basic
+                                               : InterleavedAssociation.Classify(
+                                                     ntpResponse1,
+                                                     requestPacket.ReceiveTimestamp,
+                                                     requestPacket.TransmitTimestamp ?? 0
+                                                 );
+
                         var validation1 = NTSResponseValidator.Validate(
                                               ntpResponse1,
                                               requestPacket,
                                               requestPacket.UniqueIdentifier(),
                                               NTSKEResponse?.S2CKey,
-                                              RequireNTS: NTSKEResponse is not null
+                                              RequireNTS:   NTSKEResponse is not null,
+                                              Interleaved:  responseMode == InterleavedResponseMode.Interleaved
                                           );
 
                         if (!validation1.IsValid)
@@ -1142,6 +1221,20 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                         AddCookies(ntpResponse1);
 
+                        // RFC 9769 § 2. The measurement has to be taken before the association
+                        // is advanced, because it is made from the timestamps the previous
+                        // exchange left behind and this response's transmit timestamp — and
+                        // recording this response overwrites exactly those.
+                        var measurement = responseMode == InterleavedResponseMode.Interleaved
+                                              ? interleaved?.MeasurementFor(ntpResponse1)
+                                              : null;
+
+                        interleaved?.RecordValidResponse(
+                            ntpResponse1,
+                            actualRequestTransmit,
+                            destinationTimestamp1
+                        );
+
                         return NTSQueryResult.SuccessResult(
                                    ntpResponse1,
                                    remoteEndPoint,
@@ -1151,7 +1244,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                    1,
                                    ntpResponse1.Extensions.Any(extension => extension is NTSCookieExtension { Encrypted: true }),
                                    CookiePoolDiagnostics,
-                                   validation1
+                                   validation1,
+                                   measurement
                                );
 
                     }

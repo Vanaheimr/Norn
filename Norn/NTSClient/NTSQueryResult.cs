@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright (c) 2010-2026 GraphDefined GmbH <achim.friedland@graphdefined.com>
  * This file is part of Vanaheimr Norn <https://www.github.com/Vanaheimr/Norn>
  *
@@ -66,6 +66,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         public NTSResponseValidationResult? ResponseValidation      { get; }
 
+        /// <summary>
+        /// The RFC 9769 measurement this response completed, when it was an interleaved one.
+        /// </summary>
+        /// <remarks>
+        /// Null for an ordinary response, where <see cref="NTPPacket.ClockOffset"/> on the
+        /// response is the measurement. An interleaved one cannot be expressed that way: three
+        /// of its four timestamps belong to the previous exchange, and only the transmit
+        /// timestamp comes from the packet in hand.
+        /// </remarks>
+        public InterleavedMeasurement?      InterleavedMeasurement  { get; }
+
         public NTSQueryDiagnostics          Diagnostics             { get; }
 
         #endregion
@@ -86,7 +97,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                UInt64?                DestinationTimestamp        = null,
                                Boolean                NewCookieReceived           = false,
                                NTSCookiePoolDiagnostics? CookiePoolDiagnostics     = null,
-                               NTSResponseValidationResult? ResponseValidation      = null)
+                               NTSResponseValidationResult? ResponseValidation      = null,
+                               InterleavedMeasurement?   InterleavedMeasurement      = null)
         {
 
             this.Success                     = Success;
@@ -103,6 +115,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             this.DestinationTimestamp        = DestinationTimestamp;
             this.NewCookieReceived           = NewCookieReceived;
             this.CookiePoolDiagnostics       = CookiePoolDiagnostics;
+            this.InterleavedMeasurement      = InterleavedMeasurement;
             this.ResponseValidation          = ResponseValidation;
 
             if (SendStopwatchTimestamp.HasValue &&
@@ -140,7 +153,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                     Int32        Attempts,
                                                     Boolean      NewCookieReceived,
                                                     NTSCookiePoolDiagnostics? CookiePoolDiagnostics = null,
-                                                    NTSResponseValidationResult? ResponseValidation  = null)
+                                                    NTSResponseValidationResult? ResponseValidation  = null,
+                                                    InterleavedMeasurement?   InterleavedMeasurement = null)
 
             => new (
                    Success:                     true,
@@ -157,7 +171,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     DestinationTimestamp:        Response?.DestinationTimestamp,
                     NewCookieReceived:           NewCookieReceived,
                     CookiePoolDiagnostics:       CookiePoolDiagnostics,
-                    ResponseValidation:          ResponseValidation
+                    ResponseValidation:          ResponseValidation,
+                    InterleavedMeasurement:      InterleavedMeasurement
                 );
 
         #endregion

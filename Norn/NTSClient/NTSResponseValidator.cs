@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright (c) 2010-2026 GraphDefined GmbH <achim.friedland@graphdefined.com>
  * This file is part of Vanaheimr Norn <https://www.github.com/Vanaheimr/Norn>
  *
@@ -43,7 +43,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                            Boolean      RequireNTS        = true,
                                                            Boolean      IsReplay          = false,
                                                            TimeSpan?    MaxRootDelay      = null,
-                                                           TimeSpan?    MaxRootDispersion = null)
+                                                           TimeSpan?    MaxRootDispersion = null,
+                                                           Boolean      Interleaved       = false)
         {
 
             var errors        = new List<(NTSQueryErrorCategory Category, String Message)>();
@@ -76,9 +77,22 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             if (IsReplay)
                 Add(NTSQueryErrorCategory.Protocol, "NTP response transmit timestamp was already accepted before and looks like a duplicate/replay.");
 
+            // RFC 5905's bogus-packet test, as modified by RFC 9769 § 2: "The check for bogus
+            // packets compares the origin timestamp with both transmit and receive timestamps
+            // from the request. If the origin timestamp is equal to the transmit timestamp, the
+            // response is in the basic mode. If the origin timestamp is equal to the receive
+            // timestamp, the response is in the interleaved mode."
+            //
+            // Which of the two it matched has already been decided by the caller; all that is
+            // left here is to insist it matched one of them.
             if (Request?.TransmitTimestamp is not null &&
-                Response.OriginateTimestamp != Request.TransmitTimestamp.Value)
-                Add(NTSQueryErrorCategory.Protocol, "NTP response originate timestamp does not match the request transmit timestamp.");
+                Response.OriginateTimestamp != (Interleaved
+                                                    ? Request.ReceiveTimestamp
+                                                    : Request.TransmitTimestamp.Value))
+                Add(NTSQueryErrorCategory.Protocol,
+                    Interleaved
+                        ? "NTP response originate timestamp does not match the request receive timestamp."
+                        : "NTP response originate timestamp does not match the request transmit timestamp.");
 
             if (Response.Stratum > 0 &&
                 Response.ReferenceTimestamp == 0)
@@ -91,7 +105,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 Response.TransmitTimestamp.Value == 0)
                 Add(NTSQueryErrorCategory.Protocol, "NTP response transmit timestamp is zero.");
 
-            if (Response.TransmitTimestamp.HasValue &&
+            // Only in the basic mode. An interleaved response carries the transmit timestamp of
+            // the *previous* response, which necessarily predates the receive timestamp beside
+            // it — so this check, correct as it is for an ordinary response, rejects every
+            // conformant interleaved one.
+            if (!Interleaved &&
+                Response.TransmitTimestamp.HasValue &&
                 Response.ReceiveTimestamp > Response.TransmitTimestamp.Value)
                 Add(NTSQueryErrorCategory.Protocol, "NTP response receive timestamp is later than its transmit timestamp.");
 
