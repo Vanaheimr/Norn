@@ -1,5 +1,7 @@
 # Norn – Secure Time
 
+[![CI](https://github.com/Vanaheimr/Norn/actions/workflows/ci.yml/badge.svg)](https://github.com/Vanaheimr/Norn/actions/workflows/ci.yml)
+
 <img src="Logo/norn-logo.svg" alt="drawing" width="25%"/>
 
 This software library allow you to implement and use the *Network Time Secure* protocol as defined by the IETF together with some vendor extensions for additional use cases.

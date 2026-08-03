@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+# A newer push supersedes an in-flight run for the same branch.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    # windows-latest, matching Styx and Hermod. Norn itself looks platform-neutral, but
+    # it is built on Hermod, whose workflow stays on Windows for good reasons of its own
+    # (PerformanceCounter, IO.Ports, and certificate chain building differing between the
+    # Windows and OpenSSL backends). Testing Norn on a platform Hermod is not tested on
+    # would be measuring an untested combination. Linux is worth adding as a second
+    # matrix entry once someone has seen it pass.
+    runs-on: windows-latest
+    steps:
+      # This repository cannot be built on its own. Norn.csproj and NornTests.csproj
+      # reference ..\..\Hermod\Hermod\Hermod.csproj — a SIBLING directory — and Hermod in
+      # turn references ..\..\Styx\Styx\Styx.csproj. There are no submodules, so all three
+      # repositories are checked out side by side to reproduce the layout those relative
+      # paths assume. Same pattern as Hermod's own workflow, one repository deeper.
+      #
+      # Note what this does not do: pin Hermod or Styx. Both are built from master, so a
+      # breaking change in either turns this red without anything in Norn having moved.
+      # That is the honest signal for a library that has to keep up with its dependencies
+      # — and it is not hypothetical: Hermod's URL refactoring broke Norn exactly this way,
+      # and it was found by hand rather than by CI.
+      - uses: actions/checkout@v4
+        with:
+          path: Norn
+
+      - uses: actions/checkout@v4
+        with:
+          repository: Vanaheimr/Hermod
+          path: Hermod
+
+      - uses: actions/checkout@v4
+        with:
+          repository: Vanaheimr/Styx
+          path: Styx
+
+      # Hermod carries FontAwesome icon files whose paths exceed MAX_PATH once nested
+      # under the runner's workspace. Without this its checkout can fail with "Filename
+      # too long" and leave a half-populated tree — seen for real on a local clone.
+      - name: Allow long paths
+        run: git config --system core.longpaths true
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build
+        working-directory: Norn
+        run: dotnet build NornTests/NornTests.csproj --configuration Release
+
+      # 70 tests, a few seconds: AES-SIV and CMAC vectors, NTP and NTS-KE wire formats,
+      # cookie sealing, client-side response validation, and an in-process NTS server on
+      # loopback ports.
+      #
+      # Left out: Category "External" and "LiveNetwork" — real NTS-KE handshakes and NTP
+      # queries against Cloudflare, PTB, Netnod and others. A hosted runner is not a normal
+      # client; datacentre egress on UDP/123 and TCP/4460 is commonly blocked or
+      # rate-limited, so those would fail for reasons that say nothing about Norn.
+      #
+      # Those tests are also marked [Explicit], which means selecting them by category is
+      # not enough to make them run — a filter of TestCategory=External lists 60 cases and
+      # executes 4. So a nightly lane for them is not simply this filter inverted; it needs
+      # explicit selection to work at all, and a lane that silently runs almost nothing is
+      # worse than no lane. Left for when that is sorted out properly.
+      - name: Test
+        timeout-minutes: 20
+        working-directory: Norn
+        run: dotnet test NornTests/NornTests.csproj --configuration Release --no-build --filter "TestCategory!=External&TestCategory!=LiveNetwork" --logger "console;verbosity=normal"
