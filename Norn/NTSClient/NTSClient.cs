@@ -580,6 +580,37 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                             var negotiation = new NTSKE_Response(records, [], []);
                             var negotiated  = negotiation.AEADAlgorithm;
 
+                            // RFC 8915 § 4.1.5 lets a server "select among any of the client's
+                            // offered choices" and ignore their order — but the choice is from
+                            // that list, and nothing else is a choice at all.
+                            //
+                            // The validator has already established that this client can perform
+                            // the algorithm, which is a different question and not enough on its
+                            // own: OfferedAEADAlgorithms exists so that a deployment can have a
+                            // policy about which primitives it will use, and a client that
+                            // accepts whatever comes back has no such policy however it is
+                            // configured.
+                            if (!OfferedAEADAlgorithms.Contains(negotiated))
+                            {
+
+                                try
+                                {
+                                    tlsClientProtocol.Close();
+                                }
+                                catch
+                                { }
+
+                                return NTSKEResult.Failed(
+                                           $"The server chose AEAD algorithm {negotiated.AsText()} " +
+                                           $"({(UInt16) negotiated}), which this client did not offer " +
+                                           $"({String.Join(", ", OfferedAEADAlgorithms.Select(algorithm => algorithm.AsText()))}).",
+                                           NTSKEErrorCategory.UnsupportedAlgorithm,
+                                           TakeTimingInfoSnapshot(),
+                                           ntsTlsClient.TLSInfo
+                                       );
+
+                            }
+
                             try
                             {
                                 // And whether the server echoed record 1024, which for
