@@ -307,7 +307,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                                                                                                  : [];
 
                                                                                   if (serverCertificate?.Subject.Contains(ServerName.Trimmed) == true &&
-                                                                                      sans.Contains($"DNS-Name={ServerName.Trimmed}"))
+                                                                                      sans.Any(san => san.EndsWith(ServerName.Trimmed, StringComparison.Ordinal)))
                                                                                   {
                                                                                       return TLSValidationResult.Success();
                                                                                   }

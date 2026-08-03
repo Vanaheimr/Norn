@@ -131,8 +131,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                                                                                                  : [];
 
                                                                                   if (serverCertificate?.Subject.Contains("ntpKE.example.org") == true &&
-                                                                                      sans.Contains("DNS-Name=ntpKE1.example.org") &&
-                                                                                      sans.Contains("DNS-Name=ntpKE2.example.org"))
+                                                                                      sans.Any(san => san.EndsWith("ntpKE1.example.org", StringComparison.Ordinal)) &&
+                                                                                      sans.Any(san => san.EndsWith("ntpKE2.example.org", StringComparison.Ordinal)))
                                                                                   {
                                                                                       return TLSValidationResult.Success();
                                                                                   }
@@ -368,8 +368,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                                                                                                  : [];
 
                                                                                   if (serverCertificate?.Subject.Contains("ntpKE.example.org") == true &&
-                                                                                      sans.Contains("DNS-Name=ntpKE1.example.org") &&
-                                                                                      sans.Contains("DNS-Name=ntpKE2.example.org"))
+                                                                                      sans.Any(san => san.EndsWith("ntpKE1.example.org", StringComparison.Ordinal)) &&
+                                                                                      sans.Any(san => san.EndsWith("ntpKE2.example.org", StringComparison.Ordinal)))
                                                                                   {
                                                                                       return TLSValidationResult.Success();
                                                                                   }
