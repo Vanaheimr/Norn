@@ -155,6 +155,50 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #endregion
 
+        #region (public    override) ProcessClientExtensions(ClientExtensions)
+
+        /// <summary>
+        /// Refuse a client that offered no ALPN extension at all.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// <see cref="GetProtocolNames"/> already makes BouncyCastle fail the handshake when a
+        /// client offers ALPN and none of it is <c>ntske/1</c>. It does nothing about a client
+        /// that offers no ALPN extension at all: RFC 7301 lets a server stay silent about a
+        /// negotiation it was never asked for, so the handshake completed and this server went on
+        /// to hand out cookies to a peer that never said it was doing NTS.
+        /// </para>
+        /// <para>
+        /// Those two cases deserve the same answer. RFC 8915 § 4 describes the exchange as one
+        /// "with the client offering (via an ALPN extension), and the server accepting, an
+        /// application-layer protocol of ntske/1", and § 3 makes support for the extension
+        /// "REQUIRED for interoperability" — a client that does not offer it is not an NTS-KE
+        /// client, whether it offered the wrong thing or nothing.
+        /// </para>
+        /// <para>
+        /// chrony does the same and checks it on both sides of the connection: its
+        /// <c>check_alpn</c> compares the selected protocol by name after every handshake, client
+        /// and server alike, and drops the session when it does not match. This refuses earlier
+        /// than that — during the ClientHello, before a certificate is signed or a key derived —
+        /// and with the alert RFC 7301 § 3.2 defines for having no protocol in common, which is
+        /// the one BouncyCastle already sends for the neighbouring case.
+        /// </para>
+        /// </remarks>
+        public override void ProcessClientExtensions(IDictionary<Int32, Byte[]> ClientExtensions)
+        {
+
+            base.ProcessClientExtensions(ClientExtensions);
+
+            if (ClientExtensions is null ||
+                TlsExtensionsUtilities.GetAlpnExtensionClient(ClientExtensions) is null)
+            {
+                throw new TlsFatalAlert(AlertDescription.no_application_protocol);
+            }
+
+        }
+
+        #endregion
+
         #region (public    override) NotifyHandshakeComplete()
 
         public override void NotifyHandshakeComplete()
