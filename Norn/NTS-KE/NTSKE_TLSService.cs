@@ -168,102 +168,46 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #endregion
 
-        #region ExportKeys(AEADAlgorithm)
+        #region ExportAllKeys() / KeysFor(AEADAlgorithm, CompliantExporterContext = true)
 
         /// <summary>
-        /// Derive the C2S and S2C keys for the agreed algorithm, per RFC 8915 § 5.1.
+        /// Every key pair this key exchange could still turn out to need, derived from inside the
+        /// handshake-complete callback because that is the only place BouncyCastle allows it.
         /// </summary>
-        /// <remarks>
-        /// <para>
-        /// Called once the AEAD has been negotiated, which is necessarily after the handshake:
-        /// the algorithm id goes into the exporter context and its key length decides how many
-        /// octets are asked for, so the keys cannot be derived before both are known. This used
-        /// to happen the moment the handshake completed, with AES-SIV-CMAC-256 written in — which
-        /// worked precisely as long as that was the only algorithm on offer.
-        /// </para>
-        /// <para>
-        /// § 5.1 fixes the context as the protocol id (0 for NTPv4), the algorithm id, and a
-        /// final octet that is 0 for the client-to-server key and 1 for the other direction.
-        /// Those five octets are the only thing separating two keys derived from the same
-        /// session.
-        /// </para>
-        /// </remarks>
-        private readonly Dictionary<AEADAlgorithms, (Byte[] C2SKey, Byte[] S2CKey)> exportedKeys = [];
+        private NTSKE_ExportedKeys? exportedKeys;
 
 
-        /// <summary>
-        /// Derive the C2S and S2C keys of RFC 8915 section 5.1 for every algorithm this
-        /// implementation supports, so that whichever one the records go on to agree is already
-        /// available.
-        /// </summary>
-        /// <remarks>
-        /// <para>
-        /// Every algorithm, because the exporter can only be used from here. BouncyCastle
-        /// discards the exporter secret the moment this callback returns — "Export of key
-        /// material only available from NotifyHandshakeComplete()" — and the AEAD is not agreed
-        /// until the records have been exchanged, which is necessarily later. Deriving on demand
-        /// is the natural design and it is not available.
-        /// </para>
-        /// <para>
-        /// The cost is small and worth stating: three key pairs of at most thirty-two octets
-        /// each, of which two are discarded unused. They live as long as this object does, which
-        /// is one key exchange.
-        /// </para>
-        /// <para>
-        /// Section 5.1 fixes the context as the protocol id (0 for NTPv4), the algorithm id, and
-        /// a final octet that is 0 for the client-to-server key and 1 for the other direction.
-        /// Those five octets are the only thing separating the two keys of a session — and the
-        /// algorithm id among them is why each algorithm needs its own derivation rather than
-        /// one output truncated to different lengths.
-        /// </para>
-        /// </remarks>
         private void ExportAllKeys()
         {
 
-            // Implemented rather than Supported: the narrower list is what this peer offers,
-            // but the other side may name anything from the wider one and be agreed with — and
-            // the exporter is unavailable by the time that is known.
-            foreach (var algorithm in NTSAEAD.Implemented)
-            {
-
-                var keyLength       = NTSAEAD.KeyLength(algorithm)!.Value;
-                var algorithmBytes  = algorithm.GetBytes();
-
-                exportedKeys[algorithm] = (
-                    m_context.ExportKeyingMaterial(
-                        "EXPORTER-network-time-security",
-                        [0x00, 0x00, algorithmBytes[0], algorithmBytes[1], 0x00],
-                        keyLength
-                    ),
-                    m_context.ExportKeyingMaterial(
-                        "EXPORTER-network-time-security",
-                        [0x00, 0x00, algorithmBytes[0], algorithmBytes[1], 0x01],
-                        keyLength
-                    )
-                );
-
-            }
+            exportedKeys = NTSKE_ExportedKeys.ExportAll(m_context);
 
             // The mandatory algorithm's keys are what these properties held before an AEAD could
             // be negotiated at all, and callers that never negotiate still read them.
-            (NTS_C2S_Key, NTS_S2C_Key) = exportedKeys[NTSAEAD.Default];
+            (NTS_C2S_Key, NTS_S2C_Key) = exportedKeys.For(NTSAEAD.Default);
 
         }
 
         /// <summary>
         /// The keys for the agreed algorithm.
         /// </summary>
+        /// <param name="AEADAlgorithm">The AEAD algorithm the key exchange settled on.</param>
+        /// <param name="CompliantExporterContext">
+        /// Whether the client asked for RFC 8915 § 5.1's context by sending the Compliant
+        /// AES-128-GCM-SIV Exporter Context record. Ignored for every other algorithm.
+        /// </param>
         /// <exception cref="NotSupportedException">
         /// No keys were derived for it, which means it is not one this implementation supports —
         /// and so not one it should have agreed to.
         /// </exception>
-        public (Byte[] C2SKey, Byte[] S2CKey) KeysFor(AEADAlgorithms AEADAlgorithm)
+        public (Byte[] C2SKey, Byte[] S2CKey) KeysFor(AEADAlgorithms  AEADAlgorithm,
+                                                      Boolean         CompliantExporterContext   = true)
         {
 
-            if (!exportedKeys.TryGetValue(AEADAlgorithm, out var keys))
-                throw new NotSupportedException(
-                          $"No NTS keys were derived for AEAD algorithm {AEADAlgorithm.AsText()} " +
-                          $"({(UInt16) AEADAlgorithm}), so it is not one this implementation can use.");
+            if (exportedKeys is null)
+                throw new NotSupportedException("The TLS handshake has not completed, so no NTS keys have been derived yet.");
+
+            var keys = exportedKeys.For(AEADAlgorithm, CompliantExporterContext);
 
             NTS_C2S_Key = keys.C2SKey;
             NTS_S2C_Key = keys.S2CKey;

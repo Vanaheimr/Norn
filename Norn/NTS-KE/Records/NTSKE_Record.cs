@@ -378,6 +378,24 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                );
 
         /// <summary>
+        /// Compliant AES-128-GCM-SIV Exporter Context (IANA record type 1024): this peer derives
+        /// the § 5.1 keys for algorithm 30 the way the RFC says, rather than the way chrony does.
+        /// </summary>
+        /// <remarks>
+        /// Empty-bodied and never critical. A peer that has not heard of the record must ignore
+        /// it and carry on with chrony's context, which is the whole point — marking it critical
+        /// would turn a negotiation into a demand and fail the key exchange outright against
+        /// every implementation that predates it.
+        /// </remarks>
+        public static NTSKE_Record  CompliantAES128GCMSIVExporterContext()
+
+            => new (
+                   false,
+                   NTSKE_RecordTypes.CompliantAES128GCMSIVExporterContext,
+                   []
+               );
+
+        /// <summary>
         /// NTS New Cookie for NTPv4
         /// </summary>
         /// <param name="NTSCookie">The new NTS cookie.</param>

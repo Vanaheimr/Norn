@@ -210,7 +210,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                Type == NTSKE_RecordTypes.NTPv4ServerNegotiation     ||
                Type == NTSKE_RecordTypes.NTPv4PortNegotiation       ||
                Type == NTSKE_RecordTypes.NTSRequestPublicKey        ||
-               Type == NTSKE_RecordTypes.NTSPublicKey;
+               Type == NTSKE_RecordTypes.NTSPublicKey               ||
+               Type == NTSKE_RecordTypes.CompliantAES128GCMSIVExporterContext;
 
         #endregion
 

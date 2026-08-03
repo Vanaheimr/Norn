@@ -557,17 +557,26 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <param name="ErrorCode">Set when the request must be refused; null when it is acceptable.</param>
         /// <param name="NextProtocol">The agreed next protocol, or null when none could be agreed.</param>
         /// <param name="AEADAlgorithm">The agreed AEAD algorithm, or null when none could be agreed.</param>
+        /// <param name="CompliantAES128GCMSIVExporterContext">
+        /// Whether AES-128-GCM-SIV was agreed <em>and</em> the client asked for RFC 8915 § 5.1's
+        /// exporter context by sending IANA record type 1024. Both halves matter: the record is
+        /// meaningless under any other algorithm, and a client that did not send it is waiting
+        /// for chrony's derivation.
+        /// </param>
         private sealed record NTSKENegotiation(NTSKEErrorCodes?  ErrorCode,
                                                UInt16?           NextProtocol,
                                                AEADAlgorithms?   AEADAlgorithm,
-                                               String?           Reason)
+                                               String?           Reason,
+                                               Boolean           CompliantAES128GCMSIVExporterContext   = false)
         {
 
             public static NTSKENegotiation Refuse(NTSKEErrorCodes ErrorCode, String Reason)
                 => new (ErrorCode, null, null, Reason);
 
-            public static NTSKENegotiation Accept(UInt16? NextProtocol, AEADAlgorithms? AEADAlgorithm)
-                => new (null, NextProtocol, AEADAlgorithm, null);
+            public static NTSKENegotiation Accept(UInt16?          NextProtocol,
+                                                  AEADAlgorithms?  AEADAlgorithm,
+                                                  Boolean          CompliantAES128GCMSIVExporterContext   = false)
+                => new (null, NextProtocol, AEADAlgorithm, null, CompliantAES128GCMSIVExporterContext);
 
             /// <summary>True when NTPv4 was agreed, which is what makes NTPv4 cookies meaningful.</summary>
             public Boolean NTPv4Negotiated
@@ -674,7 +683,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                  Select(algorithm => (AEADAlgorithms?) algorithm).
                                                  FirstOrDefault();
 
-            return NTSKENegotiation.Accept(negotiatedProtocol, negotiatedAEAD);
+            // § 5.1's exporter context for AES-128-GCM-SIV, but only if the client said it can
+            // do it — chrony's clients cannot, and answering one of those with the compliant
+            // derivation produces a session neither side can use. Under any other algorithm the
+            // record has nothing to say, so it is not echoed and does not change the keys.
+            var compliantAES128GCMSIVExporterContext = negotiatedAEAD == AEADAlgorithms.AES_128_GCM_SIV &&
+                                                       records.Any(record => record.Type == NTSKE_RecordTypes.CompliantAES128GCMSIVExporterContext);
+
+            return NTSKENegotiation.Accept(
+                       negotiatedProtocol,
+                       negotiatedAEAD,
+                       compliantAES128GCMSIVExporterContext
+                   );
 
         }
 
@@ -691,7 +711,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                           or NTSKE_RecordTypes.NTPv4ServerNegotiation
                           or NTSKE_RecordTypes.NTPv4PortNegotiation
                           or NTSKE_RecordTypes.NTSRequestPublicKey
-                          or NTSKE_RecordTypes.NTSPublicKey;
+                          or NTSKE_RecordTypes.NTSPublicKey
+                          or NTSKE_RecordTypes.CompliantAES128GCMSIVExporterContext;
 
 
         private static UInt16[] ParseUInt16Body(Byte[] Body)
@@ -741,6 +762,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                        ? NTSKE_Record.AEADAlgorithmNegotiation([ Negotiation.AEADAlgorithm.Value ])
                                        : NTSKE_Record.AEADAlgorithmNegotiation([])
                                };
+
+            // Echoed only when the client asked and AES-128-GCM-SIV was agreed, because it is
+            // what tells the client which of the two derivations the cookies below were built
+            // with. Silence means chrony's, which is what silence has always meant.
+            if (Negotiation.CompliantAES128GCMSIVExporterContext)
+                ntsKERecords.Add(NTSKE_Record.CompliantAES128GCMSIVExporterContext());
 
             // Everything below concerns an NTPv4 association. Without one there is nothing to
             // point the client at and nothing a cookie could authenticate.
@@ -1342,7 +1369,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                         // exporter context and its key length decides how much
                                         // to ask for — neither is known until the line above.
                                         var (c2sKey, s2cKey) = tlsServer.KeysFor(
-                                                                   negotiation.AEADAlgorithm ?? NTSAEAD.Default
+                                                                   negotiation.AEADAlgorithm ?? NTSAEAD.Default,
+                                                                   negotiation.CompliantAES128GCMSIVExporterContext
                                                                );
 
                                         ntsKERecords = BuildNTSKEResponseRecords(

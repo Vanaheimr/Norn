@@ -138,6 +138,26 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </remarks>
         public IReadOnlyList<AEADAlgorithms> OfferedAEADAlgorithms { get; }
 
+        /// <summary>
+        /// Whether this client claims RFC 8915 § 5.1's exporter context for AES-128-GCM-SIV, by
+        /// sending IANA record type 1024 whenever it offers that algorithm.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// On by default, and there is no good reason to turn it off except to be an older
+        /// client on purpose. chrony derives algorithm 30's keys with algorithm id 15 in the
+        /// exporter context and has done since it shipped the algorithm; the record is how the
+        /// two implementations agree to stop. Claiming it costs four octets and is ignored by a
+        /// server that has never heard of it.
+        /// </para>
+        /// <para>
+        /// Turning it off makes this client speak the older dialect outright, which is the only
+        /// way to reach that code path deliberately — and it is a path that will be taken in the
+        /// field for as long as there are servers that predate the record.
+        /// </para>
+        /// </remarks>
+        public Boolean CompliantAES128GCMSIVExporterContext { get; }
+
         #endregion
 
         #region Constructor(s)
@@ -171,6 +191,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                          NTSCookiePoolPolicy?                                           CookiePoolPolicy             = null,
                          Boolean                                                        InterleavedMode              = false,
                          IEnumerable<AEADAlgorithms>?                                   OfferedAEADAlgorithms        = null,
+                         Boolean                                                        CompliantAES128GCMSIVExporterContext = true,
                          TimeProvider?                                                  TimeProvider                 = null)
         {
 
@@ -188,6 +209,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             this.OfferedAEADAlgorithms       = (OfferedAEADAlgorithms ?? NTSAEAD.Supported).
                                                    Where(NTSAEAD.IsSupported).
                                                    ToArray();
+            this.CompliantAES128GCMSIVExporterContext = CompliantAES128GCMSIVExporterContext;
 
             if (this.OfferedAEADAlgorithms.Count == 0)
                 throw new ArgumentException("At least one of the offered AEAD algorithms has to be one this client can perform.",
@@ -216,6 +238,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                               // has.
                               NTSKE_Record.AEADAlgorithmNegotiation(OfferedAEADAlgorithms)
                           };
+
+            // Offering AES-128-GCM-SIV means saying which of the two key derivations in the wild
+            // this client can do. Without this record chrony's server assumes the other one — and
+            // so must this client, or the two agree on an algorithm and then never manage to
+            // exchange a packet on it.
+            if (CompliantAES128GCMSIVExporterContext &&
+                OfferedAEADAlgorithms.Contains(AEADAlgorithms.AES_128_GCM_SIV))
+            {
+                records.Add(NTSKE_Record.CompliantAES128GCMSIVExporterContext());
+            }
 
             if (RequestNTSPublicKeys)
                 records.Add(NTSKE_Record.NTSRequestPublicKey());
@@ -510,11 +542,19 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                             // ask for. Deriving at handshake time — as this used to — means
                             // deciding the algorithm before the server has said which one, and
                             // works exactly as long as there is only one.
-                            var negotiated = new NTSKE_Response(records, [], []).AEADAlgorithm;
+                            var negotiation = new NTSKE_Response(records, [], []);
+                            var negotiated  = negotiation.AEADAlgorithm;
 
                             try
                             {
-                                (C2S_Key, S2C_Key) = ntsTlsClient.KeysFor(negotiated);
+                                // And whether the server echoed record 1024, which for
+                                // AES-128-GCM-SIV decides which of the two exporter contexts in
+                                // the wild both sides are about to use.
+                                (C2S_Key, S2C_Key) = ntsTlsClient.KeysFor(
+                                                         negotiated,
+                                                         CompliantAES128GCMSIVExporterContext &&
+                                                             negotiation.CompliantAES128GCMSIVExporterContext
+                                                     );
                             }
                             catch (Exception e)
                             {

@@ -63,8 +63,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
     /// Two lists, and the gap between them is the interesting part: <see cref="Implemented"/> is
     /// what the code can do, <see cref="Supported"/> is what it will agree to. Offering an
     /// algorithm that cannot be performed produces a key exchange that succeeds and a time query
-    /// that never validates — and so does offering one that can be performed but does not
-    /// interoperate, which is why the two lists currently differ.
+    /// that never validates — and so does offering one that can be performed but has never been
+    /// shown to interoperate, which is why the two lists differ.
     /// </para>
     /// <para>
     /// Where several are on offer, § 4.1.5 has the server choose from the client's list in the
@@ -95,23 +95,27 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </summary>
         /// <remarks>
         /// <para>
-        /// Shorter than <see cref="Implemented"/> on purpose, and the reason is worth recording
-        /// rather than smoothing over. AES-GCM-SIV is implemented here and matches all
-        /// twenty-four of RFC 8452's published vectors, and a Norn client and a Norn server
-        /// complete a session on it — but against chronyd, which prefers it, every NTP packet
-        /// fails in both directions while AES-SIV-CMAC-256 continues to work. The cause has not
-        /// been found. The suspicion is the TLS exporter rather than the AEAD, since the two
-        /// sides differ only in asking for a sixteen-octet key instead of a thirty-two-octet
-        /// one, but that is a suspicion and not a finding.
+        /// AES-128-GCM-SIV first, which is chrony's preference and the reason it was worth
+        /// implementing: POLYVAL is a carry-less multiply on every processor that runs TLS well,
+        /// and a sixteen-octet key halves what a cookie carries for each direction. Offering only
+        /// the mandatory algorithm — as this list did for a while — meant every chrony session
+        /// quietly negotiated down to it, interoperable and never once exercising the primitive
+        /// the reference implementation actually reaches for.
         /// </para>
         /// <para>
-        /// So it is not offered. An algorithm that two implementations agree on and then cannot
-        /// use is worse than one that is never agreed: the key exchange succeeds, the time
-        /// queries fail, and nothing in either says why. A caller who wants it anyway can pass
-        /// it explicitly through the client's offered list.
+        /// AES-SIV-CMAC-256 second because § 5.1 makes it the one every implementation has, so it
+        /// is the one that never needs to be preferred to be reachable. Under § 4.1.5 the server
+        /// chooses from the client's list, so this order is a preference and not a demand.
+        /// </para>
+        /// <para>
+        /// Still shorter than <see cref="Implemented"/>, and the remaining gap is AES-256-GCM-SIV:
+        /// implemented, matching RFC 8452's vectors, and never once run against an implementation
+        /// that is not this one. chrony does not offer it and neither does anything else reachable
+        /// from here, so advertising it would gain nothing and assert something untested.
         /// </para>
         /// </remarks>
         public static readonly AEADAlgorithms[] Supported = [
+                                                     AEADAlgorithms.AES_128_GCM_SIV,
                                                      AEADAlgorithms.AES_SIV_CMAC_256
                                                  ];
 

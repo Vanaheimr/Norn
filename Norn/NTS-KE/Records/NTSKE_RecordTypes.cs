@@ -24,9 +24,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <summary>
         /// The type description of the NTS-KE record.
         /// </summary>
+        /// <remarks>
+        /// Switched on the full sixteen bits, not on a byte. The record type is a 15-bit field
+        /// and IANA's registry reaches 32767, so a cast to Byte silently folds every type above
+        /// 255 onto another one — record 1024 would have described itself as "End of Message".
+        /// </remarks>
         public static String Description(this NTSKE_RecordTypes Type)
 
-            => (Byte) Type switch {
+            => (UInt16) Type switch {
 
                    0 => "End of Message",
                    1 => "NTS Next Protocol Negotiation",
@@ -39,6 +44,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                   32 => "NTS Request PublicKey",
                   33 => "NTS PublicKey",
+
+                1024 => "Compliant AES-128-GCM-SIV Exporter Context",
 
                    _ => "Unknown or custom record type!"
 
@@ -105,7 +112,29 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <summary>
         /// NTS Public Key
         /// </summary>
-        NTSPublicKey               = 33
+        NTSPublicKey               = 33,
+
+
+        /// <summary>
+        /// Compliant AES-128-GCM-SIV Exporter Context: both peers can derive keys the way
+        /// RFC 8915 § 5.1 says, rather than the way chrony does.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Registered with IANA as record type 1024 — reference chrony-project.org, in the range
+        /// that requires a specification rather than the private-use range — and carried with an
+        /// empty body and the critical bit clear, so that a peer which has never heard of it
+        /// simply ignores it.
+        /// </para>
+        /// <para>
+        /// It exists because chrony writes algorithm id 15 into the § 5.1 exporter context for
+        /// sessions running on algorithm 30. A client that can do it properly sends this record;
+        /// a server that agrees echoes it; and only then does either side use the compliant
+        /// context. See <see cref="NTSKE_ExportedKeys.ExporterAlgorithmFor"/>, which is where the
+        /// decision is actually made.
+        /// </para>
+        /// </remarks>
+        CompliantAES128GCMSIVExporterContext = 1024
 
 
     }

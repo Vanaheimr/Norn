@@ -121,6 +121,23 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
 
         /// <summary>
+        /// Whether the server confirmed RFC 8915 § 5.1's exporter context for AES-128-GCM-SIV by
+        /// echoing IANA record type 1024.
+        /// </summary>
+        /// <remarks>
+        /// Only meaningful when <see cref="AEADAlgorithm"/> is AES-128-GCM-SIV, and only because
+        /// chrony derives that algorithm's keys with algorithm id 15 in the context. False means
+        /// the keys must be derived chrony's way — which is what a server that has never heard of
+        /// the record will have done, since it is sent non-critical precisely so such a server
+        /// ignores it and carries on.
+        /// </remarks>
+        public Boolean                    CompliantAES128GCMSIVExporterContext
+
+            => NTSKERecords.
+                   Any(ntsKERecord => ntsKERecord.Type == NTSKE_RecordTypes.CompliantAES128GCMSIVExporterContext);
+
+
+        /// <summary>
         /// The NTS-KE cookies.
         /// </summary>
         public IEnumerable<Byte[]>        Cookies
