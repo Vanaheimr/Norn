@@ -88,6 +88,39 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
 
         /// <summary>
+        /// The AEAD algorithm the key exchange settled on (RFC 8915 § 4.1.5).
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Read from the records rather than stored, so that it cannot disagree with what the
+        /// server actually said. Everything downstream depends on it: how long the exported keys
+        /// are, how the Authenticator extension field is sealed, and how long its nonce is.
+        /// </para>
+        /// <para>
+        /// A response with no Algorithm Negotiation record falls back to AES-SIV-CMAC-256, which
+        /// § 5.1 makes the one every implementation has. In practice this does not arise —
+        /// <c>NTSKERecordValidator</c> rejects a response without one — but a property that
+        /// returns null here would push the same fallback out to four call sites that each have
+        /// to remember it.
+        /// </para>
+        /// </remarks>
+        public AEADAlgorithms             AEADAlgorithm
+        {
+            get
+            {
+
+                var record = NTSKERecords.
+                                 FirstOrDefault(ntsKERecord => ntsKERecord.Type == NTSKE_RecordTypes.AEADAlgorithmNegotiation);
+
+                return record?.Body.Length >= 2
+                           ? (AEADAlgorithms) ((record.Body[0] << 8) | record.Body[1])
+                           : NTSAEAD.Default;
+
+            }
+        }
+
+
+        /// <summary>
         /// The NTS-KE cookies.
         /// </summary>
         public IEnumerable<Byte[]>        Cookies

@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2010-2026 GraphDefined GmbH <achim.friedland@graphdefined.com>
  * This file is part of Vanaheimr Norn <https://www.github.com/Vanaheimr/Norn>
  *
@@ -424,10 +424,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 var algorithmId = (AEADAlgorithms) algorithmIdUInt16;
 
                 // Key length
-                var keyLength = algorithmId switch {
-                                    AEADAlgorithms.AES_SIV_CMAC_256 => 32,
-                                    _ => 0
-                                };
+                // From the one place that knows, so that an algorithm added there cannot be
+                // accepted into a cookie here without its key length being known.
+                var keyLength = NTSAEAD.KeyLength(algorithmId) ?? 0;
 
                 if (keyLength == 0)
                 {

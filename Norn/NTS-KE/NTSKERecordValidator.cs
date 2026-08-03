@@ -226,13 +226,28 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #region (private static) IsSupportedAEADAlgorithm(Record)
 
+        /// <summary>
+        /// Whether the server chose an algorithm this client can actually perform.
+        /// </summary>
+        /// <remarks>
+        /// Against <see cref="NTSAEAD.Supported"/> rather than against the one mandatory
+        /// algorithm. RFC 8915 section 4.1.5 lets the server pick any algorithm the client
+        /// offered, so a validator that accepted only AES-SIV-CMAC-256 refused every server that
+        /// took the client up on a faster one — including every choice this client itself now
+        /// offers first.
+        ///
+        /// The body must be exactly one algorithm id: section 4.1.5 has the response name the
+        /// single algorithm agreed, not a list to choose from again.
+        /// </remarks>
         private static Boolean IsSupportedAEADAlgorithm(NTSKE_Record Record)
         {
 
-            var expectedBytes = AEADAlgorithms.AES_SIV_CMAC_256.GetBytes();
+            if (Record.Body.Length != 2)
+                return false;
 
-            return Record.Body.Length == expectedBytes.Length &&
-                   Record.Body.SequenceEqual(expectedBytes);
+            var algorithm = (AEADAlgorithms) ((Record.Body[0] << 8) | Record.Body[1]);
+
+            return NTSAEAD.IsSupported(algorithm);
 
         }
 

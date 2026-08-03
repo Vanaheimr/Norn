@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2010-2026 GraphDefined GmbH <achim.friedland@graphdefined.com>
  * This file is part of Vanaheimr Norn <https://www.github.com/Vanaheimr/Norn>
  *
@@ -343,6 +343,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <param name="ClockResolution">The optional granularity of the clock, when it is known better than it can be measured.</param>
         /// <param name="InterleavedMode">Who may be answered in the RFC 9769 interleaved mode (default: everyone).</param>
         /// <param name="RateLimiter">An optional RFC 8633 § 5.4 request rate limiter (default: none, so every request is answered).</param>
+        /// <param name="SupportedAEADAlgorithms">The AEAD algorithms to agree to (default: <see cref="NTSAEAD.Supported"/>).</param>
         /// <param name="TimeProvider">The optional clock this server reads and reports (default: <see cref="System.TimeProvider.System"/>).</param>
         public NTSServer(I18NString?        Description    = null,
                          IPPort?            NTSKEPort      = null,
@@ -371,6 +372,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                          TimeSpan?          ClockResolution               = null,
                          InterleavedModePolicy? InterleavedMode           = null,
                          NTPRateLimiter?    RateLimiter                   = null,
+                         IEnumerable<AEADAlgorithms>? SupportedAEADAlgorithms = null,
                          TimeProvider?      TimeProvider                  = null)
         {
 
@@ -435,6 +437,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                     : null;
 
             this.RateLimiter                  = RateLimiter;
+
+            // What this server will agree to. Defaults to NTSAEAD.Supported, which is narrower
+            // than what is implemented — see there. Anything named that cannot be performed is
+            // dropped rather than honoured: agreeing to an algorithm and then failing every
+            // packet is the one outcome worse than refusing it.
+            this.supportedAEADAlgorithms      = (SupportedAEADAlgorithms ?? NTSAEAD.Supported).
+                                                    Where(NTSAEAD.IsSupported).
+                                                    ToArray();
+
+            if (this.supportedAEADAlgorithms.Length == 0)
+                throw new ArgumentException("At least one of the given AEAD algorithms has to be one this server can perform.",
+                                            nameof(SupportedAEADAlgorithms));
 
             if (KeyPair is not null)
             {
@@ -530,7 +544,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         private static readonly UInt16[] supportedNextProtocols = [ 0 ];   // 0 = NTPv4
 
         /// <summary>The AEAD algorithms this server implements (RFC 8915 § 4.1.5).</summary>
-        private static readonly AEADAlgorithms[] supportedAEADAlgorithms = [ AEADAlgorithms.AES_SIV_CMAC_256 ];
+        private readonly AEADAlgorithms[] supportedAEADAlgorithms;
 
         /// <summary>Protocol ID 0, NTPv4 — the only next protocol that makes cookies meaningful.</summary>
         private const UInt16 NextProtocolNTPv4 = 0;
@@ -570,7 +584,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// records, so a malformed request was answered with a successful handshake and a
         /// client's offers were ignored in favour of this server's defaults.
         /// </summary>
-        private static NTSKENegotiation NegotiateNTSKE(IEnumerable<NTSKE_Record> NTSKERequest)
+        private NTSKENegotiation NegotiateNTSKE(IEnumerable<NTSKE_Record> NTSKERequest)
         {
 
             var records = NTSKERequest.ToArray();
@@ -1267,8 +1281,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                       ).WaitAsync(NTSKEHandshakeTimeout, requestCTS.Token).
                                         ConfigureAwait(false);
 
-                                var c2sKey               = tlsServer.NTS_C2S_Key ?? [];
-                                var s2cKey               = tlsServer.NTS_S2C_Key ?? [];
 
 
                                 // A generous socket-level backstop, so a client that stalls
@@ -1323,12 +1335,24 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                     }
 
                                     else
+                                    {
+
+                                        // Derived here rather than at handshake time, because
+                                        // RFC 8915 § 5.1 puts the negotiated algorithm into the
+                                        // exporter context and its key length decides how much
+                                        // to ask for — neither is known until the line above.
+                                        var (c2sKey, s2cKey) = tlsServer.KeysFor(
+                                                                   negotiation.AEADAlgorithm ?? NTSAEAD.Default
+                                                               );
+
                                         ntsKERecords = BuildNTSKEResponseRecords(
                                                            negotiation,
                                                            ntsKERequest,
                                                            c2sKey,
                                                            s2cKey
                                                        );
+
+                                    }
 
                                 }
 
@@ -1345,6 +1369,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                             {
                                 System.Threading.Interlocked.Increment(ref ntskeHandshakeFailures);
                                 DebugX.Log($"TLS handshake/IO failed: {ex.Message}");
+                                Console.Error.WriteLine($"### NTSKE FAIL: {ex}");
                             }
                             finally
                             {
@@ -1799,7 +1824,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     NTSKey:          ntsCookie.S2CKey,
                     AssociatedData:  associatedData,
                     Plaintext:       encryptedExtensions.Select(ext => ext.ToByteArray()).Aggregate(),
-                    Nonce:           null
+                    Nonce:           null,
+                    // The cookie says which algorithm this session agreed on, and it is the only
+                    // thing that does: the key exchange that decided it may have been days ago
+                    // and on another machine.
+                    AEADAlgorithm:   ntsCookie.AEADAlgorithm
                 )
             );
 

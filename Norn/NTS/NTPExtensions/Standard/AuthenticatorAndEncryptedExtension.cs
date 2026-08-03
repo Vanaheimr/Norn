@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2010-2026 GraphDefined GmbH <achim.friedland@graphdefined.com>
  * This file is part of Vanaheimr Norn <https://www.github.com/Vanaheimr/Norn>
  *
@@ -105,7 +105,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                        ref List<NTPExtension>                                        AuthenticatedExtensions,
                                        Byte[]                                                        Key, // S2C or C2S key!
                                        [NotNullWhen(true)]  out AuthenticatorAndEncryptedExtension?  AuthExtension,
-                                       [NotNullWhen(false)] out String?                              ErrorResponse)
+                                       [NotNullWhen(false)] out String?                              ErrorResponse,
+                                       AEADAlgorithms                                                AEADAlgorithm = NTSAEAD.Default)
         {
 
             try
@@ -146,9 +147,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 if (ciphertextLength > 0)
                     Buffer.BlockCopy(ReceivedValue, 4 + paddedNonceLength, receivedCiphertext, 0, ciphertextLength);
 
-                // Recompute the AEAD output using AES-SIV.
-                var aesSiv                    = new AES_SIV(Key);
-                var computedOutput            = aesSiv.Decrypt([ AssociatedData.Aggregate() ], receivedNonce, receivedCiphertext);
+                // Opened with the algorithm the key exchange agreed on, not with a fixed one:
+                // the sender chose it, and the ciphertext is unreadable under any other.
+                var aead                      = NTSAEAD.Create(AEADAlgorithm, Key);
+                var computedOutput            = aead.Decrypt(AssociatedData.Aggregate(), receivedNonce, receivedCiphertext);
                 var extensions                = new List<NTPExtension>();
 
                 var offset = 0;
@@ -256,7 +258,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                    NTSKEResponse.C2SKey,
                    AssociatedData,
                    Plaintext,
-                   Nonce
+                   Nonce,
+                   NTSKEResponse.AEADAlgorithm
                );
 
         #endregion
@@ -270,28 +273,34 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <param name="AssociatedData">An array of byte arrays to be authenticated but not encrypted.</param>
         /// <param name="Plaintext">The optional plaintext to be encrypted (e.g. internal extension fields).</param>
         /// <param name="Nonce">The optional nonce to be used for encryption.</param>
+        /// <param name="AEADAlgorithm">
+        /// The algorithm agreed by the key exchange. It decides both how the plaintext is sealed
+        /// and how long the nonce is — twelve octets for AES-GCM-SIV, sixteen for AES-SIV — so a
+        /// caller that gets it wrong produces a field the peer cannot even frame, let alone open.
+        /// </param>
         public static AuthenticatorAndEncryptedExtension
 
             Create(Byte[]               NTSKey,
                    IEnumerable<Byte[]>  AssociatedData,
-                   Byte[]?              Plaintext   = null,
-                   Byte[]?              Nonce       = null)
+                   Byte[]?              Plaintext      = null,
+                   Byte[]?              Nonce          = null,
+                   AEADAlgorithms       AEADAlgorithm  = NTSAEAD.Default)
 
         {
 
-            var nonce = Nonce ?? new Byte[16];
+            var aead   = NTSAEAD.Create(AEADAlgorithm, NTSKey);
+            var nonce  = Nonce ?? new Byte[aead.NonceLength];
 
             if (Nonce is null)
                 RandomNumberGenerator.Fill(nonce);
 
             return new AuthenticatorAndEncryptedExtension(
                        nonce,
-                       new AES_SIV(NTSKey).
-                           Encrypt(
-                               [ AssociatedData.Aggregate() ],
-                               nonce,
-                               Plaintext ?? []
-                           )
+                       aead.Encrypt(
+                           AssociatedData.Aggregate(),
+                           nonce,
+                           Plaintext ?? []
+                       )
                    );
 
         }

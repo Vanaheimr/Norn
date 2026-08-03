@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2010-2026 GraphDefined GmbH <achim.friedland@graphdefined.com>
  * This file is part of Vanaheimr Norn <https://www.github.com/Vanaheimr/Norn>
  *
@@ -188,7 +188,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                                        Byte[]?                                ExpectedUniqueId   = null,
                                        UInt64?                                DestinationTimestamp = null,
                                        Int64?                                 SendStopwatchTimestamp = null,
-                                       Int64?                                 ReceiveStopwatchTimestamp = null)
+                                       Int64?                                 ReceiveStopwatchTimestamp = null,
+                                       AEADAlgorithms                         AEADAlgorithm = NTSAEAD.Default)
         {
 
             #region Initial checks
@@ -275,7 +276,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                                                                          ref extensions,
                                                                          NTSKey,
                                                                          out var authenticatorAndEncryptedExtension,
-                                                                         out ErrorResponse))
+                                                                         out ErrorResponse,
+                                                                         AEADAlgorithm))
                         {
                             return false;
                         }

@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2010-2026 GraphDefined GmbH <achim.friedland@graphdefined.com>
  * This file is part of Vanaheimr Norn <https://www.github.com/Vanaheimr/Norn>
  *
@@ -207,6 +207,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
             var extensions      = new List<NTPExtension>();
             String? ntsCookieError = null;
 
+            // Which AEAD the sender used is the cookie's business: the server put it there when
+            // it issued the cookie, and the client had no say in it beyond the key exchange that
+            // produced it. Until a cookie has been unsealed there is nothing to decrypt anyway.
+            var ntsAEADAlgorithm = NTSAEAD.Default;
+
             while (offset + 4 <= Buffer.Length)
             {
 
@@ -242,7 +247,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                         if (NTSCookie.TryParse(ntsCookieExtension.Value, MasterKeys, out var ntsCookie, out var cookieError))
                         {
 
-                            NTSKey = ntsCookie.C2SKey;
+                            NTSKey            = ntsCookie.C2SKey;
+                            ntsAEADAlgorithm  = ntsCookie.AEADAlgorithm;
 
                             extensions.Add(
                                 new NTSCookieExtension(
@@ -285,7 +291,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                                                                          ref extensions,
                                                                          NTSKey,
                                                                          out var authenticatorAndEncryptedExtension,
-                                                                         out ErrorResponse))
+                                                                         out ErrorResponse,
+                                                                         ntsAEADAlgorithm))
                         {
                             return false;
                         }

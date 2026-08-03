@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2010-2026 GraphDefined GmbH <achim.friedland@graphdefined.com>
  * This file is part of Vanaheimr Norn <https://www.github.com/Vanaheimr/Norn>
  *
@@ -127,6 +127,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </remarks>
         public InterleavedAssociation? InterleavedAssociation { get; }
 
+        /// <summary>
+        /// The AEAD algorithms this client offers, in the order it prefers them.
+        /// </summary>
+        /// <remarks>
+        /// Everything it can perform, unless an operator narrows it. RFC 8915 § 4.1.5 has the
+        /// server choose from this list, so narrowing it is how a client pins an algorithm —
+        /// worth having for a deployment with a policy about which primitives it will use, and
+        /// the only way to exercise a given one against a server that prefers another.
+        /// </remarks>
+        public IReadOnlyList<AEADAlgorithms> OfferedAEADAlgorithms { get; }
+
         #endregion
 
         #region Constructor(s)
@@ -159,6 +170,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                          DNSClient?                                                     DNSClient                    = null,
                          NTSCookiePoolPolicy?                                           CookiePoolPolicy             = null,
                          Boolean                                                        InterleavedMode              = false,
+                         IEnumerable<AEADAlgorithms>?                                   OfferedAEADAlgorithms        = null,
                          TimeProvider?                                                  TimeProvider                 = null)
         {
 
@@ -173,6 +185,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             this.CookiePoolPolicy            = (CookiePoolPolicy   ?? new NTSCookiePoolPolicy()).Normalize();
             this.TimeProvider                = TimeProvider        ?? System.TimeProvider.System;
             this.InterleavedAssociation      = InterleavedMode ? new InterleavedAssociation() : null;
+            this.OfferedAEADAlgorithms       = (OfferedAEADAlgorithms ?? NTSAEAD.Supported).
+                                                   Where(NTSAEAD.IsSupported).
+                                                   ToArray();
+
+            if (this.OfferedAEADAlgorithms.Count == 0)
+                throw new ArgumentException("At least one of the offered AEAD algorithms has to be one this client can perform.",
+                                            nameof(OfferedAEADAlgorithms));
 
         }
 
@@ -185,12 +204,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// Create a new NTS-KE request.
         /// </summary>
         /// <param name="RequestNTSPublicKeys">Whether to request the public keys used for NTS response signing.</param>
-        private static Byte[] BuildNTSKERequest(Boolean RequestNTSPublicKeys = false)
+        private Byte[] BuildNTSKERequest(Boolean RequestNTSPublicKeys = false)
         {
 
             var records = new List<NTSKE_Record>() {
                               NTSKE_Record.NTSNextProtocolNegotiation,
-                              NTSKE_Record.AEADAlgorithmNegotiation()
+                              // Everything this client can perform, in preference order.
+                              // RFC 8915 § 4.1.5 leaves the choice to the server but has it
+                              // choose from this list, so offering only the mandatory algorithm
+                              // — as this used to — silently declines every faster one a server
+                              // has.
+                              NTSKE_Record.AEADAlgorithmNegotiation(OfferedAEADAlgorithms)
                           };
 
             if (RequestNTSPublicKeys)
@@ -445,9 +469,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     await tlsHandshakeTask.ConfigureAwait(false);
                     tlsHandshakeDuration   = tlsStopwatch.Elapsed;
 
-                    C2S_Key                = ntsTlsClient.NTS_C2S_Key ?? [];
-                    S2C_Key                = ntsTlsClient.NTS_S2C_Key ?? [];
-
                     var ntsKEStopwatch     = Stopwatch.StartNew();
                     var ntsKERequest       = BuildNTSKERequest(RequestNTSPublicKeys);
                     await tlsClientProtocol.Stream.WriteAsync(ntsKERequest, timeoutCTS.Token).ConfigureAwait(false);
@@ -461,13 +482,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                    ).ConfigureAwait(false);
 
                     ntsKEProtocolDuration  = ntsKEStopwatch.Elapsed;
-
-                    try
-                    {
-                        tlsClientProtocol.Close();
-                    }
-                    catch
-                    { }
 
                     if (readResult.ErrorMessage is not null)
                         return NTSKEResult.Failed(
@@ -490,6 +504,37 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                            TakeTimingInfoSnapshot(),
                                            ntsTlsClient.TLSInfo
                                        );
+
+                            // Only now, because RFC 8915 § 5.1 puts the negotiated algorithm
+                            // into the exporter context and its key length decides how much to
+                            // ask for. Deriving at handshake time — as this used to — means
+                            // deciding the algorithm before the server has said which one, and
+                            // works exactly as long as there is only one.
+                            var negotiated = new NTSKE_Response(records, [], []).AEADAlgorithm;
+
+                            try
+                            {
+                                (C2S_Key, S2C_Key) = ntsTlsClient.KeysFor(negotiated);
+                            }
+                            catch (Exception e)
+                            {
+                                return NTSKEResult.Failed(
+                                           $"The server chose AEAD algorithm {negotiated.AsText()}, which this " +
+                                           $"client cannot use: {e.Message}",
+                                           NTSKEErrorCategory.Protocol,
+                                           TakeTimingInfoSnapshot(),
+                                           ntsTlsClient.TLSInfo
+                                       );
+                            }
+                            finally
+                            {
+                                try
+                                {
+                                    tlsClientProtocol.Close();
+                                }
+                                catch
+                                { }
+                            }
 
                             return NTSKEResult.SuccessResult(
                                        new NTSKE_Response(
@@ -1002,7 +1047,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                              ExpectedUniqueId:           requestPacket.UniqueIdentifier(),
                                              DestinationTimestamp:       destinationTimestamp1,
                                              SendStopwatchTimestamp:     sendStopwatchTimestamp,
-                                             ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp1))
+                                             ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp1,
+                                             // Sealed under whatever the key exchange agreed on,
+                                             // so it can only be opened under the same.
+                                             AEADAlgorithm:              NTSKEResponse?.AEADAlgorithm ?? NTSAEAD.Default))
                     {
 
                         // RFC 9769 § 2: which of the request's two timestamps came back as the
@@ -1103,7 +1151,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                      ExpectedUniqueId:           requestPacket.UniqueIdentifier(),
                                                      DestinationTimestamp:       destinationTimestamp2,
                                                      SendStopwatchTimestamp:     sendStopwatchTimestamp,
-                                                     ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp2))
+                                                     ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp2,
+                                                     AEADAlgorithm:              NTSKEResponse?.AEADAlgorithm ?? NTSAEAD.Default))
                             {
 
                                 var validation2 = NTSResponseValidator.Validate(
