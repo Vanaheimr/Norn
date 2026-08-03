@@ -244,6 +244,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public TimeSpan              ClockResolution               { get; }
 
         /// <summary>
+        /// The RFC 9769 interleaved client/server mode, or null when it is switched off.
+        /// </summary>
+        /// <remarks>
+        /// On by default, as it is in chrony, and safe to be: the mode is invisible to a client
+        /// that does not ask for it, since an interleaved response is only ever sent to a
+        /// request whose origin timestamp echoes one this server previously issued. What it
+        /// costs is a bounded amount of memory per client address.
+        /// </remarks>
+        public InterleavedTimestamps? InterleavedTimestamps        { get; }
+
+        /// <summary>
         /// When this server's clock was last set or corrected — the Reference Timestamp of
         /// § 7.3, which tells a client how stale the synchronization is.
         ///
@@ -334,6 +345,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                          TimeSpan?          RootDispersion                = null,
                          Byte?              LeapIndicator                 = null,
                          TimeSpan?          ClockResolution               = null,
+                         Boolean            InterleavedMode               = true,
                          TimeProvider?      TimeProvider                  = null)
         {
 
@@ -385,6 +397,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             this.RootDispersion               = RootDispersion               ?? this.ClockResolution + TimeSpan.FromMilliseconds(1);
             this.LeapIndicator                = LeapIndicator                ?? 0;
             this.ClockLastSynchronized        = this.TimeProvider.GetUtcNow();
+
+            this.InterleavedTimestamps        = InterleavedMode
+                                                    ? new InterleavedTimestamps()
+                                                    : null;
 
             if (KeyPair is not null)
             {
@@ -976,6 +992,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                         cts.Token
                                                     );
 
+                        // Read here and nowhere later. Everything after this point — parsing,
+                        // unsealing the cookie, verifying the authenticator, queueing onto a
+                        // worker — happens after the packet arrived, and a receive timestamp
+                        // taken at the end of all that reports this server as slower than it is.
+                        // RFC 5905 § 8 wants the timestamp at the end of reception; this is as
+                        // close as a user-space socket gets.
+                        var receivedAt      = NTPPacket.GetCurrentNTPTimestamp(TimeProvider);
+
                         System.Threading.Interlocked.Increment(ref ntpRequestsReceived);
 
                         // Local copy to pass into the Task
@@ -1004,8 +1028,29 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                                     var toBeSigned       = requestPacket.NTSRequestSignedResponse() is not null;
 
+                                    // RFC 9769 § 2 decides here which of this server's earlier
+                                    // timestamps the answer carries, before anything is built:
+                                    // the header has to be final before the NTS authenticator
+                                    // is computed over it.
+                                    var exchange         = InterleavedTimestamps is not null &&
+                                                           udpPacketLocal.RemoteEndPoint is IPEndPoint remoteIPEndPoint
+
+                                                               ? InterleavedTimestamps.BeginExchange(
+                                                                     remoteIPEndPoint.Address,
+                                                                     receivedAt,
+                                                                     requestPacket,
+                                                                     TimeProvider
+                                                                 )
+
+                                                               : InterleavedExchange.Basic(
+                                                                     requestPacket,
+                                                                     receivedAt,
+                                                                     TimeProvider
+                                                                 );
+
                                     var responsePacket1  = BuildResponse(
                                                                requestPacket,
+                                                               exchange,
                                                                toBeSigned
                                                            );
 
@@ -1015,6 +1060,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                udpPacketLocal.RemoteEndPoint,
                                                cts.Token
                                            );
+
+                                    // The whole point of RFC 9769: the transmit timestamp worth
+                                    // reporting is the one taken once the packet has actually
+                                    // gone, after building, encrypting and writing it. It cannot
+                                    // travel in this response, so it travels in the next one.
+                                    exchange.RecordTransmission(NTPPacket.GetCurrentNTPTimestamp(TimeProvider));
+
                                     System.Threading.Interlocked.Increment(ref ntpResponsesSent);
 
                                     if (toBeSigned && currentKeyPair is not null)
@@ -1306,8 +1358,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </summary>
         private NTPPacket BuildResponseHeader(NTPPacket                  RequestPacket,
                                               IEnumerable<NTPExtension>  Extensions,
-                                              UInt64?                    ReceiveTimestamp   = null,
-                                              UInt64?                    TransmitTimestamp  = null)
+                                              InterleavedExchange        Exchange)
 
             => new (
 
@@ -1329,9 +1380,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                    // which said nothing about synchronization at all.
                    ReferenceTimestamp:   NTPPacket.GetCurrentNTPTimestamp(ClockLastSynchronized.UtcDateTime),
 
-                   OriginateTimestamp:   RequestPacket.TransmitTimestamp ?? 0,
-                   ReceiveTimestamp:     ReceiveTimestamp  ?? NTPPacket.GetCurrentNTPTimestamp(TimeProvider),
-                   TransmitTimestamp:    TransmitTimestamp ?? NTPPacket.GetCurrentNTPTimestamp(TimeProvider),
+                   // All three come from the exchange, because RFC 9769 makes them a set: which
+                   // timestamp is echoed as the origin is the only signal telling the client
+                   // whether the transmit timestamp beside it belongs to this response or to
+                   // the one before it.
+                   OriginateTimestamp:   Exchange.OriginTimestamp,
+                   ReceiveTimestamp:     Exchange.ReceiveTimestamp,
+                   TransmitTimestamp:    Exchange.TransmitTimestamp,
                    Extensions:           Extensions,
 
                    Request:              RequestPacket
@@ -1392,8 +1447,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// request that caused it. No NTS Cookie and no NTS Authenticator extension field may
         /// appear — the server has no validated key with which to produce one.
         /// </summary>
-        private NTPPacket BuildNTSNAK(NTPPacket  RequestPacket,
-                                      String     ErrorMessage)
+        private NTPPacket BuildNTSNAK(NTPPacket            RequestPacket,
+                                      InterleavedExchange  Exchange,
+                                      String               ErrorMessage)
         {
 
             var extensions  = new List<NTPExtension>();
@@ -1414,9 +1470,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                        RootDispersion:         0,
                        ReferenceIdentifier:    ReferenceIdentifier.From("NTSN"),
                        ReferenceTimestamp:     0,
-                       OriginateTimestamp:     RequestPacket.TransmitTimestamp ?? 0,
-                       ReceiveTimestamp:       NTPPacket.GetCurrentNTPTimestamp(TimeProvider),
-                       TransmitTimestamp:      NTPPacket.GetCurrentNTPTimestamp(TimeProvider),
+                       // A refusal still has to keep the RFC 9769 bookkeeping honest: the
+                       // receive timestamp saved for this exchange is the one the client was
+                       // actually shown, or a later interleaved request echoing it would be
+                       // answered from a timestamp that never went out.
+                       OriginateTimestamp:     Exchange.OriginTimestamp,
+                       ReceiveTimestamp:       Exchange.ReceiveTimestamp,
+                       TransmitTimestamp:      Exchange.TransmitTimestamp,
                        Extensions:             extensions,
 
                        Request:                RequestPacket,
@@ -1428,8 +1488,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         }
 
 
-        private NTPPacket BuildResponse(NTPPacket  RequestPacket,
-                                        Boolean    SignedResponseRequested = false)
+        private NTPPacket BuildResponse(NTPPacket            RequestPacket,
+                                        InterleavedExchange  Exchange,
+                                        Boolean              SignedResponseRequested = false)
         {
 
             var extensions           = new List<NTPExtension>();
@@ -1445,7 +1506,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                                           or ExtensionTypes.NTSCookiePlaceholder
                                                                           or ExtensionTypes.AuthenticatorAndEncrypted))
             {
-                return BuildResponseHeader(RequestPacket, []);
+                return BuildResponseHeader(RequestPacket, [], Exchange);
             }
 
             var u1 = RequestPacket.UniqueIdentifier();
@@ -1456,12 +1517,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             var n1 = RequestPacket.NTSCookieExtension();
 
             if (n1 is null)
-                return BuildNTSNAK(RequestPacket, "Invalid NTS cookie!");
+                return BuildNTSNAK(RequestPacket, Exchange, "Invalid NTS cookie!");
 
             // Unsealing authenticates the cookie under this server's master key and checks
             // it against that key's validity window, so a forged or expired cookie fails here.
             if (!NTSCookie.TryParse(n1.Value, masterKeys, out var ntsCookie, out var errorResponse))
-                return BuildNTSNAK(RequestPacket, "Invalid NTS cookie: " + errorResponse);
+                return BuildNTSNAK(RequestPacket, Exchange, "Invalid NTS cookie: " + errorResponse);
 
 
             // RFC 8915 §5.7: "The number of NTS Cookie extension fields included SHOULD be
@@ -1499,10 +1560,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 );
 
 
-            var receiveTimestamp  = NTPPacket.GetCurrentNTPTimestamp(TimeProvider);
-            var transmitTimestamp = NTPPacket.GetCurrentNTPTimestamp(TimeProvider);
-
-            var response1 = BuildResponseHeader(RequestPacket, extensions, receiveTimestamp, transmitTimestamp);
+            var response1 = BuildResponseHeader(RequestPacket, extensions, Exchange);
 
 
             var associatedData = new List<Byte[]>() { response1.ToByteArray(SkipExtensions: true) }.
