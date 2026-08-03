@@ -27,6 +27,38 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 {
 
     /// <summary>
+    /// Who a server will answer in the RFC 9769 interleaved mode.
+    /// </summary>
+    /// <remarks>
+    /// RFC 9769 § 2: "The server MAY restrict the interleaved mode to specific IP addresses
+    /// and/or authenticated clients."
+    ///
+    /// The reason to want that is resources. Interleaved mode obliges a server to remember
+    /// something per client address, and on a UDP service the source address is whatever the
+    /// sender wrote there — so an unauthenticated flood is also a stream of new "clients". The
+    /// table is bounded and evicts in constant time, so the cost is capped either way; this is
+    /// the stronger option for a public server, where nothing but an NTS client's cookie proves
+    /// the address it came from is real.
+    /// </remarks>
+    public enum InterleavedModePolicy
+    {
+
+        /// <summary>Never answer in the interleaved mode.</summary>
+        Disabled,
+
+        /// <summary>Answer any client that asks for it, as chrony does.</summary>
+        Everyone,
+
+        /// <summary>
+        /// Answer only requests carrying a verified NTS authenticator, so that an address has
+        /// to have completed a key exchange before it can occupy a slot.
+        /// </summary>
+        AuthenticatedOnly
+
+    }
+
+
+    /// <summary>
     /// The server-side state of RFC 9769 interleaved client/server mode.
     /// </summary>
     /// <remarks>
@@ -97,18 +129,40 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         private sealed class ClientState
         {
-            public LinkedList<Exchange>  Exchanges  { get; } = new ();
-            public Int64                 LastUsed   { get; set; }
+
+            public LinkedList<Exchange>        Exchanges  { get; } = new ();
+
+            /// <summary>
+            /// This client's place in the recency order, so that using it and evicting the
+            /// least recent are both O(1).
+            /// </summary>
+            public LinkedListNode<IPAddress>?  Recency    { get; set; }
+
         }
 
 
         private readonly Dictionary<IPAddress, ClientState>  clients   = [];
+
+        /// <summary>
+        /// The client addresses in order of use, least recent first.
+        /// </summary>
+        /// <remarks>
+        /// A list rather than a timestamp to sort by, because sorting would be work an attacker
+        /// controls the amount of. This table is keyed by source address on a UDP service, so
+        /// addresses can be forged freely and every forged one is a new client: with a scan to
+        /// find the least recently used, each spoofed packet would cost a pass over the whole
+        /// table once it filled. The memory stayed bounded and the CPU did not.
+        /// </remarks>
+        private readonly LinkedList<IPAddress>               recency   = new();
+
         private readonly Lock                                padlock   = new();
-        private          Int64                               useCounter;
 
         #endregion
 
         #region Properties
+
+        /// <summary>Who may be answered in the interleaved mode.</summary>
+        public InterleavedModePolicy Policy    { get; }
 
         /// <summary>How many exchanges are remembered per client address.</summary>
         public Int32  MaxExchangesPerClient    { get; }
@@ -133,12 +187,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <summary>
         /// Create the interleaved-mode timestamp store.
         /// </summary>
+        /// <param name="Policy">Who may be answered in the interleaved mode.</param>
         /// <param name="MaxExchangesPerClient">How many exchanges to remember per client address.</param>
         /// <param name="MaxClients">How many client addresses to remember at once.</param>
-        public InterleavedTimestamps(Int32?  MaxExchangesPerClient   = null,
-                                     Int32?  MaxClients              = null)
+        public InterleavedTimestamps(InterleavedModePolicy?  Policy                  = null,
+                                     Int32?                  MaxExchangesPerClient   = null,
+                                     Int32?                  MaxClients              = null)
         {
 
+            this.Policy                 = Policy ?? InterleavedModePolicy.Everyone;
             this.MaxExchangesPerClient  = Math.Max(1, MaxExchangesPerClient ?? DefaultMaxExchangesPerClient);
             this.MaxClients             = Math.Max(1, MaxClients            ?? DefaultMaxClients);
 
@@ -166,11 +223,26 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// SHOULD save the new receive and transmit timestamps to be able to respond in the
         /// interleaved mode to the next request from the client."
         /// </remarks>
+        /// <param name="RemoteAddress">The client's address; the mode is tracked per address, never per port.</param>
+        /// <param name="ReceiveTimestamp">When the datagram arrived.</param>
+        /// <param name="RequestPacket">The parsed request.</param>
+        /// <param name="TimeProvider">The clock to read for a basic-mode transmit timestamp.</param>
+        /// <param name="Authenticated">
+        /// Whether the request carried a verified NTS authenticator, which decides whether it
+        /// qualifies under <see cref="InterleavedModePolicy.AuthenticatedOnly"/>.
+        /// </param>
         public InterleavedExchange BeginExchange(IPAddress     RemoteAddress,
                                                  UInt64        ReceiveTimestamp,
                                                  NTPPacket     RequestPacket,
-                                                 TimeProvider  TimeProvider)
+                                                 TimeProvider  TimeProvider,
+                                                 Boolean       Authenticated   = false)
         {
+
+            // Nothing is remembered about a client that may not use the mode, so an
+            // unauthenticated flood cannot occupy the table under this policy.
+            if (Policy == InterleavedModePolicy.AuthenticatedOnly && !Authenticated)
+                return InterleavedExchange.Basic(RequestPacket, ReceiveTimestamp, TimeProvider);
+
 
             var requestOrigin    = RequestPacket.OriginateTimestamp;
             var requestReceive   = RequestPacket.ReceiveTimestamp;
@@ -223,7 +295,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 var exchange = new Exchange { ReceiveTimestamp = receiveTimestamp };
 
                 client.Exchanges.AddLast(exchange);
-                client.LastUsed = ++useCounter;
 
                 while (client.Exchanges.Count > MaxExchangesPerClient)
                     client.Exchanges.RemoveFirst();
@@ -253,7 +324,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public void Forget(IPAddress RemoteAddress)
         {
             lock (padlock)
-                clients.Remove(RemoteAddress);
+            {
+
+                if (clients.Remove(RemoteAddress, out var removed) &&
+                    removed.Recency is not null)
+                {
+                    recency.Remove(removed.Recency);
+                }
+
+            }
         }
 
         #endregion
@@ -266,7 +345,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public void Clear()
         {
             lock (padlock)
+            {
                 clients.Clear();
+                recency.Clear();
+            }
         }
 
         #endregion
@@ -278,21 +360,38 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         {
 
             if (clients.TryGetValue(RemoteAddress, out var existing))
+            {
+
+                // Move to the most-recent end. Removing a known node and appending it are both
+                // O(1) on a linked list, which is the point of holding the node here.
+                if (existing.Recency is not null)
+                {
+                    recency.Remove(existing.Recency);
+                    recency.AddLast(existing.Recency);
+                }
+
                 return existing;
+
+            }
 
             // Evicting the address used longest ago, rather than refusing the new one, so that
             // a flood of one-off addresses degrades the interleaved mode for everybody instead
             // of letting whoever arrived first keep it to themselves.
-            if (clients.Count >= MaxClients)
+            if (clients.Count >= MaxClients &&
+                recency.First is not null)
             {
 
-                var leastRecentlyUsed = clients.OrderBy(client => client.Value.LastUsed).First().Key;
+                var leastRecentlyUsed = recency.First;
 
-                clients.Remove(leastRecentlyUsed);
+                recency.Remove(leastRecentlyUsed);
+                clients.Remove(leastRecentlyUsed.Value);
 
             }
 
-            var created = new ClientState();
+            var created = new ClientState {
+                              Recency = recency.AddLast(RemoteAddress)
+                          };
+
             clients.Add(RemoteAddress, created);
 
             return created;

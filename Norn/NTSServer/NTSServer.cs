@@ -255,6 +255,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public InterleavedTimestamps? InterleavedTimestamps        { get; }
 
         /// <summary>
+        /// Who this server will answer in the RFC 9769 interleaved mode.
+        /// </summary>
+        public InterleavedModePolicy  InterleavedMode
+            => InterleavedTimestamps?.Policy ?? InterleavedModePolicy.Disabled;
+
+        /// <summary>
         /// When this server's clock was last set or corrected — the Reference Timestamp of
         /// § 7.3, which tells a client how stale the synchronization is.
         ///
@@ -345,7 +351,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                          TimeSpan?          RootDispersion                = null,
                          Byte?              LeapIndicator                 = null,
                          TimeSpan?          ClockResolution               = null,
-                         Boolean            InterleavedMode               = true,
+                         InterleavedModePolicy? InterleavedMode           = null,
                          TimeProvider?      TimeProvider                  = null)
         {
 
@@ -398,8 +404,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             this.LeapIndicator                = LeapIndicator                ?? 0;
             this.ClockLastSynchronized        = this.TimeProvider.GetUtcNow();
 
-            this.InterleavedTimestamps        = InterleavedMode
-                                                    ? new InterleavedTimestamps()
+            // Everyone by default, as in chrony: a client that does not ask for the mode cannot
+            // be given it, since an interleaved response only ever answers a request echoing a
+            // timestamp this server issued. Operators of public servers who would rather spend
+            // the per-address state only on clients that completed a key exchange can say
+            // AuthenticatedOnly, which RFC 9769 § 2 explicitly allows.
+            var interleavedMode               = InterleavedMode              ?? InterleavedModePolicy.Everyone;
+
+            this.InterleavedTimestamps        = interleavedMode != InterleavedModePolicy.Disabled
+                                                    ? new InterleavedTimestamps(interleavedMode)
                                                     : null;
 
             if (KeyPair is not null)
@@ -1039,7 +1052,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                                      remoteIPEndPoint.Address,
                                                                      receivedAt,
                                                                      requestPacket,
-                                                                     TimeProvider
+                                                                     TimeProvider,
+                                                                     // TryParse fails closed on an authenticator that
+                                                                     // does not verify, so a parsed request carrying one
+                                                                     // has been authenticated.
+                                                                     Authenticated: requestPacket.Extensions.Any(
+                                                                                        extension => extension.Type == ExtensionTypes.AuthenticatorAndEncrypted)
                                                                  )
 
                                                                : InterleavedExchange.Basic(
