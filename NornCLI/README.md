@@ -2,10 +2,12 @@
 
 NTP and Network Time Security, from the command line.
 
-Norn was a library and nothing else, which meant that using it at all — to check a server, to see
-why a key exchange fails, to stand one up for an afternoon — required writing a C# project first.
-Everything these three commands do was already implemented; none of it was reachable without a
-compiler.
+[Norn](../README.md) is a library, for putting NTS inside other software. This is the small tool
+that ships beside it, for the times when there is nothing to put it inside: checking a server,
+finding out why a key exchange fails, standing one up for an afternoon.
+
+It implements nothing of its own. Each of the three commands is a short program against the
+library's public API, and everything they print was already available to anyone writing C#.
 
 ```
 norn query <host>     Measure the clock offset against an NTS or plain NTP server.
