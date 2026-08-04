@@ -17,6 +17,8 @@
 
 #region Usings
 
+using System.Security.Cryptography;
+
 using org.GraphDefined.Vanaheimr.Norn.NTP;
 
 #endregion
@@ -202,41 +204,97 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         #endregion
 
 
-        #region NextRequestTimestamps()
+        #region NextRequestOrigin()
 
         /// <summary>
-        /// The origin, receive and transmit timestamps the next request should carry.
+        /// The origin timestamp the next request should carry: the server's receive timestamp
+        /// from the last valid response, or zero when there is not one yet.
         /// </summary>
         /// <remarks>
-        /// All zero until a first response has been seen, which is the basic-mode opening of
-        /// § 2: "It has a zero origin timestamp and zero receive timestamp."
-        ///
-        /// Note what the transmit timestamp is: not the clock as it reads now, but this client's
-        /// accurate transmit timestamp of the <em>previous</em> request — the client's half of
-        /// the same trick the server plays. What goes in the field is a cookie for the server to
-        /// echo, not a claim about when this packet was sent, and the value that matters for the
-        /// measurement is recorded locally when the packet actually goes.
+        /// <para>
+        /// Zero is the basic-mode opening of § 2 — "It has a zero origin timestamp and zero
+        /// receive timestamp" — and it is what tells the server there is no earlier exchange to
+        /// reach back to.
+        /// </para>
+        /// <para>
+        /// The only real value the next request carries, which is why this returns one number
+        /// rather than the three of Figure 1. The other two fields are nonces now: § 6 has a
+        /// client "randomize all bits of receive and transmit timestamps in their requests", so
+        /// what used to be this client's own timestamps of the previous exchange are minted per
+        /// packet by the caller. They were never claims about time even before that — Figure 1
+        /// has an interleaved request carry the transmit timestamp of the <em>previous</em>
+        /// request — but they were guessable, and an off-path attacker who guesses one can forge
+        /// the origin of a response.
+        /// </para>
+        /// <para>
+        /// The real values stay here, where the measurement is made from them, and never reach
+        /// the wire again.
+        /// </para>
         /// </remarks>
-        public (UInt64 Origin, UInt64 Receive, UInt64 Transmit) NextRequestTimestamps()
+        public UInt64 NextRequestOrigin()
         {
 
             lock (padlock)
             {
 
-                if (previousServerReceive is null ||
-                    previousOwnReceive    is null ||
+                if (previousServerReceive   is null ||
+                    previousOwnReceive      is null ||
                     previousRequestTransmit is null)
                 {
-                    return (0, 0, 0);
+                    return 0;
                 }
 
-                return (previousServerReceive.Value,
-                        previousOwnReceive.Value,
-                        previousRequestTransmit.Value);
+                return previousServerReceive.Value;
 
             }
 
         }
+
+        #endregion
+
+        #region (static) NewRequestNonces()
+
+        /// <summary>
+        /// A fresh pair of receive and transmit timestamps for a request, of RFC 9769 § 6:
+        /// "Clients using the interleaved mode SHOULD randomize all bits of receive and transmit
+        /// timestamps in their requests (i.e., provide a precision of 2^-32 seconds) to make it
+        /// more difficult for off-path attackers to guess the origin timestamp in the server
+        /// response."
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Both fields, because a server answering in the basic mode echoes the transmit
+        /// timestamp as the origin and one answering in the interleaved mode echoes the receive
+        /// timestamp — so both are values an attacker would need to guess to forge a response,
+        /// and only one of them being unpredictable is no protection at all.
+        /// </para>
+        /// <para>
+        /// Neither may be zero and the two may not be equal. Zero is how § 2 marks a request as
+        /// basic-mode, and equal timestamps make a response ambiguous — <see cref="Classify"/>
+        /// could not tell which mode it was in. Both are vanishingly unlikely and both are
+        /// cheaper to exclude than to reason about.
+        /// </para>
+        /// </remarks>
+        public static (UInt64 Receive, UInt64 Transmit) NewRequestNonces()
+        {
+
+            UInt64 receive, transmit;
+
+            do
+            {
+                receive   = RandomTimestamp();
+                transmit  = RandomTimestamp();
+            }
+            while (receive == 0 || transmit == 0 || receive == transmit);
+
+            return (receive, transmit);
+
+        }
+
+
+        private static UInt64 RandomTimestamp()
+
+            => BitConverter.ToUInt64(RandomNumberGenerator.GetBytes(8), 0);
 
         #endregion
 

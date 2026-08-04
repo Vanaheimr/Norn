@@ -139,7 +139,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                            Byte[]?                     ResponseBytes               = null,
                            String?                     ErrorMessage                = null,
                            Int64?                      SendStopwatchTimestamp      = null,
-                           Int64?                      ReceiveStopwatchTimestamp   = null)
+                           Int64?                      ReceiveStopwatchTimestamp   = null,
+                           UInt64?                     RequestTransmitTimestamp    = null)
 
     {
 
@@ -262,6 +263,28 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         public Int64?                      ReceiveStopwatchTimestamp { get; } = ReceiveStopwatchTimestamp;
 
         /// <summary>
+        /// T1 as the client recorded it when the request went out, rather than as the server
+        /// echoed it back.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Null for an ordinary exchange, where the two are the same value and the echo is the
+        /// simpler source. It matters in the RFC 9769 interleaved mode, where they are not:
+        /// Figure 1 of § 2 has an interleaved request carry the transmit timestamp of the
+        /// <em>previous</em> request, so a server answering such a request in the basic mode
+        /// echoes an origin one exchange old — the figure's last column shows exactly that, a
+        /// response with origin t5 to a request sent at t9. An offset computed from it is wrong
+        /// by however long the poll interval is.
+        /// </para>
+        /// <para>
+        /// § 6 then makes the field a nonce outright, recommending that a client randomize all
+        /// its bits. After that the echo is not a timestamp at all and this is the only T1 there
+        /// is.
+        /// </para>
+        /// </remarks>
+        public UInt64?                     RequestTransmitTimestamp { get; } = RequestTransmitTimestamp;
+
+        /// <summary>
         /// High-resolution round-trip time measured via Stopwatch.
         /// </summary>
         public TimeSpan?                   StopwatchRoundTripTime
@@ -298,7 +321,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                     return null;
                 }
 
-                var t1 = NTPTimestampToDateTime(OriginateTimestamp);
+                // The client's own record of when the request went out, falling back to the
+                // server's echo of it. They differ only in the interleaved mode, and there the
+                // echo cannot be used — see RequestTransmitTimestamp.
+                var t1 = NTPTimestampToDateTime(RequestTransmitTimestamp ?? OriginateTimestamp);
                 var t2 = NTPTimestampToDateTime(ReceiveTimestamp);
                 var t3 = NTPTimestampToDateTime(TransmitTimestamp.Value);
                 var t4 = NTPTimestampToDateTime(DestinationTimestamp.Value);
@@ -325,7 +351,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                     return null;
                 }
 
-                var t1 = NTPTimestampToDateTime(OriginateTimestamp);
+                // The client's own record of when the request went out, falling back to the
+                // server's echo of it. They differ only in the interleaved mode, and there the
+                // echo cannot be used — see RequestTransmitTimestamp.
+                var t1 = NTPTimestampToDateTime(RequestTransmitTimestamp ?? OriginateTimestamp);
                 var t2 = NTPTimestampToDateTime(ReceiveTimestamp);
                 var t3 = NTPTimestampToDateTime(TransmitTimestamp.Value);
                 var t4 = NTPTimestampToDateTime(DestinationTimestamp.Value);

@@ -1037,14 +1037,34 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             var interleaved        = InterleavedAssociation;
             var interleavedRequest = interleaved?.CanSendInterleaved == true;
 
-            var (requestOrigin,
-                 requestReceive,
-                 requestTransmitField) = interleavedRequest
-                                             ? interleaved!.NextRequestTimestamps()
-                                             : (0UL, 0UL, 0UL);
+            var requestOrigin      = interleavedRequest
+                                         ? interleaved!.NextRequestOrigin()
+                                         : 0UL;
 
-            var transmitTimestamp  = interleavedRequest
-                                         ? requestTransmitField
+            // RFC 9769 § 6: "Clients using the interleaved mode SHOULD randomize all bits of
+            // receive and transmit timestamps in their requests ... to make it more difficult for
+            // off-path attackers to guess the origin timestamp in the server response." Both
+            // fields come back as the origin — the transmit one in a basic-mode response, the
+            // receive one in an interleaved-mode response — so both are what an attacker would
+            // have to guess to forge a reply.
+            //
+            // Only for a client that uses the mode at all: a plain client's transmit timestamp is
+            // its T1 and nothing here is asking it to stop being one. That includes this client's
+            // own first request, which is in the basic mode and still gets a nonce, because the
+            // first response is as forgeable as any other.
+            var (nonceReceive, nonceTransmit) = interleaved is not null
+                                                    ? InterleavedAssociation.NewRequestNonces()
+                                                    : (0UL, 0UL);
+
+            // § 2 requires the opening request to carry a zero receive timestamp: that is how the
+            // server knows there is no earlier exchange being referred to. The transmit field has
+            // no such duty and is a nonce from the first packet onwards.
+            var requestReceive     = interleavedRequest
+                                         ? nonceReceive
+                                         : 0UL;
+
+            var transmitTimestamp  = interleaved is not null
+                                         ? nonceTransmit
                                          : NTPPacket.GetCurrentNTPTimestamp(TimeProvider);
 
             var requestPacket      = BuildNTSRequest(
@@ -1156,7 +1176,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                              ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp1,
                                              // Sealed under whatever the key exchange agreed on,
                                              // so it can only be opened under the same.
-                                             AEADAlgorithm:              NTSKEResponse?.AEADAlgorithm ?? NTSAEAD.Default))
+                                             // T1 as this client recorded it. In the interleaved mode the
+                                             // origin field is a nonce and no offset can be computed from
+                                             // it — see NTPPacket.RequestTransmitTimestamp. Null for a
+                                             // plain client, where the echo is the very same reading.
+                                             AEADAlgorithm:              NTSKEResponse?.AEADAlgorithm ?? NTSAEAD.Default,
+                                             RequestTransmitTimestamp:   interleaved is not null ? actualRequestTransmit : null))
                     {
 
                         // RFC 9769 § 2: which of the request's two timestamps came back as the
@@ -1258,7 +1283,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                      DestinationTimestamp:       destinationTimestamp2,
                                                      SendStopwatchTimestamp:     sendStopwatchTimestamp,
                                                      ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp2,
-                                                     AEADAlgorithm:              NTSKEResponse?.AEADAlgorithm ?? NTSAEAD.Default))
+                                                     AEADAlgorithm:              NTSKEResponse?.AEADAlgorithm ?? NTSAEAD.Default,
+                                                     RequestTransmitTimestamp:   interleaved is not null ? actualRequestTransmit : null))
                             {
 
                                 var validation2 = NTSResponseValidator.Validate(
