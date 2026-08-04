@@ -106,11 +106,33 @@ norn serve --port 12123            # an NTS-KE and NTP server, until interrupted
 
 ## Interoperability
 
-The client is tested against local Norn/chrony-style deployments and public NTS
-servers. Useful test targets include PTB, Cloudflare and OpenChargingCloud
-servers. For monitoring deployments prefer explicit certificate validation,
-record NTS-KE warnings, and inspect `NTSKEResult.Diagnostics` plus
-`NTSQueryResult.Diagnostics` for timing and validation data.
+Norn is verified against **chronyd** (GnuTLS) and **ntpd-rs** (rustls) in both directions — each
+of them as a client against a Norn server, and Norn's client against each of them — with
+**gnutls-cli** as a third TLS stack on the key exchange. The public NTS servers of
+**Cloudflare**, **PTB**, **Netnod** and **time.nl** are queried with certificate validation left
+switched on; Norn's own suite adds the OpenChargingCloud deployments.
+
+For monitoring deployments prefer explicit certificate validation, record NTS-KE warnings, and
+inspect `NTSKEResult.Diagnostics` plus `NTSQueryResult.Diagnostics` for timing and validation
+data.
+
+### Conformance suite
+
+Those tests do not live here.
+**[NTSConformanceTests](https://github.com/Vanaheimr/NTSConformanceTests)** is an adversarial
+RFC-conformance and interoperability suite for this library, and it carries its own NTP/NTS
+codec — written from the RFCs, sharing no code with Norn, not even a crypto library — so that a
+disagreement between the two is evidence rather than a tautology. It can emit deliberately
+malformed packets as well, which is what makes the negative tests possible at all. Its
+[RFC coverage table](https://github.com/Vanaheimr/NTSConformanceTests#rfc-coverage) is the
+straight answer to what Norn implements, what is only partly checked, and what is out of scope.
+
+It has found 20 RFC deviations here so far, one of them critical: cookies were neither encrypted
+nor authenticated, which put both session keys on the wire and let any forged cookie through. All
+are fixed, each with a test that failed first. Several were reachable from nowhere else —
+[AES-128-GCM-SIV against chronyd](https://github.com/Vanaheimr/NTSConformanceTests#the-aes-128-gcm-siv-exporter-context)
+is the one worth reading, because two implementations making the same mistake agree with each
+other perfectly, and no test with Norn on both ends could ever have found it.
 
 
 ## RFCs
