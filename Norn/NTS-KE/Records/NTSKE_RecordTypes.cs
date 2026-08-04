@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2010-2026 GraphDefined GmbH <achim.friedland@graphdefined.com>
  * This file is part of Vanaheimr Norn <https://www.github.com/Vanaheimr/Norn>
  *
@@ -42,8 +42,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                    6 => "NTPv4 Server Negotiation (ASCII address?)",
                    7 => "NTPv4 Port Negotiation",
 
-                  32 => "NTS Request PublicKey",
-                  33 => "NTS PublicKey",
+               16384 => "NTS Request PublicKey",
+               16385 => "NTS PublicKey",
 
                 1024 => "Compliant AES-128-GCM-SIV Exporter Context",
 
@@ -101,18 +101,29 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         NTPv4PortNegotiation        = 7,
 
 
-        // "Unknown or custom record types!"
+        // Vendor extensions, in IANA's Private or Experimental Use range.
+        //
+        // 16384 to 32767 is the only part of the registry an implementation may take values from
+        // without asking. These two used to sit at 32 and 33, which is inside 0-1023 — the range
+        // reserved for IETF Review, where an implementation has no claim at all and where the
+        // pool draft has already been assigned 8 to 14. Had IANA reached 32, a Norn server would
+        // have read somebody else's record as a request for its public keys.
+        //
+        // Collisions are possible here by construction: nothing coordinates the private range.
+        // They matter only between two implementations that both take values from it and then
+        // talk to each other, which for a vendor extension means two Norns — and both records go
+        // out non-critical, so a peer that has never heard of them ignores them either way.
 
 
         /// <summary>
-        /// NTS Request Public Key
+        /// NTS Request Public Key — a Norn extension, not an RFC 8915 record.
         /// </summary>
-        NTSRequestPublicKey        = 32,
+        NTSRequestPublicKey        = 16384,
 
         /// <summary>
-        /// NTS Public Key
+        /// NTS Public Key — a Norn extension, not an RFC 8915 record.
         /// </summary>
-        NTSPublicKey               = 33,
+        NTSPublicKey               = 16385,
 
 
         /// <summary>
