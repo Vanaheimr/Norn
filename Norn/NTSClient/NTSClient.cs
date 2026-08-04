@@ -498,7 +498,44 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                    ntsTlsClient.TLSInfo
                                );
 
-                    await tlsHandshakeTask.ConfigureAwait(false);
+                    try
+                    {
+                        await tlsHandshakeTask.ConfigureAwait(false);
+                    }
+                    catch (Exception e)
+                    {
+
+                        // Categorised here rather than left to the message sniffing in
+                        // NTSKEResult, which is a fallback for failures that arrive without
+                        // context and had none for this one: a server offering only TLS 1.2
+                        // produces "protocol_version(70)", which contains neither "handshake" nor
+                        // "certificate" and so was reported as a bare exception. Only the timeout
+                        // above was ever categorised, which is the one handshake failure that
+                        // does not throw.
+                        //
+                        // The certificate is the exception worth separating, because a peer whose
+                        // certificate this client will not accept is a different problem from one
+                        // whose TLS it cannot speak — and the validator throws from inside
+                        // NotifyServerCertificate, so both arrive here.
+                        var certificateRejected = e is TlsFatalAlert alert &&
+                                                  alert.AlertDescription is AlertDescription.bad_certificate
+                                                                         or AlertDescription.unsupported_certificate
+                                                                         or AlertDescription.certificate_revoked
+                                                                         or AlertDescription.certificate_expired
+                                                                         or AlertDescription.certificate_unknown
+                                                                         or AlertDescription.unknown_ca;
+
+                        return NTSKEResult.Failed(
+                                   $"The TLS handshake failed: {e.Message}",
+                                   certificateRejected
+                                       ? NTSKEErrorCategory.TLSCertificate
+                                       : NTSKEErrorCategory.TLSHandshake,
+                                   TakeTimingInfoSnapshot(),
+                                   ntsTlsClient.TLSInfo
+                               );
+
+                    }
+
                     tlsHandshakeDuration   = tlsStopwatch.Elapsed;
 
                     // Before a single record goes out, because the ALPN identifier is the only
