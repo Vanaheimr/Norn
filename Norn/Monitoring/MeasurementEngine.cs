@@ -607,6 +607,22 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                 CachedState.RemainingCookies = ToByteCookieCount(cookiePoolDiagnostics?.AvailableCookieCount ??
                                                                   ntsQueryResult.RemainingCookiesAfterQuery);
 
+                // The client may have run a key exchange of its own during that call: an empty
+                // cookie pool obliges it to, per RFC 8915 § 5.7, and this engine's own refresh
+                // rule only pre-empts that — it keeps one cookie in reserve, which is enough
+                // until a round of lost packets spends it.
+                //
+                // What comes back carries new keys as well as new cookies, and the two only work
+                // together. A cache still holding the previous response would seal the next
+                // round's request under keys the server has already replaced, and every packet
+                // would be NAKed until the refresh interval elapsed.
+                if (ntsClient.LastNTSKEResponse is not null &&
+                    !ReferenceEquals(ntsClient.LastNTSKEResponse, CachedState.NTSKEResponse))
+                {
+                    CachedState.NTSKEResponse  = ntsClient.LastNTSKEResponse;
+                    CachedState.LastRefreshed  = timeProvider.GetUtcNow();
+                }
+
 
                 if (ntpResponse is null)
                     return new NTPMeasurementResult {

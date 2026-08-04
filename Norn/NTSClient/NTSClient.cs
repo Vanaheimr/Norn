@@ -56,6 +56,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         private       readonly HashSet<String>          knownCookies           = [];
         private       readonly HashSet<NTSKE_Response>  seededNTSKEResponses   = [];
         private       readonly Lock                     responseHistoryLock    = new();
+        private       readonly Lock                     renegotiationLock      = new();
+        private                DateTimeOffset?          lastAutomaticKeyExchange;
+        private                Int64                    automaticKeyExchanges  = 0;
         private       readonly Queue<String>            recentResponseQueue    = new();
         private       readonly HashSet<String>          recentResponses        = [];
         private                Int64                    seededCookieCount      = 0;
@@ -137,6 +140,28 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// the only way to exercise a given one against a server that prefers another.
         /// </remarks>
         public IReadOnlyList<AEADAlgorithms> OfferedAEADAlgorithms { get; }
+
+        /// <summary>
+        /// The most recent successful key exchange, whoever asked for it.
+        /// </summary>
+        /// <remarks>
+        /// Worth reading after a query, because the client may have run one on its own: an empty
+        /// cookie pool obliges it to (RFC 8915 § 5.7), and the response that comes back carries
+        /// new keys as well as new cookies. A caller still holding the previous response would
+        /// seal its next request under keys the server has already replaced.
+        /// </remarks>
+        public NTSKE_Response? LastNTSKEResponse { get; private set; }
+
+        /// <summary>
+        /// How many key exchanges this client started by itself, rather than being asked to.
+        /// </summary>
+        /// <remarks>
+        /// One per emptied cookie pool, at most one per query and no more often than
+        /// <see cref="NTSCookiePoolPolicy.MinimumRenegotiationInterval"/>. A number that climbs
+        /// is a server that is not replenishing, or a network that is not delivering.
+        /// </remarks>
+        public Int64 AutomaticKeyExchanges
+            => Interlocked.Read(ref automaticKeyExchanges);
 
         /// <summary>
         /// Whether this client claims RFC 8915 § 5.1's exporter context for AES-128-GCM-SIV, by
@@ -679,15 +704,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                 { }
                             }
 
-                            return NTSKEResult.SuccessResult(
-                                       new NTSKE_Response(
-                                           records,
-                                           C2S_Key,
-                                           S2C_Key,
-                                           TakeTimingInfoSnapshot(),
-                                           ntsTlsClient.TLSInfo
-                                       )
-                                   );
+                            var ntsKEResponse = new NTSKE_Response(
+                                                    records,
+                                                    C2S_Key,
+                                                    S2C_Key,
+                                                    TakeTimingInfoSnapshot(),
+                                                    ntsTlsClient.TLSInfo
+                                                );
+
+                            LastNTSKEResponse = ntsKEResponse;
+
+                            return NTSKEResult.SuccessResult(ntsKEResponse);
 
                         }
 
@@ -861,6 +888,59 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #endregion
 
+        #region (private) RenegotiateExhaustedPool(CancellationToken)
+
+        /// <summary>
+        /// Run the key exchange again because the cookie pool is empty, unless the policy says
+        /// not to or the last one was too recent.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The clock is read and the attempt recorded <em>before</em> the handshake, not after.
+        /// A key exchange that fails is exactly the one a caller in a loop would retry hardest,
+        /// and rate limiting that only counted successes would not limit that case at all.
+        /// </para>
+        /// <para>
+        /// Returns the new response rather than storing it and letting the caller find it,
+        /// because the caller has to use it: the cookies it brought and the keys it derived are
+        /// one thing, and the request being built is about to need both.
+        /// </para>
+        /// </remarks>
+        private async Task<NTSKE_Response?> RenegotiateExhaustedPool(CancellationToken CancellationToken)
+        {
+
+            if (!CookiePoolPolicy.RenegotiateWhenExhausted)
+                return null;
+
+            lock (renegotiationLock)
+            {
+
+                var now = TimeProvider.GetUtcNow();
+
+                if (lastAutomaticKeyExchange.HasValue &&
+                    now - lastAutomaticKeyExchange.Value < CookiePoolPolicy.MinimumRenegotiationInterval)
+                {
+                    return null;
+                }
+
+                lastAutomaticKeyExchange = now;
+
+            }
+
+            Interlocked.Increment(ref automaticKeyExchanges);
+
+            var result = await GetNTSKERecords(
+                                   CancellationToken: CancellationToken
+                               ).ConfigureAwait(false);
+
+            return result.Success
+                       ? result.Response
+                       : null;
+
+        }
+
+        #endregion
+
         #region (private) CalculateCookiePlaceholderCount()
 
         private UInt16 CalculateCookiePlaceholderCount()
@@ -1005,12 +1085,30 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 !TryTakeCookie(NTSKEResponse, out cookie))
             {
 
-                return NTSQueryResult.FailedWithPacket(
-                           "No NTS cookie available!",
-                           NTSQueryErrorCategory.Cookie,
-                           RemainingCookiesAfterQuery: AvailableCookieCount,
-                           CookiePoolDiagnostics:      CookiePoolDiagnostics
-                       );
+                // RFC 8915 § 5.7: "If the client does not have any cookies that it has not
+                // already sent, it SHOULD initiate a rerun of the NTS-KE protocol." Nothing else
+                // recovers from this. A cookie only arrives in answer to a request, and there is
+                // nothing left to make one with — so a pool that empties, empties for good.
+                var renegotiated = await RenegotiateExhaustedPool(CancellationToken).ConfigureAwait(false);
+
+                if (renegotiated is null ||
+                    !TryTakeCookie(renegotiated, out cookie))
+                {
+
+                    return NTSQueryResult.FailedWithPacket(
+                               "No NTS cookie available!",
+                               NTSQueryErrorCategory.Cookie,
+                               RemainingCookiesAfterQuery: AvailableCookieCount,
+                               CookiePoolDiagnostics:      CookiePoolDiagnostics
+                           );
+
+                }
+
+                // The new keys go with the new cookies. Using the caller's response from here on
+                // would seal the request under the previous exchange's C2S key while the cookie
+                // hands the server the new one, and every packet would be NAKed — which is worse
+                // than the failure this just recovered from, because it looks like an attack.
+                NTSKEResponse = renegotiated;
 
             }
 
