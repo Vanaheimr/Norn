@@ -6,6 +6,17 @@
 
 This software library allow you to implement and use the *Network Time Secure* protocol as defined by the IETF together with some vendor extensions for additional use cases.
 
+## Command line
+
+If you want to measure a server, see why a key exchange fails, or stand one up for an afternoon,
+there is no need to write any of the code below — see **[NornCLI](NornCLI/README.md)**:
+
+```bash
+norn query time.cloudflare.com     # how far off is this clock, according to that server
+norn ke    time.cloudflare.com     # what the key exchange negotiated, and how long each leg took
+norn serve --port 12123            # an NTS-KE and NTP server, until interrupted
+```
+
 ## Quickstart
 
 ### Minimal NTS client
