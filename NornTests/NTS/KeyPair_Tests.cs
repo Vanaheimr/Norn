@@ -20,6 +20,7 @@
 using NUnit.Framework;
 
 using Org.BouncyCastle.Math;
+using Org.BouncyCastle.Utilities;
 using Org.BouncyCastle.Asn1.Sec;
 using Org.BouncyCastle.Security;
 using Org.BouncyCastle.Crypto.Parameters;
@@ -41,8 +42,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
     /// reads every key whose leading bit is set - roughly one in two - as a
     /// negative number, and thus as a different key.
     ///
-    /// Key pairs written before this was corrected must keep working, since
-    /// they are persisted as base64 within the key pair JSON.
+    /// Nothing is deployed that would need the previous encoding read back,
+    /// so the parser is strict rather than forgiving: key material of the
+    /// wrong width, or outside the group, is rejected instead of quietly
+    /// repaired into something that signs.
     /// </summary>
     [TestFixture]
     public class KeyPair_Tests
@@ -131,48 +134,74 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
         #endregion
 
-        #region Key_pairs_written_by_earlier_versions_still_parse()
+        #region Every_private_key_roundtrips_at_the_fixed_width()
 
         [Test]
-        public void Key_pairs_written_by_earlier_versions_still_parse()
+        public void Every_private_key_roundtrips_at_the_fixed_width()
         {
 
             var domainParameters = DomainParameters();
 
-            // Earlier versions wrote the two's complement of a positive
-            // number: leading zeroes stripped, and a 0x00 prepended whenever
-            // the leading bit was set. Every one of those encodings must
-            // still yield the very same key, otherwise every key pair ever
-            // stored would be lost.
             foreach (var d in new[] {
                                   BigInteger.One,
                                   BigInteger.ValueOf(255),
                                   BigInteger.ValueOf(256),
                                   domainParameters.N.Subtract(BigInteger.One),
                                   new BigInteger("57C92077664146E876760C9520D054AA93C3AFB04E306705DB6090308507B4D3", 16),
+                                  // Four genuine leading zero bytes.
                                   new BigInteger("00000000664146E876760C9520D054AA93C3AFB04E306705DB6090308507B4D3", 16)
                               })
             {
 
-                var legacyBytes = d.ToByteArray();
+                var serialized = KeyPair.SerializePrivateKey(
+                                     new ECPrivateKeyParameters("ECDSA", d, domainParameters)
+                                 );
 
-                Assert.That(KeyPair.ParsePrivateKey(domainParameters, legacyBytes).D,
-                            Is.EqualTo(d),
-                            d.ToString(16));
+                Assert.That(serialized.Length,  Is.EqualTo(32),  d.ToString(16));
 
-                // ...and the new encoding of the same key is the fixed-width
-                // one, which parses to the same value as well.
-                var currentBytes = KeyPair.SerializePrivateKey(
-                                       new ECPrivateKeyParameters("ECDSA", d, domainParameters)
-                                   );
-
-                Assert.That(currentBytes.Length,  Is.EqualTo(32),  d.ToString(16));
-
-                Assert.That(KeyPair.ParsePrivateKey(domainParameters, currentBytes).D,
+                Assert.That(KeyPair.ParsePrivateKey(domainParameters, serialized).D,
                             Is.EqualTo(d),
                             d.ToString(16));
 
             }
+
+        }
+
+        #endregion
+
+        #region Malformed_private_keys_are_rejected()
+
+        [Test]
+        public void Malformed_private_keys_are_rejected()
+        {
+
+            var domainParameters  = DomainParameters();
+
+            var d                 = new BigInteger("00000000664146E876760C9520D054AA93C3AFB04E306705DB6090308507B4D3", 16);
+            var wellFormed        = KeyPair.SerializePrivateKey(new ECPrivateKeyParameters("ECDSA", d, domainParameters));
+
+            // Leading zeroes stripped, as a variable-width serialization
+            // would produce...
+            Assert.That(() => KeyPair.ParsePrivateKey(domainParameters, d.ToByteArray()),
+                        Throws.ArgumentException);
+
+            // ...a two's complement sign byte in front of the key...
+            Assert.That(() => KeyPair.ParsePrivateKey(domainParameters, [0x00, .. wellFormed]),
+                        Throws.ArgumentException);
+
+            // ...the value zero, which is not a key at all...
+            Assert.That(() => KeyPair.ParsePrivateKey(domainParameters, new Byte[32]),
+                        Throws.ArgumentException);
+
+            // ...and the group order itself, which is one past the last key.
+            Assert.That(() => KeyPair.ParsePrivateKey(
+                                  domainParameters,
+                                  BigIntegers.AsUnsignedByteArray(32, domainParameters.N)
+                              ),
+                        Throws.ArgumentException);
+
+            // The well-formed key of course still parses.
+            Assert.That(KeyPair.ParsePrivateKey(domainParameters, wellFormed).D,  Is.EqualTo(d));
 
         }
 

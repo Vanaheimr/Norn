@@ -64,7 +64,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                             MasterKeysFilePath: null,
                             KeyPair:   new KeyPair(
                                            Id:                   1,
-                                           PrivateKey:          "ANm7PAbjqlK+SPW/JLFXVt8U7vCpg69Xxy77rA8SN+Ce".FromBASE64(),
+                                           // The very same key as before, now without the two's
+                                           // complement sign byte that used to precede it.
+                                           PrivateKey:          "2bs8BuOqUr5I9b8ksVdW3xTu8KmDr1fHLvusDxI34J4=".FromBASE64(),
                                            PublicKey:           "BNJ9BLZTcAeuPMHDDDXA0RiVNse8WH4b+/r/bA9HhDsDtTSBsrvmjbnA3w3JlC7ipvhHEkdGbFEIH+ZT0ZEekTA=".FromBASE64(),
                                            Description:          I18NString.Create(Languages.en, "Test public key"),
                                            EllipticCurve:       "secp256r1",

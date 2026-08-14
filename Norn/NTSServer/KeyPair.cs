@@ -519,17 +519,33 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// constructor of Bouncy Castle does - would turn every key whose
         /// leading bit is set, roughly one in two, into a negative number and
         /// thus into a different key, silently.
-        /// Key pairs written by earlier versions keep working: Their private
-        /// keys were the two's complement of a positive number, which reads
-        /// back identically as an unsigned magnitude.
+        /// The width has to be exactly the width of the group order and the
+        /// value has to lie within it. Key material that arrives without its
+        /// leading zeroes, with a two's complement sign byte in front of it,
+        /// or outside the group is malformed, and saying so is far more
+        /// useful than quietly repairing it into something that signs.
         /// </summary>
         /// <param name="EllipticCurveSpec">The elliptic curve domain parameters.</param>
         /// <param name="ByteArray">The private key as an unsigned byte array.</param>
         public static ECPrivateKeyParameters ParsePrivateKey(ECDomainParameters  EllipticCurveSpec,
                                                              Byte[]              ByteArray)
+        {
 
-            => new (new BigInteger(1, ByteArray),
-                    EllipticCurveSpec);
+            var orderSizeInBytes = (EllipticCurveSpec.N.BitLength + 7) / 8;
+
+            if (ByteArray.Length != orderSizeInBytes)
+                throw new ArgumentException($"An elliptic curve private key on this curve must be {orderSizeInBytes} bytes wide, including leading zeroes, but was {ByteArray.Length} bytes wide!",
+                                            nameof(ByteArray));
+
+            var d = new BigInteger(1, ByteArray);
+
+            if (d.SignValue <= 0 || d.CompareTo(EllipticCurveSpec.N) >= 0)
+                throw new ArgumentException("The given elliptic curve private key is not within the group order of its elliptic curve!",
+                                            nameof(ByteArray));
+
+            return new (d, EllipticCurveSpec);
+
+        }
 
         #endregion
 
