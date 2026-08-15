@@ -28,8 +28,6 @@ using Org.BouncyCastle.Crypto.Parameters;
 using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Hermod;
 using org.GraphDefined.Vanaheimr.Hermod.HTTP;
-using Org.BouncyCastle.Math;
-using Org.BouncyCastle.Utilities;
 using Org.BouncyCastle.Asn1.Sec;
 
 #endregion
@@ -476,22 +474,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         /// <summary>
         /// Serialize the given private key as an unsigned byte array,
-        /// zero-padded to the width of the group order of its elliptic curve:
-        /// 32 bytes on secp256r1.
-        /// The fixed width is not cosmetic. Leading zero octets are part of
-        /// the encoding of key material everywhere - RFC 9053 Section 7.1.1
-        /// says so for COSE keys, JWK and PKCS#11 require the same - and a
-        /// signed two's complement serialization, which is what
-        /// BigInteger.ToByteArray returns, both strips them and prepends a
-        /// zero byte whenever the leading bit is set.
+        /// zero-padded to the width of the group order of its elliptic curve.
+        /// See Crypto.SerializePrivateKey for why the width is not cosmetic.
         /// </summary>
         /// <param name="PrivateKey">An elliptic curve private key.</param>
         public static Byte[] SerializePrivateKey(ECPrivateKeyParameters PrivateKey)
 
-            => BigIntegers.AsUnsignedByteArray(
-                   (PrivateKey.Parameters.N.BitLength + 7) / 8,
-                   PrivateKey.D
-               );
+            => Crypto.SerializePrivateKey(PrivateKey);
 
         #endregion
 
@@ -505,47 +494,24 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <param name="PublicKey">An elliptic curve public key.</param>
         public static Byte[] SerializePublicKey(ECPublicKeyParameters PublicKey)
 
-            => PublicKey.Q.GetEncoded();
+            => Crypto.SerializePublicKey(PublicKey);
 
         #endregion
 
         #region (static) ParsePrivateKey     (EllipticCurveSpec, ByteArray)
 
         /// <summary>
-        /// Parse the given unsigned byte array as an elliptic curve private key.
-        /// The bytes are read as an unsigned magnitude, as every standard
-        /// encoding of a private key is: Reading them as signed two's
-        /// complement - which is what the plain BigInteger(Byte[])
-        /// constructor of Bouncy Castle does - would turn every key whose
-        /// leading bit is set, roughly one in two, into a negative number and
-        /// thus into a different key, silently.
-        /// The width has to be exactly the width of the group order and the
-        /// value has to lie within it. Key material that arrives without its
-        /// leading zeroes, with a two's complement sign byte in front of it,
-        /// or outside the group is malformed, and saying so is far more
-        /// useful than quietly repairing it into something that signs.
+        /// Parse the given unsigned byte array as an elliptic curve private
+        /// key, of exactly the width of the group order and within it.
+        /// See Crypto.ParsePrivateKeyBytes for why it is read unsigned and
+        /// why a deviating width is refused rather than repaired.
         /// </summary>
         /// <param name="EllipticCurveSpec">The elliptic curve domain parameters.</param>
         /// <param name="ByteArray">The private key as an unsigned byte array.</param>
         public static ECPrivateKeyParameters ParsePrivateKey(ECDomainParameters  EllipticCurveSpec,
                                                              Byte[]              ByteArray)
-        {
 
-            var orderSizeInBytes = (EllipticCurveSpec.N.BitLength + 7) / 8;
-
-            if (ByteArray.Length != orderSizeInBytes)
-                throw new ArgumentException($"An elliptic curve private key on this curve must be {orderSizeInBytes} bytes wide, including leading zeroes, but was {ByteArray.Length} bytes wide!",
-                                            nameof(ByteArray));
-
-            var d = new BigInteger(1, ByteArray);
-
-            if (d.SignValue <= 0 || d.CompareTo(EllipticCurveSpec.N) >= 0)
-                throw new ArgumentException("The given elliptic curve private key is not within the group order of its elliptic curve!",
-                                            nameof(ByteArray));
-
-            return new (d, EllipticCurveSpec);
-
-        }
+            => Crypto.ParsePrivateKeyBytes(EllipticCurveSpec, ByteArray);
 
         #endregion
 
@@ -559,9 +525,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public static ECPublicKeyParameters ParsePublicKey(ECDomainParameters  EllipticCurveSpec,
                                                            Byte[]              ByteArray)
 
-            => new ("ECDSA",
-                    EllipticCurveSpec.Curve.DecodePoint(ByteArray),
-                    EllipticCurveSpec);
+            => Crypto.ParsePublicKey(EllipticCurveSpec, ByteArray);
 
         #endregion
 
