@@ -540,13 +540,19 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #region (private) NTS-KE request validation and negotiation
 
-        /// <summary>The next-protocol IDs this server implements (RFC 8915 § 4.1.2).</summary>
+        /// <summary>
+        /// The next-protocol IDs this server implements (RFC 8915 § 4.1.2).
+        /// </summary>
         private static readonly UInt16[] supportedNextProtocols = [ 0 ];   // 0 = NTPv4
 
-        /// <summary>The AEAD algorithms this server implements (RFC 8915 § 4.1.5).</summary>
+        /// <summary>
+        /// The AEAD algorithms this server implements (RFC 8915 § 4.1.5).
+        /// </summary>
         private readonly AEADAlgorithms[] supportedAEADAlgorithms;
 
-        /// <summary>Protocol ID 0, NTPv4 — the only next protocol that makes cookies meaningful.</summary>
+        /// <summary>
+        /// Protocol ID 0, NTPv4 — the only next protocol that makes cookies meaningful.
+        /// </summary>
         private const UInt16 NextProtocolNTPv4 = 0;
 
 
@@ -578,7 +584,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                   Boolean          CompliantAES128GCMSIVExporterContext   = false)
                 => new (null, NextProtocol, AEADAlgorithm, null, CompliantAES128GCMSIVExporterContext);
 
-            /// <summary>True when NTPv4 was agreed, which is what makes NTPv4 cookies meaningful.</summary>
+            /// <summary>
+            /// True when NTPv4 was agreed, which is what makes NTPv4 cookies meaningful.
+            /// </summary>
             public Boolean NTPv4Negotiated
                 => NextProtocol == NextProtocolNTPv4 && AEADAlgorithm.HasValue;
 
@@ -699,7 +707,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         }
 
 
-        /// <summary>Whether this server understands the given record type.</summary>
+        /// <summary>
+        /// Whether this server understands the given record type.
+        /// </summary>
         private static Boolean IsKnownRecordType(NTSKE_RecordTypes RecordType)
 
             => RecordType is NTSKE_RecordTypes.EndOfMessage

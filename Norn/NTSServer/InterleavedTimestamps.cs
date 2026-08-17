@@ -43,10 +43,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
     public enum InterleavedModePolicy
     {
 
-        /// <summary>Never answer in the interleaved mode.</summary>
+        /// <summary>
+        /// Never answer in the interleaved mode.
+        /// </summary>
         Disabled,
 
-        /// <summary>Answer any client that asks for it, as chrony does.</summary>
+        /// <summary>
+        /// Answer any client that asks for it, as chrony does.
+        /// </summary>
         Everyone,
 
         /// <summary>
@@ -114,7 +118,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         private sealed class Exchange
         {
 
-            /// <summary>The receive timestamp this server put in the response, and the client will echo.</summary>
+            /// <summary>
+            /// The receive timestamp this server put in the response, and the client will echo.
+            /// </summary>
             public UInt64   ReceiveTimestamp    { get; init; }
 
             /// <summary>
@@ -161,16 +167,24 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #region Properties
 
-        /// <summary>Who may be answered in the interleaved mode.</summary>
+        /// <summary>
+        /// Who may be answered in the interleaved mode.
+        /// </summary>
         public InterleavedModePolicy Policy    { get; }
 
-        /// <summary>How many exchanges are remembered per client address.</summary>
+        /// <summary>
+        /// How many exchanges are remembered per client address.
+        /// </summary>
         public Int32  MaxExchangesPerClient    { get; }
 
-        /// <summary>How many client addresses are remembered at once.</summary>
+        /// <summary>
+        /// How many client addresses are remembered at once.
+        /// </summary>
         public Int32  MaxClients               { get; }
 
-        /// <summary>How many client addresses are currently remembered.</summary>
+        /// <summary>
+        /// How many client addresses are currently remembered.
+        /// </summary>
         public Int32  TrackedClients
         {
             get
@@ -520,7 +534,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </summary>
         public UInt64   OriginTimestamp    { get; }
 
-        /// <summary>The receive timestamp to report, which the client may echo back as an origin timestamp.</summary>
+        /// <summary>
+        /// The receive timestamp to report, which the client may echo back as an origin timestamp.
+        /// </summary>
         public UInt64   ReceiveTimestamp   { get; }
 
         /// <summary>
@@ -529,7 +545,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </summary>
         public UInt64   TransmitTimestamp  { get; }
 
-        /// <summary>Whether this response is in the interleaved mode.</summary>
+        /// <summary>
+        /// Whether this response is in the interleaved mode.
+        /// </summary>
         public Boolean  IsInterleaved      { get; }
 
 

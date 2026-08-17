@@ -72,7 +72,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         private const UInt16  SealedOffsetNonce        = SealedOffsetAEADLength   + 2;
         private const UInt16  SealedOffsetAEAD         = SealedOffsetNonce        + NonceLength;
 
-        /// <summary>The synthetic IV AES-SIV prepends to its ciphertext (RFC 5297 §2.6).</summary>
+        /// <summary>
+        /// The synthetic IV AES-SIV prepends to its ciphertext (RFC 5297 §2.6).
+        /// </summary>
         private const UInt16  SyntheticIVLength        = 16;
 
         #endregion

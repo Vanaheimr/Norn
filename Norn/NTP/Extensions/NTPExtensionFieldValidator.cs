@@ -36,7 +36,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
     public static class NTPExtensionFieldValidator
     {
 
-        /// <summary>The fixed NTP header, RFC 5905 § 7.3.</summary>
+        /// <summary>
+        /// The fixed NTP header, RFC 5905 § 7.3.
+        /// </summary>
         public const Int32 HeaderLength = 48;
 
         /// <summary>

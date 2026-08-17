@@ -46,10 +46,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.CLI
     public static class Program
     {
 
-        /// <summary>The operation failed: no answer, a refusal, a validation error.</summary>
+        /// <summary>
+        /// The operation failed: no answer, a refusal, a validation error.
+        /// </summary>
         public const Int32 ExitFailure  = 1;
 
-        /// <summary>The command line could not be understood.</summary>
+        /// <summary>
+        /// The command line could not be understood.
+        /// </summary>
         public const Int32 ExitUsage    = 2;
 
 
@@ -175,7 +179,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.CLI
         }
 
 
-        /// <summary>The version, from the assembly rather than from a constant that drifts.</summary>
+        /// <summary>
+        /// The version, from the assembly rather than from a constant that drifts.
+        /// </summary>
         private static String Version
 
             => typeof(Program).Assembly.

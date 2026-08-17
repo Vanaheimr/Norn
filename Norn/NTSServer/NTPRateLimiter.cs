@@ -30,10 +30,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
     public enum RateLimitDecision
     {
 
-        /// <summary>Answer it normally.</summary>
+        /// <summary>
+        /// Answer it normally.
+        /// </summary>
         Answer,
 
-        /// <summary>Drop it without a word.</summary>
+        /// <summary>
+        /// Drop it without a word.
+        /// </summary>
         Drop,
 
         /// <summary>
@@ -149,16 +153,24 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         private sealed class ClientState
         {
 
-            /// <summary>Tokens left in this client's bucket, fractional between refills.</summary>
+            /// <summary>
+            /// Tokens left in this client's bucket, fractional between refills.
+            /// </summary>
             public Double                      Tokens        { get; set; }
 
-            /// <summary>When the bucket was last refilled, on the monotonic clock.</summary>
+            /// <summary>
+            /// When the bucket was last refilled, on the monotonic clock.
+            /// </summary>
             public Int64                       LastRefill    { get; set; }
 
-            /// <summary>When this address was last sent a RATE kiss, or null if it never was.</summary>
+            /// <summary>
+            /// When this address was last sent a RATE kiss, or null if it never was.
+            /// </summary>
             public Int64?                      LastKiss      { get; set; }
 
-            /// <summary>This client's place in the recency order, so that eviction is O(1).</summary>
+            /// <summary>
+            /// This client's place in the recency order, so that eviction is O(1).
+            /// </summary>
             public LinkedListNode<IPAddress>?  Recency       { get; set; }
 
         }
@@ -175,25 +187,39 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #region Properties
 
-        /// <summary>The clock the limiter measures elapsed time on.</summary>
+        /// <summary>
+        /// The clock the limiter measures elapsed time on.
+        /// </summary>
         public TimeProvider  TimeProvider        { get; }
 
-        /// <summary>The average interval between answered requests from one address.</summary>
+        /// <summary>
+        /// The average interval between answered requests from one address.
+        /// </summary>
         public TimeSpan      MinimumInterval     { get; }
 
-        /// <summary>How many requests one address may fire back to back after being quiet.</summary>
+        /// <summary>
+        /// How many requests one address may fire back to back after being quiet.
+        /// </summary>
         public Int32         Burst               { get; }
 
-        /// <summary>The shortest interval between two RATE kisses to the same address.</summary>
+        /// <summary>
+        /// The shortest interval between two RATE kisses to the same address.
+        /// </summary>
         public TimeSpan      KissInterval        { get; }
 
-        /// <summary>The ceiling on RATE kisses per second across all addresses together.</summary>
+        /// <summary>
+        /// The ceiling on RATE kisses per second across all addresses together.
+        /// </summary>
         public Double        MaxKissesPerSecond  { get; }
 
-        /// <summary>How many client addresses are tracked at once.</summary>
+        /// <summary>
+        /// How many client addresses are tracked at once.
+        /// </summary>
         public Int32         MaxClients          { get; }
 
-        /// <summary>How many client addresses are currently tracked.</summary>
+        /// <summary>
+        /// How many client addresses are currently tracked.
+        /// </summary>
         public Int32         TrackedClients
         {
             get

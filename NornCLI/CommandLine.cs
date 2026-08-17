@@ -54,7 +54,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.CLI
 
         #region Properties
 
-        /// <summary>The arguments that were not options, in the order given.</summary>
+        /// <summary>
+        /// The arguments that were not options, in the order given.
+        /// </summary>
         public IReadOnlyList<String> Positionals
             => positionals;
 
@@ -137,7 +139,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.CLI
 
         #region Flag(Name)
 
-        /// <summary>Whether a flag was given.</summary>
+        /// <summary>
+        /// Whether a flag was given.
+        /// </summary>
         public Boolean Flag(String Name)
         {
 
@@ -157,7 +161,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.CLI
 
         #region Value(Name, Default = null)
 
-        /// <summary>The value of an option, or the default when it was not given.</summary>
+        /// <summary>
+        /// The value of an option, or the default when it was not given.
+        /// </summary>
         public String? Value(String Name, String? Default = null)
         {
 
@@ -175,7 +181,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.CLI
 
         #region UInt16Value(Name, Default) / Int32Value / TimeSpanValue
 
-        /// <summary>The value of an option as a port number.</summary>
+        /// <summary>
+        /// The value of an option as a port number.
+        /// </summary>
         public UInt16? PortValue(String Name)
         {
 
@@ -191,7 +199,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.CLI
         }
 
 
-        /// <summary>The value of an option as a count.</summary>
+        /// <summary>
+        /// The value of an option as a count.
+        /// </summary>
         public Int32 CountValue(String Name, Int32 Default)
         {
 
@@ -207,7 +217,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.CLI
         }
 
 
-        /// <summary>The value of an option as a number of seconds.</summary>
+        /// <summary>
+        /// The value of an option as a number of seconds.
+        /// </summary>
         /// <remarks>
         /// Seconds rather than a duration string: every other NTP tool takes seconds here, and a
         /// parser that also accepted "1m30s" would be a second syntax to learn for no gain.

@@ -58,7 +58,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #region Data
 
-        /// <summary>The tag length in bits. RFC 8452 § 6 fixes it; there is no truncated variant.</summary>
+        /// <summary>
+        /// The tag length in bits. RFC 8452 § 6 fixes it; there is no truncated variant.
+        /// </summary>
         private const Int32 TagLengthBits = 128;
 
         private readonly Byte[] key;
@@ -73,7 +75,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </summary>
         public const Int32 NonceLength = 12;
 
-        /// <summary>Which of the two AEADs this key selects.</summary>
+        /// <summary>
+        /// Which of the two AEADs this key selects.
+        /// </summary>
         public AEADAlgorithms Algorithm
 
             => key.Length == 16

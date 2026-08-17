@@ -165,7 +165,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #region Properties
 
-        /// <summary>How many interleaved requests may go unanswered before starting over.</summary>
+        /// <summary>
+        /// How many interleaved requests may go unanswered before starting over.
+        /// </summary>
         public Int32    MaxUnansweredRequests    { get; }
 
         /// <summary>

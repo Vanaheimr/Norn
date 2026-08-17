@@ -31,19 +31,29 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
     public interface INTSAEAD
     {
 
-        /// <summary>Which registered algorithm this is.</summary>
+        /// <summary>
+        /// Which registered algorithm this is.
+        /// </summary>
         AEADAlgorithms  Algorithm    { get; }
 
-        /// <summary>The key length in octets.</summary>
+        /// <summary>
+        /// The key length in octets.
+        /// </summary>
         Int32           KeyLength    { get; }
 
-        /// <summary>The nonce length in octets that this implementation generates.</summary>
+        /// <summary>
+        /// The nonce length in octets that this implementation generates.
+        /// </summary>
         Int32           NonceLength  { get; }
 
-        /// <summary>Seal, returning ciphertext with the tag appended.</summary>
+        /// <summary>
+        /// Seal, returning ciphertext with the tag appended.
+        /// </summary>
         Byte[] Encrypt(Byte[] AssociatedData, Byte[] Nonce, Byte[] Plaintext);
 
-        /// <summary>Open, or throw if the tag does not verify.</summary>
+        /// <summary>
+        /// Open, or throw if the tag does not verify.
+        /// </summary>
         Byte[] Decrypt(Byte[] AssociatedData, Byte[] Nonce, Byte[] Ciphertext);
 
     }
@@ -224,7 +234,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
     }
 
 
-    /// <summary>AEAD_AES_SIV_CMAC_256, the algorithm RFC 8915 § 5.1 requires.</summary>
+    /// <summary>
+    /// AEAD_AES_SIV_CMAC_256, the algorithm RFC 8915 § 5.1 requires.
+    /// </summary>
     internal sealed class AesSivAEAD(Byte[] Key) : INTSAEAD
     {
 
@@ -245,7 +257,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
     }
 
 
-    /// <summary>AEAD_AES_128_GCM_SIV and AEAD_AES_256_GCM_SIV (RFC 8452).</summary>
+    /// <summary>
+    /// AEAD_AES_128_GCM_SIV and AEAD_AES_256_GCM_SIV (RFC 8452).
+    /// </summary>
     internal sealed class AesGcmSivAEAD(AEADAlgorithms Algorithm, Byte[] Key) : INTSAEAD
     {
 

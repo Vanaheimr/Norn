@@ -41,11 +41,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.CLI
     public sealed class Output(Boolean AsJson)
     {
 
-        /// <summary>Whether output is meant for a machine.</summary>
+        /// <summary>
+        /// Whether output is meant for a machine.
+        /// </summary>
         public Boolean IsJson { get; } = AsJson;
 
 
-        /// <summary>A line of human-readable output, suppressed entirely in JSON mode.</summary>
+        /// <summary>
+        /// A line of human-readable output, suppressed entirely in JSON mode.
+        /// </summary>
         public void Line(String Text = "")
         {
             if (!IsJson)
@@ -63,17 +67,23 @@ namespace org.GraphDefined.Vanaheimr.Norn.CLI
         }
 
 
-        /// <summary>Something the user should see whichever mode they asked for.</summary>
+        /// <summary>
+        /// Something the user should see whichever mode they asked for.
+        /// </summary>
         public void Note(String Text)
             => Console.Error.WriteLine(Text);
 
 
-        /// <summary>Something that went wrong.</summary>
+        /// <summary>
+        /// Something that went wrong.
+        /// </summary>
         public void Error(String Text)
             => Console.Error.WriteLine($"norn: {Text}");
 
 
-        /// <summary>The JSON document, printed only in JSON mode.</summary>
+        /// <summary>
+        /// The JSON document, printed only in JSON mode.
+        /// </summary>
         public void Json(JObject Document)
         {
             if (IsJson)

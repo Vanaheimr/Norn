@@ -70,10 +70,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #region Properties
 
-        /// <summary>The fastest this client will poll this server.</summary>
+        /// <summary>
+        /// The fastest this client will poll this server.
+        /// </summary>
         public Byte             MinimumPollExponent  { get; }
 
-        /// <summary>The slowest a kiss code can drive this client.</summary>
+        /// <summary>
+        /// The slowest a kiss code can drive this client.
+        /// </summary>
         public Byte             MaximumPollExponent  { get; }
 
         /// <summary>
@@ -81,7 +85,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </summary>
         public Byte             PollExponent         { get; private set; }
 
-        /// <summary>The interval the current poll exponent stands for.</summary>
+        /// <summary>
+        /// The interval the current poll exponent stands for.
+        /// </summary>
         public TimeSpan         PollInterval
             => TimeSpan.FromSeconds(Math.Pow(2, PollExponent));
 
@@ -100,7 +106,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </summary>
         public DateTimeOffset?  NextQueryNotBefore   { get; private set; }
 
-        /// <summary>The last kiss code accepted from this server, if any.</summary>
+        /// <summary>
+        /// The last kiss code accepted from this server, if any.
+        /// </summary>
         public NTPKissOfDeath?  LastKiss             { get; private set; }
 
         #endregion
