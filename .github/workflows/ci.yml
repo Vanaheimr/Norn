@@ -32,16 +32,16 @@ jobs:
       # That is the honest signal for a library that has to keep up with its dependencies
       # — and it is not hypothetical: Hermod's URL refactoring broke Norn exactly this way,
       # and it was found by hand rather than by CI.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           path: Norn
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: Vanaheimr/Hermod
           path: Hermod
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: Vanaheimr/Styx
           path: Styx
@@ -52,7 +52,7 @@ jobs:
       - name: Allow long paths
         run: git config --system core.longpaths true
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
 
