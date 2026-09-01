@@ -510,7 +510,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS.WebAPI
                             Server                     = HTTPServiceName,
                             Date                       = Timestamp.Now,
                             AccessControlAllowOrigin   = "*",
-                            AccessControlAllowMethods  = [ "OPTIONS", "GET" ],
+                            AccessControlAllowMethods  = [ HTTPMethod.OPTIONS, HTTPMethod.GET ],
                             AccessControlAllowHeaders  = [ "Authorization" ],
                             ContentType                = HTTPContentType.Text.HTML_UTF8,
                             Content                    = MixWithHTMLTemplate(
@@ -539,7 +539,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS.WebAPI
                         new HTTPResponse.Builder(request) {
                             HTTPStatusCode             = HTTPStatusCode.OK,
                             Allow                      = [ HTTPMethod.OPTIONS, HTTPMethod.GET ],
-                            AccessControlAllowMethods  = [ "OPTIONS", "GET" ],
+                            AccessControlAllowMethods  = [ HTTPMethod.OPTIONS, HTTPMethod.GET ],
                             AccessControlAllowHeaders  = [ "Authorization" ]
                         }.AsImmutable
                     )
@@ -599,7 +599,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS.WebAPI
                                    Server                     = HTTPServiceName,
                                    Date                       = Timestamp.Now,
                                    AccessControlAllowOrigin   = "*",
-                                   AccessControlAllowMethods  = [ "OPTIONS", "GET" ],
+                                   AccessControlAllowMethods  = [ HTTPMethod.OPTIONS, HTTPMethod.GET ],
 //                                   AccessControlAllowHeaders  = [ "Authorization" ],
                                    ContentType                = HTTPContentType.Application.JSON_UTF8,
                                    Content                    = HTTPAPI.NTSServer.GetServerInfos(numberOfRequestedNTSCookies).First().ToJSON().ToUTF8Bytes(),

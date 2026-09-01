@@ -375,7 +375,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.HTTPAPI
 
                            EMailAddress?                  APIRobotEMailAddress      = null,
                            String?                        APIRobotGPGPassphrase     = null,
-                           ISMTPClient?                   SMTPClient                = null,
+                           ISMTPSubmissionClient?         SMTPClient                = null,
 
                            HTTPPath?                      AdditionalURLPathPrefix   = null,
                            Boolean?                       LocationsAsOpenData       = null,
@@ -573,7 +573,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.HTTPAPI
                             Server                     = HTTPServiceName,
                             Date                       = Timestamp.Now,
                             AccessControlAllowOrigin   = "*",
-                            AccessControlAllowMethods  = [ "OPTIONS", "GET" ],
+                            AccessControlAllowMethods  = [ HTTPMethod.OPTIONS, HTTPMethod.GET ],
                             Allow                      = [ HTTPMethod.OPTIONS, HTTPMethod.GET ],
                             AccessControlAllowHeaders  = [ "Authorization" ],
                             Connection                 = ConnectionType.KeepAlive
@@ -600,7 +600,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.HTTPAPI
                             Server                     = HTTPServiceName,
                             Date                       = Timestamp.Now,
                             AccessControlAllowOrigin   = "*",
-                            AccessControlAllowMethods  = [ "OPTIONS", "GET" ],
+                            AccessControlAllowMethods  = [ HTTPMethod.OPTIONS, HTTPMethod.GET ],
                             AccessControlAllowHeaders  = [ "Authorization" ],
                             ContentType                = HTTPContentType.Text.PLAIN,
                             Content                    = "Hello world!".ToUTF8Bytes(),
@@ -634,7 +634,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.HTTPAPI
                             Server                     = HTTPServiceName,
                             Date                       = Timestamp.Now,
                             AccessControlAllowOrigin   = "*",
-                            AccessControlAllowMethods  = [ "OPTIONS", "GET" ],
+                            AccessControlAllowMethods  = [ HTTPMethod.OPTIONS, HTTPMethod.GET ],
                             Allow                      = [ HTTPMethod.OPTIONS, HTTPMethod.GET ],
                             AccessControlAllowHeaders  = [ "Authorization" ],
                             Connection                 = ConnectionType.KeepAlive

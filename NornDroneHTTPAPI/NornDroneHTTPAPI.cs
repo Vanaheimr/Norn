@@ -350,7 +350,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Drone.HTTPAPI
 
                                 EMailAddress?                  APIRobotEMailAddress      = null,
                                 String?                        APIRobotGPGPassphrase     = null,
-                                ISMTPClient?                   SMTPClient                = null,
+                                ISMTPSubmissionClient?         SMTPClient                = null,
 
                                 Boolean?                       IsDevelopment             = null,
                                 IEnumerable<String>?           DevelopmentServers        = null,
@@ -551,7 +551,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Drone.HTTPAPI
                             Server                     = HTTPServiceName,
                             Date                       = Timestamp.Now,
                             AccessControlAllowOrigin   = "*",
-                            AccessControlAllowMethods  = [ "OPTIONS", "GET" ],
+                            AccessControlAllowMethods  = [ HTTPMethod.OPTIONS, HTTPMethod.GET ],
                             Allow                      = [ HTTPMethod.OPTIONS, HTTPMethod.GET ],
                             AccessControlAllowHeaders  = [ "Authorization" ],
                             Connection                 = ConnectionType.KeepAlive
@@ -578,7 +578,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Drone.HTTPAPI
                             Server                     = HTTPServiceName,
                             Date                       = Timestamp.Now,
                             AccessControlAllowOrigin   = "*",
-                            AccessControlAllowMethods  = [ "OPTIONS", "GET" ],
+                            AccessControlAllowMethods  = [ HTTPMethod.OPTIONS, HTTPMethod.GET ],
                             AccessControlAllowHeaders  = [ "Authorization" ],
                             ContentType                = HTTPContentType.Text.PLAIN,
                             Content                    = "This is a Norn Drone HTTP service!".ToUTF8Bytes(),
@@ -604,7 +604,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Drone.HTTPAPI
                             Server                     = HTTPServiceName,
                             Date                       = Timestamp.Now,
                             AccessControlAllowOrigin   = "*",
-                            AccessControlAllowMethods  = [ "OPTIONS", "GET" ],
+                            AccessControlAllowMethods  = [ HTTPMethod.OPTIONS, HTTPMethod.GET ],
                             AccessControlAllowHeaders  = [ "Authorization" ],
                             ContentType                = HTTPContentType.Application.JSON_UTF8,
                             Content                    = JSONObject.Create(
