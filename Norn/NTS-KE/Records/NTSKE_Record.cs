@@ -41,7 +41,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             using var ms = new MemoryStream();
 
             foreach (var ntsKERecord in NTSKERecords)
-                ms.Write(ntsKERecord.ToByteArray(), 0, ntsKERecord.ToByteArray().Length);
+            {
+                var recordBytes = ntsKERecord.ToByteArray();
+                ms.Write(recordBytes, 0, recordBytes.Length);
+            }
 
             return ms.ToArray();
 
