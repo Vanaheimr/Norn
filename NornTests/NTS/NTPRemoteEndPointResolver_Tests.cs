@@ -69,6 +69,189 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
         #endregion
 
+        #region A_Negotiated_Address_Is_Not_Dropped_When_The_Key_Exchange_Connected_Somewhere()
+
+        /// <summary>
+        /// A key exchange that redirects to an address, from a connection that
+        /// already has one.
+        /// </summary>
+        /// <remarks>
+        /// The case that was wrong, and it is the ordinary one: nts.netnod.se
+        /// answers its key exchange with "2a01:3f7:2:44::9" and nothing else,
+        /// and RFC 8915 section 4.1.7 says the record "SHALL be either an IPv4
+        /// address, an IPv6 address, or a fully qualified domain name".
+        ///
+        /// The redirect was dropped because the check asked NTPv4Servers -
+        /// which is NTPv4ServerNames filtered down to what parses as a domain
+        /// name - and an address does not. So the request went to the host the
+        /// key exchange happened on, which holds different master keys, and the
+        /// NAK was reported against a machine that had done nothing wrong.
+        ///
+        /// An IPv6 address, and that is the whole of it: "127.0.0.2" parses as
+        /// a domain name perfectly well - labels of digits are legal - so an
+        /// IPv4 redirect survived the filter by accident. Only the colons of an
+        /// IPv6 address fail it, which is why the first version of this test
+        /// passed with the fault still in place.
+        ///
+        /// The existing test above passes an address too and always did: it
+        /// builds a response with no timing information, so the shortcut this
+        /// is about is never reached either.
+        /// </remarks>
+        [Test]
+        public async Task A_Negotiated_Address_Is_Not_Dropped_When_The_Key_Exchange_Connected_Somewhere()
+        {
+
+            var response = new NTSKE_Response(
+                               [
+                                   NTSKE_Record.NTPv4ServerNegotiation(Encoding.ASCII.GetBytes("2a01:3f7:2:44::9"))
+                               ],
+                               [],
+                               [],
+                               TimingInfo: new NTSKE_TimingInfo(
+                                               ConnectedIPAddress: IPv6Address.Parse("2a01:3f0:1:4::29")
+                                           )
+                           );
+
+            var endPoint = await NTPRemoteEndPointResolver.ResolveAsync(
+                                     response,
+                                     DomainName.Parse("ntske.example.org"),
+                                     IPPort.NTP,
+                                     new DNSClient(),
+                                     IPVersionPreference.IPv6Only,
+                                     TimeSpan.FromSeconds(1)
+                                 );
+
+            Assert.That(endPoint?.Address,
+                        Is.EqualTo(System.Net.IPAddress.Parse("2a01:3f7:2:44::9")),
+                        "The address the key exchange redirected to was dropped in favour of the host it happened on.");
+
+        }
+
+        #endregion
+
+        #region The_Connected_Address_Is_Still_Reused_When_Nothing_Else_Was_Named()
+
+        /// <summary>
+        /// The shortcut the test above must not have broken.
+        /// </summary>
+        /// <remarks>
+        /// A key exchange that names nobody else has already done the work of
+        /// resolving its own host, and resolving it a second time for the NTP
+        /// request would be a second lookup for an answer that is in hand.
+        /// </remarks>
+        [Test]
+        public async Task The_Connected_Address_Is_Still_Reused_When_Nothing_Else_Was_Named()
+        {
+
+            var response = new NTSKE_Response(
+                               [],
+                               [],
+                               [],
+                               TimingInfo: new NTSKE_TimingInfo(
+                                               ConnectedIPAddress: IPv4Address.Parse("127.0.0.9")
+                                           )
+                           );
+
+            var endPoint = await NTPRemoteEndPointResolver.ResolveAsync(
+                                     response,
+                                     DomainName.Parse("ntske.example.org"),
+                                     IPPort.NTP,
+                                     new DNSClient(),
+                                     IPVersionPreference.IPv4Only,
+                                     TimeSpan.FromSeconds(1)
+                                 );
+
+            Assert.That(endPoint?.Address,
+                        Is.EqualTo(System.Net.IPAddress.Parse("127.0.0.9")),
+                        "A key exchange that named nobody else was resolved all over again.");
+
+        }
+
+        #endregion
+
+        #region One_Of_Several_Negotiated_Servers_Can_Be_Chosen()
+
+        /// <summary>
+        /// Several servers named, and each reachable in its own right.
+        /// </summary>
+        /// <remarks>
+        /// Without a choice only the first that resolves is ever asked, so a
+        /// fault in the second is invisible until the first goes away.
+        /// </remarks>
+        [Test]
+        public void One_Of_Several_Negotiated_Servers_Can_Be_Chosen()
+        {
+
+            var response = new NTSKE_Response(
+                               [
+                                   NTSKE_Record.NTPv4ServerNegotiation(Encoding.ASCII.GetBytes("first.example.org")),
+                                   NTSKE_Record.NTPv4ServerNegotiation(Encoding.ASCII.GetBytes("second.example.org")),
+                                   NTSKE_Record.NTPv4PortNegotiation  ([ 0x04, 0xD2 ]),
+                                   NTSKE_Record.NTPv4PortNegotiation  ([ 0x11, 0x5C ])
+                               ],
+                               [],
+                               []
+                           );
+
+            var chosen = NTPRemoteEndPointResolver.GetRemoteCandidates(
+                             response,
+                             DomainName.Parse("fallback.example.org"),
+                             IPPort.NTP,
+                             "second.example.org"
+                         ).ToArray();
+
+            Assert.Multiple(() => {
+                Assert.That(chosen.Length,     Is.EqualTo(1), "Choosing one server did not narrow the list to it.");
+                Assert.That(chosen[0].Host,    Is.EqualTo("second.example.org"));
+                Assert.That(chosen[0].Port.ToUInt16(), Is.EqualTo(4444),
+                            "The port that was negotiated alongside the chosen server was not the one taken.");
+            });
+
+        }
+
+        #endregion
+
+        #region A_Server_The_Exchange_Did_Not_Name_Is_Refused()
+
+        /// <summary>
+        /// Somewhere else entirely.
+        /// </summary>
+        /// <remarks>
+        /// Refused rather than reached, and it matters more than it looks: RFC
+        /// 8915 section 4.1.7 says the negotiated server is the one "that will
+        /// accept the supplied cookies". A cookie is spent by sending it, so
+        /// pointing it at a server holding different master keys wastes it and
+        /// produces a NAK about the wrong machine.
+        /// </remarks>
+        [Test]
+        public async Task A_Server_The_Exchange_Did_Not_Name_Is_Refused()
+        {
+
+            var response = new NTSKE_Response(
+                               [
+                                   NTSKE_Record.NTPv4ServerNegotiation(Encoding.ASCII.GetBytes("127.0.0.1"))
+                               ],
+                               [],
+                               []
+                           );
+
+            var endPoint = await NTPRemoteEndPointResolver.ResolveAsync(
+                                     response,
+                                     DomainName.Parse("fallback.example.org"),
+                                     IPPort.NTP,
+                                     new DNSClient(),
+                                     IPVersionPreference.IPv4Only,
+                                     TimeSpan.FromSeconds(1),
+                                     ChosenServer: "somewhere.else.example.org"
+                                 );
+
+            Assert.That(endPoint, Is.Null,
+                        "Cookies were about to be sent to a server the key exchange never named.");
+
+        }
+
+        #endregion
+
         #region Builds_Paired_Candidates_For_Multiple_Hosts_And_Ports()
 
         [Test]

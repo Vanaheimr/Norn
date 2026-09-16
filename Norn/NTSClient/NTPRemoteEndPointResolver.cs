@@ -51,9 +51,26 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #region GetRemoteCandidates(NTSKEResponse, FallbackHost, FallbackPort)
 
+/// <param name="ChosenServer">
+        /// One of the servers this exchange named, to the exclusion of the
+        /// others - or null to take them in the order they were named.
+        /// </param>
+        /// <remarks>
+        /// A key exchange may name several NTP servers, and without a choice
+        /// the first that resolves is used. Naming one narrows the list to it,
+        /// which is what lets a caller ask each of them in turn rather than
+        /// only ever reaching whichever happens to be first.
+        ///
+        /// A name that was not among them narrows the list to nothing, and
+        /// deliberately: RFC 8915 section 4.1.7 says the negotiated server is
+        /// the one "that will accept the supplied cookies", and nobody else was
+        /// said to accept them. Sending them somewhere else spends a cookie on
+        /// a server holding different master keys.
+        /// </remarks>
         public static IEnumerable<(String Host, IPPort Port)> GetRemoteCandidates(NTSKE_Response?  NTSKEResponse,
                                                                                   DomainName       FallbackHost,
-                                                                                  IPPort           FallbackPort)
+                                                                                  IPPort           FallbackPort,
+                                                                                  String?          ChosenServer   = null)
         {
 
             var hosts = (NTSKEResponse?.NTPv4ServerNames.Any() == true
@@ -66,12 +83,24 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                              : [ FallbackPort ]).
                         ToList();
 
+            var chosen = ChosenServer?.Trim().Trim('[', ']').TrimEnd('.');
+
             for (var i = 0; i < hosts.Count; i++)
             {
+
+                if (chosen is not null &&
+                    !String.Equals(hosts[i].Trim('[', ']').TrimEnd('.'),
+                                   chosen,
+                                   StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
                 yield return (
                     hosts[i],
                     ports[Math.Min(i, ports.Count - 1)]
                 );
+
             }
 
         }
@@ -99,25 +128,50 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #region ResolveAsync(NTSKEResponse, FallbackHost, FallbackPort, DNSClient, IPVersionPreference, Timeout, CancellationToken)
 
+/// <param name="ChosenServer">
+        /// One of the servers this exchange named, to the exclusion of the
+        /// others; null takes them in the order they were named.
+        /// </param>
         public static async Task<System.Net.IPEndPoint?> ResolveAsync(NTSKE_Response?      NTSKEResponse,
                                                                       DomainName           FallbackHost,
                                                                       IPPort               FallbackPort,
                                                                       DNSClient            DNSClient,
                                                                       IPVersionPreference  IPVersionPreference,
                                                                       TimeSpan             Timeout,
-                                                                      CancellationToken    CancellationToken = default)
+                                                                      CancellationToken    CancellationToken = default,
+                                                                      String?              ChosenServer      = null)
         {
 
             var candidates = GetRemoteCandidates(
                                  NTSKEResponse,
                                  FallbackHost,
-                                 FallbackPort
+                                 FallbackPort,
+                                 ChosenServer
                              ).ToList();
 
-            if ((NTSKEResponse?.NTPv4Servers.Any() != true ||
-                 String.Equals(candidates[0].Host.TrimEnd('.'),
-                               FallbackHost.ToString().TrimEnd('.'),
-                               StringComparison.OrdinalIgnoreCase)) &&
+            // Which happens when a caller asked for a server this exchange did
+            // not name. There is nothing to resolve and nothing to fall back
+            // to: falling back would send the cookies somewhere they were never
+            // said to be accepted.
+            if (candidates.Count == 0)
+                return null;
+
+            // NTPv4ServerNames and not NTPv4Servers. The latter is the former
+            // filtered down to what parses as a domain name, and RFC 8915
+            // section 4.1.7 says the record "SHALL be either an IPv4 address,
+            // an IPv6 address, or a fully qualified domain name" - so a server
+            // that redirects to an address of its own had that redirect dropped
+            // here and the request went to the key exchange host instead. Which
+            // is precisely what the comment further down calls turning a plain
+            // misconfiguration into an authentication failure reported against
+            // the wrong machine, and the failure check below already used the
+            // right property, so the two disagreed with each other.
+            var namedSomewhereElse = NTSKEResponse?.NTPv4ServerNames.Any() == true &&
+                                     !String.Equals(candidates[0].Host.Trim('[', ']').TrimEnd('.'),
+                                                    FallbackHost.ToString().TrimEnd('.'),
+                                                    StringComparison.OrdinalIgnoreCase);
+
+            if (!namedSomewhereElse &&
                 NTSKEResponse?.TimingInfo?.ConnectedIPAddress is not null)
             {
                 return new System.Net.IPEndPoint(

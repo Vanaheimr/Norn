@@ -1046,10 +1046,27 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <summary>
         /// Sends a single NTS-authenticated NTP request and returns a structured result.
         /// </summary>
+        /// <param name="NTPServer">
+        /// Which of the servers the key exchange named to send this request to,
+        /// to the exclusion of the others; null takes them in the order they
+        /// were named.
+        /// </param>
+        /// <remarks>
+        /// Naming one is how each of several negotiated servers can be reached
+        /// in its own right - without it only the first that resolves is ever
+        /// asked, so a fault in the second is invisible.
+        ///
+        /// It can only name one this exchange actually offered. RFC 8915
+        /// section 4.1.7 says the negotiated server is the one "that will
+        /// accept the supplied cookies", and a cookie is spent by sending it:
+        /// pointing it at a server holding different master keys wastes it and
+        /// reports the resulting NAK against the wrong machine.
+        /// </remarks>
         public async Task<NTSQueryResult> QueryTime(TimeSpan?           Timeout               = null,
                                                     NTSKE_Response?     NTSKEResponse         = null,
                                                     SignedResponseMode  SignedResponseMode    = SignedResponseMode.None,
                                                     UInt16              SignedResponseKeyId   = 1,
+                                                    String?             NTPServer             = null,
                                                     CancellationToken   CancellationToken     = default)
         {
 
@@ -1122,12 +1139,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                DNSClient,
                                                IPVersionPreference,
                                                timeout,
-                                               CancellationToken
+                                               CancellationToken,
+                                               NTPServer
                                            ).ConfigureAwait(false);
 
             var remoteDescription  = remoteEndPoint is not null
                                          ? remoteEndPoint.ToString()
-                                         : NTPRemoteEndPointResolver.GetRemoteDescription(
+                                         : NTPServer ?? NTPRemoteEndPointResolver.GetRemoteDescription(
                                                NTSKEResponse,
                                                Hostname,
                                                NTP_Port
