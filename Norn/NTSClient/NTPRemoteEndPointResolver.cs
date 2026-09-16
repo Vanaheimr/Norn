@@ -31,12 +31,66 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
     public static class NTPRemoteEndPointResolver
     {
 
-        #region GetRemoteHost(NTSKEResponse, FallbackHost)
+        #region GetRemoteHostText(NTSKEResponse, FallbackHost)
 
-        public static DomainName GetRemoteHost(NTSKE_Response?  NTSKEResponse,
+        /// <summary>
+        /// Where the NTP request is going, written the way the key exchange
+        /// wrote it.
+        /// </summary>
+        /// <remarks>
+        /// Text, because that is what RFC 8915 section 4.1.7 allows: the
+        /// NTPv4 Server Negotiation record "SHALL be either an IPv4 address, an
+        /// IPv6 address, or a fully qualified domain name". Any caller that
+        /// wants to know where a request went has to be able to hold all three,
+        /// and only a string can.
+        /// </remarks>
+        public static String GetRemoteHostText(NTSKE_Response?  NTSKEResponse,
                                                DomainName       FallbackHost)
 
-            => NTSKEResponse?.NTPv4Servers.FirstOrDefault() ?? FallbackHost;
+            => NTSKEResponse?.NTPv4ServerNames.FirstOrDefault()?.Trim() is String named && named.Length > 0
+                   ? named
+                   : FallbackHost.ToString().TrimEnd('.');
+
+        #endregion
+
+        #region GetRemoteHost(NTSKEResponse, FallbackHost)
+
+        /// <summary>
+        /// Where the NTP request is going, when that is a name; null when the
+        /// key exchange named an address instead.
+        /// </summary>
+        /// <remarks>
+        /// Null and not the fallback host. It used to answer with
+        /// NTPv4Servers.FirstOrDefault() - the negotiated servers filtered down
+        /// to those that parse as a domain name - falling back to the host the
+        /// exchange happened on. So an exchange that redirected to an address
+        /// was reported as though the request had gone to the key exchange
+        /// host, and a monitoring engine that files a failure against a machine
+        /// nothing was sent to is worse than one that leaves the field empty.
+        ///
+        /// An address is not lost by this: it is in
+        /// <see cref="GetRemoteHostText"/>, which is what a caller reporting
+        /// where a request went should read.
+        ///
+        /// IPv4 is treated the same as IPv6 here, and deliberately, although
+        /// "127.0.0.2" happens to parse as a domain name - labels of digits
+        /// being legal. Letting one family through as a name and not the other
+        /// is how this went unnoticed in the first place.
+        /// </remarks>
+        public static DomainName? GetRemoteHost(NTSKE_Response?  NTSKEResponse,
+                                                DomainName       FallbackHost)
+        {
+
+            var text = GetRemoteHostText(NTSKEResponse, FallbackHost).Trim('[', ']').TrimEnd('.');
+
+            if (System.Net.IPAddress.TryParse(text, out _))
+                return null;
+
+            return DomainName.TryParse(text, out var host, out _)
+                       ? host
+                       : null;
+
+        }
 
         #endregion
 

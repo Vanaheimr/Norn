@@ -69,6 +69,85 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
         #endregion
 
+        #region The_Remote_Host_Text_Carries_Whatever_Was_Negotiated(Negotiated)
+
+        /// <summary>
+        /// A name, an IPv4 address or an IPv6 address - all three come back as
+        /// they were said.
+        /// </summary>
+        /// <remarks>
+        /// RFC 8915 section 4.1.7 allows all three, so anything reporting where
+        /// a request went has to be able to hold all three, and only a string
+        /// can.
+        /// </remarks>
+        [Test]
+        [TestCase("time.example.org")]
+        [TestCase("127.0.0.2")]
+        [TestCase("2a01:3f7:2:44::9")]
+        public void The_Remote_Host_Text_Carries_Whatever_Was_Negotiated(String Negotiated)
+        {
+
+            var response = new NTSKE_Response(
+                               [
+                                   NTSKE_Record.NTPv4ServerNegotiation(Encoding.ASCII.GetBytes(Negotiated))
+                               ],
+                               [],
+                               []
+                           );
+
+            Assert.That(NTPRemoteEndPointResolver.GetRemoteHostText(response, DomainName.Parse("ntske.example.org")),
+                        Is.EqualTo(Negotiated),
+                        "What the key exchange named did not survive being read back.");
+
+        }
+
+        #endregion
+
+        #region The_Remote_Host_Is_A_Name_Or_Nothing(Negotiated, Expected)
+
+        /// <summary>
+        /// An address is not a name, and is not reported as one.
+        /// </summary>
+        /// <remarks>
+        /// This used to answer with the host the key exchange happened on when
+        /// the exchange had redirected to an address - a machine the request
+        /// was never sent to. A monitoring engine that files a failure against
+        /// one of those is worse than one that leaves the field empty, so it is
+        /// now empty and the address is in the text form beside it.
+        ///
+        /// Both address families, and that is the point: "127.0.0.2" parses as
+        /// a domain name quite happily, labels of digits being legal, so
+        /// letting IPv4 through as a name and not IPv6 is how the original
+        /// fault stayed hidden.
+        /// </remarks>
+        [Test]
+        [TestCase("time.example.org",  "time.example.org")]
+        [TestCase("127.0.0.2",         null)]
+        [TestCase("2a01:3f7:2:44::9",  null)]
+        public void The_Remote_Host_Is_A_Name_Or_Nothing(String Negotiated, String? Expected)
+        {
+
+            var response = new NTSKE_Response(
+                               [
+                                   NTSKE_Record.NTPv4ServerNegotiation(Encoding.ASCII.GetBytes(Negotiated))
+                               ],
+                               [],
+                               []
+                           );
+
+            var host = NTPRemoteEndPointResolver.GetRemoteHost(response, DomainName.Parse("ntske.example.org"));
+
+            if (Expected is null)
+                Assert.That(host, Is.Null,
+                            $"'{Negotiated}' is an address and was reported as a host name.");
+
+            else
+                Assert.That(host?.ToString().TrimEnd('.'), Is.EqualTo(Expected));
+
+        }
+
+        #endregion
+
         #region A_Negotiated_Address_Is_Not_Dropped_When_The_Key_Exchange_Connected_Somewhere()
 
         /// <summary>

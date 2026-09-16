@@ -872,7 +872,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
         #region (private static) GetNTPRemoteInfo(Server, CachedState)
 
-        private static (DomainName   Host,
+        /// <remarks>
+        /// Host is null when the key exchange redirected to an address rather
+        /// than a name - Address carries it, and a name that was never used
+        /// would be worse than nothing.
+        /// </remarks>
+        private static (DomainName?  Host,
                         IIPAddress?  Address,
                         IPPort       Port)
 
@@ -882,14 +887,24 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         {
 
             var ntskeResponse  = CachedState.NTSKEResponse;
-            var host           = NTPRemoteEndPointResolver.GetRemoteHost(ntskeResponse, Server.Hostname);
-            var port           = NTPRemoteEndPointResolver.GetRemotePort(ntskeResponse, Server.NTPPort);
-            var normalized     = host.ToString().TrimEnd('.');
+
+            // The text and not the domain name. What the key exchange named may
+            // be an address, which a DomainName cannot hold - and the check
+            // below was written expecting one, so it could never have fired.
+            var hostText       = NTPRemoteEndPointResolver.GetRemoteHostText(ntskeResponse, Server.Hostname);
+            var host           = NTPRemoteEndPointResolver.GetRemoteHost    (ntskeResponse, Server.Hostname);
+            var port           = NTPRemoteEndPointResolver.GetRemotePort    (ntskeResponse, Server.NTPPort);
+            var normalized     = hostText.Trim('[', ']').TrimEnd('.');
 
             if (IPAddress.TryParse(normalized, out var ipAddress))
             { }
 
-            else if ((ntskeResponse?.NTPv4Servers.Any() != true ||
+            // NTPv4ServerNames and not NTPv4Servers: the latter is the former
+            // without the addresses, so an exchange that redirected to one was
+            // reported at the address this client had connected to for the key
+            // exchange - a different machine, and one that had done nothing
+            // wrong.
+            else if ((ntskeResponse?.NTPv4ServerNames.Any() != true ||
                       String.Equals(normalized,
                                     Server.Hostname.ToString().TrimEnd('.'),
                                     StringComparison.OrdinalIgnoreCase)) &&
