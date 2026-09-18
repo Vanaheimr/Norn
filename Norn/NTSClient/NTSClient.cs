@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright (c) 2010-2026 GraphDefined GmbH <achim.friedland@graphdefined.com>
  * This file is part of Vanaheimr Norn <https://www.github.com/Vanaheimr/Norn>
  *
@@ -848,12 +848,121 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         {
 
             lock (cookieLock)
+                SeedLocked(NTSKEResponse);
+
+        }
+
+        #endregion
+
+        #region (private) SeedLocked(NTSKEResponse)
+
+        /// <summary>
+        /// Take the cookies of a key exchange into the pool, retiring whatever
+        /// is already queued when it came from an earlier one.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// A cookie is not a bearer token that stands on its own: the server
+        /// decrypts it to recover the C2S and S2C keys of the exchange that
+        /// issued it, and checks the request against those. Cookie and keys are
+        /// therefore one thing, and the pool can only ever hold the generation
+        /// whose keys the next request will be sealed under. A new exchange
+        /// does not make the queued cookies surplus, it makes them unusable,
+        /// and spending one earns a Kiss-o'-Death 'NTSN' - the same answer a
+        /// server gives to a replayed cookie, which is what it looks like from
+        /// there. <see cref="RenegotiateExhaustedPool"/> has the note for this
+        /// same pairing seen from the other side.
+        /// </para>
+        /// <para>
+        /// That a caller runs its own key exchange on a client that has been
+        /// used before is the ordinary case rather than the odd one - it is
+        /// what any "synchronise now" does - so this is where the generations
+        /// have to be kept apart. The symptom otherwise is the worst kind: the
+        /// first exchange on a fresh client works, and every one after it is
+        /// NAKed.
+        /// </para>
+        /// <para>
+        /// A response already seeded is ignored, because its cookies are single
+        /// use and seeding it again would put spent ones back.
+        /// </para>
+        /// </remarks>
+        private void SeedLocked(NTSKE_Response NTSKEResponse)
+        {
+
+            if (!seededNTSKEResponses.Add(NTSKEResponse))
+                return;
+
+            RetirePoolLocked();
+
+            AddCookiesLocked(NTSKEResponse.Cookies, IsSeeded: true);
+
+        }
+
+        #endregion
+
+        #region (private) RetirePoolLocked()
+
+        /// <summary>
+        /// Drop every queued cookie, counted as dropped because they were never
+        /// spent and now never can be.
+        /// </summary>
+        /// <remarks>
+        /// Worth counting rather than quietly discarding: a client that keeps
+        /// retiring cookies is one whose caller runs a key exchange per
+        /// request, which works but pays a TLS handshake every time and throws
+        /// away all but one cookie of every batch.
+        /// </remarks>
+        private void RetirePoolLocked()
+        {
+
+            droppedCookieCount += cookieQueue.Count;
+
+            cookieQueue. Clear();
+            knownCookies.Clear();
+
+        }
+
+        #endregion
+
+        #region (private) RetireOnNTSNAK(Response, Request)
+
+        /// <summary>
+        /// Throw the pool away when the server said the cookie was no good.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// RFC 8915 section 5.7: a client that receives an NTS NAK "SHOULD discard all cookies
+        /// and AEAD keys associated with the server and initiate a fresh NTS-KE handshake". The
+        /// reason is that a NAK says the cookie could not be unwrapped - the server has rotated
+        /// the key it was sealed with, or it came from an exchange the server no longer holds -
+        /// and every other cookie in the pool was issued by the same exchange, so they are all
+        /// equally dead.
+        /// </para>
+        /// <para>
+        /// This is <see cref="NTPKissAction.RenegotiateNTS"/> carried out. Emptying the pool is
+        /// the whole of it: an exchange is run when there is nothing left to spend, so a pool
+        /// that empties here is a handshake on the next query - and a client that did not empty
+        /// it would never run one again, because the cookies that cannot work are exactly what
+        /// keeps it looking full.
+        /// </para>
+        /// <para>
+        /// The kiss is read with the request beside it, so a forged packet claiming to be a NAK
+        /// cannot empty the pool of a client that never sent the request it answers.
+        /// </para>
+        /// </remarks>
+        private void RetireOnNTSNAK(NTPPacket? Response,
+                                    NTPPacket? Request)
+        {
+
+            if (Response is null ||
+               !NTPKissOfDeath.TryRead(Response, Request, out var kiss) ||
+                kiss.Action != NTPKissAction.RenegotiateNTS)
             {
-
-                if (seededNTSKEResponses.Add(NTSKEResponse))
-                    AddCookiesLocked(NTSKEResponse.Cookies, IsSeeded: true);
-
+                return;
             }
+
+            lock (cookieLock)
+                RetirePoolLocked();
 
         }
 
@@ -868,9 +977,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             lock (cookieLock)
             {
 
-                if (NTSKEResponse is not null &&
-                    seededNTSKEResponses.Add(NTSKEResponse))
-                    AddCookiesLocked(NTSKEResponse.Cookies, IsSeeded: true);
+                if (NTSKEResponse is not null)
+                    SeedLocked(NTSKEResponse);
 
                 if (cookieQueue.TryDequeue(out Cookie))
                 {
@@ -1359,6 +1467,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                           );
 
                         if (!validation1.IsValid)
+                        {
+
+                            // Before the result is built, so that the cookies it
+                            // reports as remaining are the ones that remain.
+                            RetireOnNTSNAK(ntpResponse1, requestPacket);
+
                             return NTSQueryResult.Failed(
                                        validation1.ErrorMessage ?? "NTP/NTS response validation failed.",
                                        validation1.ErrorCategory,
@@ -1373,6 +1487,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                        CookiePoolDiagnostics:      CookiePoolDiagnostics,
                                        ResponseValidation:         validation1
                                    );
+
+                        }
 
                         NTSResponseValidationResult? replayValidation1 = null;
 
@@ -1449,6 +1565,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                   );
 
                                 if (!validation2.IsValid)
+                                {
+
+                                    RetireOnNTSNAK(ntpResponse2, requestPacket);
+
                                     return NTSQueryResult.Failed(
                                                validation2.ErrorMessage ?? "NTP/NTS 2nd response validation failed.",
                                                validation2.ErrorCategory,
@@ -1463,6 +1583,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                CookiePoolDiagnostics:      CookiePoolDiagnostics,
                                                ResponseValidation:         validation2
                                            );
+
+                                }
 
                                 if (!TryRememberAcceptedResponse(ntpResponse2, remoteDescription))
                                 {
@@ -1507,6 +1629,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                            validation2
                                        );
                             }
+
+                            RetireOnNTSNAK(ntpResponse2, requestPacket);
 
                             return NTSQueryResult.FailedWithClassifiedPacket(
                                        "NTP 2nd response error: " + errorResponse2,
@@ -1585,6 +1709,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     }
                     else
                     {
+
+                        RetireOnNTSNAK(ntpResponse1, requestPacket);
 
                         return NTSQueryResult.FailedWithClassifiedPacket(
                                    "NTP 1st response error: " + errorResponse1,

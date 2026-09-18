@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright (c) 2010-2026 GraphDefined GmbH <achim.friedland@graphdefined.com>
  * This file is part of Norn <https://www.github.com/Vanaheimr/Norn>
  *
@@ -25,6 +25,7 @@ using org.GraphDefined.Vanaheimr.Hermod.DNS;
 
 using org.GraphDefined.Vanaheimr.Norn.NTP;
 using org.GraphDefined.Vanaheimr.Norn.NTS;
+using org.GraphDefined.Vanaheimr.Norn.NTS.NTSKERecords;
 
 #endregion
 
@@ -219,6 +220,145 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                     Assert.Fail("NTS Cookie Extension is invalid!");
 
             }
+
+        }
+
+        #endregion
+
+        #region TestNTS_TwoKeyExchangesOnOneClient()
+
+        /// <summary>
+        /// Two key exchanges on one client, each followed by a request: what a
+        /// "synchronise now" button does when somebody presses it twice.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The second one is the whole test. A cookie is not a bearer token
+        /// that stands on its own - the server decrypts it to recover the C2S
+        /// and S2C keys of the exchange that issued it, and checks the request
+        /// against those. The cookies left over from the first exchange are
+        /// therefore not spare credentials once a second exchange has run, they
+        /// are credentials for keys the server has replaced.
+        /// </para>
+        /// <para>
+        /// This is not a hypothetical: against ptbtime1.ptb.de the first sync
+        /// succeeded and every one after it came back with a Kiss-o-Death
+        /// NTSN. The pool was a FIFO that accepted both generations, so the
+        /// request after the second exchange was sealed under the second
+        /// exchange key while handing the server a cookie from the first - the
+        /// same thing a replay looks like from the server side, and answered
+        /// the same way.
+        /// </para>
+        /// </remarks>
+        [Test]
+        public async Task TestNTS_TwoKeyExchangesOnOneClient()
+        {
+
+            var ntsClient = new NTSClient(
+                                ServerName,
+                                Timeout:    Timeout,
+                                DNSClient:  new DNSClient(SearchForIPv6DNSServers: false)
+                            );
+
+            for (var attempt = 1; attempt <= 2; attempt++)
+            {
+
+                var keyExchange = await ntsClient.GetNTSKERecords();
+                Assert.That(keyExchange.Success,             Is.True,  $"Key exchange {attempt}: {keyExchange.ErrorMessage}");
+
+                var response    = keyExchange.Response!;
+                Assert.That(response,                        Is.Not.Null,  $"Key exchange {attempt}: no response!");
+
+                ntsClient.SeedCookies(response);
+
+                // Whatever the exchange before left behind, the pool holds this
+                // one and nothing else - which is the property that makes the
+                // request below answerable at all.
+                Assert.That(ntsClient.AvailableCookieCount,  Is.EqualTo(response.Cookies.Count()),
+                            $"Key exchange {attempt}: the pool is holding cookies from more than one exchange.");
+
+                var query       = await ntsClient.QueryTime(NTSKEResponse: response);
+
+                Assert.That(query.Success,                   Is.True,  $"Request {attempt}: {query.ErrorMessage}");
+                Assert.That(query.KissOfDeath,               Is.Null,  $"Request {attempt} was answered with a Kiss-o-Death.");
+
+            }
+
+        }
+
+        #endregion
+
+        #region TestNTS_NAKRetiresTheCookiePool()
+
+        /// <summary>
+        /// A cookie the server cannot unwrap earns an NTS NAK, and the client
+        /// then throws away every cookie it holds rather than only the one it
+        /// spent.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// RFC 8915 section 5.7 - "the client SHOULD discard all cookies and
+        /// AEAD keys associated with the server and initiate a fresh NTS-KE
+        /// handshake" - and the only thing that lets a long-lived client
+        /// recover. A key exchange is run when the pool runs dry, so a pool
+        /// kept full of cookies the server has stopped accepting, which is what
+        /// a rotated server key leaves behind, is a client that never runs
+        /// another one and never works again.
+        /// </para>
+        /// <para>
+        /// Three cookies, so the assertion is about the pool and not about the
+        /// one cookie the request spent: dequeuing one leaves two, and nought
+        /// is reachable only by retiring them.
+        /// </para>
+        /// <para>
+        /// A server is within its rights to say nothing at all instead - our
+        /// own <c>NTSServer</c> fails closed and drops the datagram, since an
+        /// authenticator it cannot verify is one it cannot answer either - so a
+        /// server that stays silent is ignored rather than failed. It is the
+        /// servers that do NAK, and ptbtime1.ptb.de is one, that this is about.
+        /// </para>
+        /// </remarks>
+        [Test]
+        public async Task TestNTS_NAKRetiresTheCookiePool()
+        {
+
+            var ntsClient = new NTSClient(
+                                ServerName,
+                                Timeout:    Timeout,
+                                DNSClient:  new DNSClient(SearchForIPv6DNSServers: false)
+                            );
+
+            // Nothing this server ever issued: the keys are the right length
+            // for AES-SIV-CMAC-256 so the request is well formed, and the
+            // cookies are the right sort of size for it to try to unwrap them.
+            var stranger  = new NTSKE_Response(
+                                Enumerable.Range(1, 3).
+                                    Select(number => new NewCookieForNTPv4(
+                                                         false,
+                                                         Enumerable.Repeat((Byte) number, 104).ToArray()
+                                                     ) as NTSKE_Record).
+                                    ToArray(),
+                                C2SKey:  Enumerable.Repeat((Byte) 0xC2, 32).ToArray(),
+                                S2CKey:  Enumerable.Repeat((Byte) 0x52, 32).ToArray()
+                            );
+
+            ntsClient.SeedCookies(stranger);
+            Assert.That(ntsClient.AvailableCookieCount,  Is.EqualTo(3));
+
+            var query     = await ntsClient.QueryTime(NTSKEResponse: stranger);
+
+            Assert.That(query.Success,                   Is.False, "The server accepted a cookie it never issued!");
+
+            if (query.ErrorCategory == NTSQueryErrorCategory.NTPTimeout)
+                Assert.Ignore($"{ServerName} answers a cookie it cannot unwrap with silence rather than a NAK.");
+
+            Assert.That(query.KissOfDeath?.Code,         Is.EqualTo("NTSN"));
+            Assert.That(query.KissOfDeath?.Action,       Is.EqualTo(NTPKissAction.RenegotiateNTS));
+
+            // The point of the whole test: two cookies were never sent and are
+            // gone all the same, because they could only have earned the same
+            // answer.
+            Assert.That(ntsClient.AvailableCookieCount,  Is.EqualTo(0), "The client kept cookies the server has refused.");
 
         }
 
