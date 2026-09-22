@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright (c) 2010-2026 GraphDefined GmbH <achim.friedland@graphdefined.com>
  * This file is part of Vanaheimr Norn <https://www.github.com/Vanaheimr/Norn>
  *
@@ -16,6 +16,8 @@
  */
 
 #region Usings
+
+using System.Security.Cryptography.X509Certificates;
 
 using org.GraphDefined.Vanaheimr.Hermod;
 using org.GraphDefined.Vanaheimr.Hermod.DNS;
@@ -37,16 +39,57 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         public IPPort      NTPPort      { get; set; }
         public Boolean     Enabled      { get; set; }
 
-        public NTSServerEndpoint(DomainName  Hostname,
-                                 IPPort?     NTSKEPort   = null,
-                                 IPPort?     NTPPort     = null,
-                                 Boolean     Enabled     = true)
+        /// <summary>
+        /// Which servers are asked first. Lower is earlier, and servers sharing
+        /// a value are asked at the same time.
+        /// </summary>
+        /// <remarks>
+        /// From the Secure Time Synchronization white paper, where this is the
+        /// Priority of an NTP client. A group walks its priorities in order and
+        /// stops at the first one that answers well enough - so a band exists to
+        /// be preferred, not merely to be sorted.
+        ///
+        /// Everything defaults to the same value, which is a group whose servers
+        /// are all asked together. That is the right arrangement for several
+        /// equivalent public servers and the wrong one for a local server with a
+        /// distant fallback behind it, which is what this is for.
+        /// </remarks>
+        public Byte        Priority     { get; set; }
+
+        /// <summary>
+        /// The certificates this server's NTS-KE certificate must chain to, or
+        /// none to use whatever the machine trusts.
+        /// </summary>
+        /// <remarks>
+        /// A set of certificates rather than a named group: naming them is how
+        /// the device model of a charging protocol refers to them, and that is
+        /// its business rather than this library's. Whoever configures a group
+        /// there resolves the name and hands the certificates over.
+        /// </remarks>
+        public IEnumerable<X509Certificate2>?  RootCAs                { get; set; }
+
+        /// <summary>
+        /// The AEAD algorithms to offer during the key exchange, or none for
+        /// this client's own defaults.
+        /// </summary>
+        public IEnumerable<AEADAlgorithms>?    OfferedAEADAlgorithms  { get; set; }
+
+        public NTSServerEndpoint(DomainName                      Hostname,
+                                 IPPort?                         NTSKEPort              = null,
+                                 IPPort?                         NTPPort                = null,
+                                 Boolean                         Enabled                = true,
+                                 Byte                            Priority               = 0,
+                                 IEnumerable<X509Certificate2>?  RootCAs                = null,
+                                 IEnumerable<AEADAlgorithms>?    OfferedAEADAlgorithms  = null)
         {
 
-            this.Hostname   = Hostname;
-            this.NTSKEPort  = NTSKEPort ?? NTSClient.DefaultNTSKE_Port;
-            this.NTPPort    = NTPPort   ?? NTSClient.DefaultNTP_Port;
-            this.Enabled    = Enabled;
+            this.Hostname               = Hostname;
+            this.NTSKEPort              = NTSKEPort ?? NTSClient.DefaultNTSKE_Port;
+            this.NTPPort                = NTPPort   ?? NTSClient.DefaultNTP_Port;
+            this.Enabled                = Enabled;
+            this.Priority               = Priority;
+            this.RootCAs                = RootCAs;
+            this.OfferedAEADAlgorithms  = OfferedAEADAlgorithms;
 
         }
 

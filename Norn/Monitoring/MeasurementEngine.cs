@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright (c) 2010-2026 GraphDefined GmbH <achim.friedland@graphdefined.com>
  * This file is part of Vanaheimr Norn <https://www.github.com/Vanaheimr/Norn>
  *
@@ -88,7 +88,28 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         /// This ensures all servers are measured at nearly the same instant,
         /// making inter-server offset comparisons meaningful.
         /// </summary>
-        public async Task<MeasurementRound> MeasureAllServersParallel(DNSClient          DNSClient, CancellationToken CancellationToken = default)
+        public Task<MeasurementRound> MeasureAllServersParallel(DNSClient          DNSClient, CancellationToken CancellationToken = default)
+
+            => MeasureServersParallel(config.Servers, DNSClient, CancellationToken);
+
+        #endregion
+
+        #region MeasureServersParallel    (Servers, DNSClient, CancellationToken)
+
+        /// <summary>
+        /// One round over the servers given, rather than over every server this
+        /// engine is configured with.
+        /// </summary>
+        /// <remarks>
+        /// So that a caller can measure part of its servers and decide what to
+        /// do before measuring the rest - which is what asking a group of time
+        /// sources in priority order amounts to. Everything else about a round
+        /// is unchanged, including the inter-server metrics, which are then
+        /// computed across the servers that were actually asked.
+        /// </remarks>
+        public async Task<MeasurementRound> MeasureServersParallel(IEnumerable<NTSServerEndpoint>  Servers,
+                                                                   DNSClient                       DNSClient,
+                                                                   CancellationToken               CancellationToken = default)
         {
 
             var roundId          = UUIDv7.Generate();
@@ -96,7 +117,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
             var roundStopwatch   = Stopwatch.StartNew();
 
             // Launch all server measurements simultaneously
-            var enabledServers   = config.Servers.Where(s => s.Enabled).ToList();
+            var enabledServers   = Servers.Where(s => s.Enabled).ToList();
             var tasks            = enabledServers.Select(server => MeasureSingleServer(server, roundId, DNSClient, CancellationToken)).ToArray();
             var results          = await Task.WhenAll(tasks);
 
