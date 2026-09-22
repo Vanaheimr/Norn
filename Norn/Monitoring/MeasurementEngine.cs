@@ -74,6 +74,23 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         /// "nothing has happened yet" by absence — a fresh state is one that has heard nothing,
         /// which is the same thing said explicitly.
         /// </remarks>
+        /// <summary>
+        /// The key exchange this engine is holding for each server it has asked.
+        /// </summary>
+        /// <remarks>
+        /// So that whoever owns this engine can say what its cookies are doing.
+        /// An engine that quietly reuses exchanges is the right behaviour and a
+        /// poor thing to have to take on trust - a page reporting "no key
+        /// exchange has happened" while four are being reused is worse than a
+        /// page reporting nothing at all.
+        /// </remarks>
+        public IReadOnlyDictionary<DomainName, CachedNTSKEState> KeyExchanges
+            => ntskeCache;
+
+        #endregion
+
+        #region AccessStateFor(Hostname)
+
         public NTPServerAccessState AccessStateFor(DomainName Hostname)
 
             => accessStates.GetOrAdd(Hostname, _ => new NTPServerAccessState());
