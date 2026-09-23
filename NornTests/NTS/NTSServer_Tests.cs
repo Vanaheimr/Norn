@@ -508,6 +508,89 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
         #endregion
 
+
+        #region TheValidationIsKeptWhenAValidatorAccepts()
+
+        /// <summary>
+        /// A validator of its own accepts this server's self-signed certificate, and the
+        /// exchange goes ahead - and what the standard validation found is kept all the same:
+        /// the chain as it was built, why it did not validate, the name it was checked against,
+        /// and how revocation was asked.
+        /// </summary>
+        [Test]
+        public async Task TheValidationIsKeptWhenAValidatorAccepts()
+        {
+
+            var ntsClient = new NTSClient(
+                                Hermod.DNS.DomainName.Localhost,
+                                NTSKE_Port:                  testNTSKEPort,
+                                NTP_Port:                    testNTPPort,
+                                IPVersionPreference:         IPVersionPreference.IPv4Only,
+                                RemoteCertificateValidator:  (sender, serverCertificate, certificateChain, ntsKETLSClient, sslPolicyErrors)
+                                                                 => TLSValidationResult.Success()
+                            );
+
+            var result    = await ntsClient.GetNTSKERecords(RequestNTSPublicKeys: false);
+            var tls       = result.TLSInfo;
+
+            Assert.That(result.Success,  Is.True, result.ErrorMessage);
+            Assert.That(tls,             Is.Not.Null);
+
+            Assert.Multiple(() => {
+
+                Assert.That(tls!.ValidatedChain,                   Is.Not.Empty);
+                Assert.That(tls.ValidatedChain[0].Thumbprint,      Is.EqualTo(tls.ServerCertificate?.Thumbprint),
+                            "the chain begins with the server's own certificate");
+
+                Assert.That(tls.ChainStatus,                       Does.Contain(System.Security.Cryptography.X509Certificates.X509ChainStatusFlags.UntrustedRoot),
+                            "a self-signed certificate this machine has never seen is no trusted root");
+
+                Assert.That(tls.CertificatePolicyErrors,           Is.Not.EqualTo(System.Net.Security.SslPolicyErrors.None));
+                Assert.That(tls.CheckedHostname,                   Is.EqualTo(Hermod.DNS.DomainName.Localhost));
+                Assert.That(tls.RevocationMode,                    Is.EqualTo(System.Security.Cryptography.X509Certificates.X509RevocationMode.Online));
+
+            });
+
+        }
+
+        #endregion
+
+        #region ARefusedCertificateIsStillDescribed()
+
+        /// <summary>
+        /// Without a validator of its own, the same certificate is refused and the exchange
+        /// fails - and the result still says what the certificate was and why it was refused,
+        /// which is the one time somebody most needs to be told.
+        /// </summary>
+        [Test]
+        public async Task ARefusedCertificateIsStillDescribed()
+        {
+
+            var ntsClient = new NTSClient(
+                                Hermod.DNS.DomainName.Localhost,
+                                NTSKE_Port:           testNTSKEPort,
+                                NTP_Port:             testNTPPort,
+                                IPVersionPreference:  IPVersionPreference.IPv4Only
+                            );
+
+            var result    = await ntsClient.GetNTSKERecords(RequestNTSPublicKeys: false);
+            var tls       = result.TLSInfo;
+
+            Assert.That(result.Success,  Is.False, "a self-signed certificate was accepted without anybody saying so");
+            Assert.That(tls,             Is.Not.Null, $"nothing was kept of the TLS session: {result.ErrorCategory}: {result.ErrorMessage}");
+
+            Assert.Multiple(() => {
+                Assert.That(tls!.ServerCertificate?.Subject,  Does.Contain("ntpKE.example.org"));
+                Assert.That(tls.ValidatedChain,               Is.Not.Empty);
+                Assert.That(tls.ChainStatus,                  Does.Contain(System.Security.Cryptography.X509Certificates.X509ChainStatusFlags.UntrustedRoot));
+                Assert.That(tls.CertificatePolicyErrors?.HasFlag(System.Net.Security.SslPolicyErrors.RemoteCertificateChainErrors),  Is.True);
+            });
+
+        }
+
+        #endregion
+
+
         #region (private static) FindFreeTCPPort()
 
         private static IPPort FindFreeTCPPort()

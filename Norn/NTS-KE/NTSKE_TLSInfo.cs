@@ -20,6 +20,8 @@
 using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
 
+using org.GraphDefined.Vanaheimr.Hermod.DNS;
+
 #endregion
 
 namespace org.GraphDefined.Vanaheimr.Norn.NTS
@@ -28,14 +30,23 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
     /// <summary>
     /// TLS information captured during a Network Time Security Key Establishment exchange.
     /// </summary>
-    public class NTSKE_TLSInfo(X509Certificate2?             ServerCertificate            = null,
-                               IEnumerable<X509Certificate2>? CertificateChain             = null,
-                               SslPolicyErrors?              CertificatePolicyErrors      = null,
-                               String?                       NegotiatedCipherSuite        = null,
-                               Int32?                        NegotiatedCipherSuiteId      = null,
-                               String?                       NegotiatedTLSVersion         = null,
-                               String?                       NegotiatedApplicationProtocol = null,
-                               Int32?                        KeyExchangeAlgorithm         = null)
+    /// <remarks>
+    /// What the validation of the server's certificate found is kept whichever way it went,
+    /// and before anything is decided on it: an exchange refused over its certificate is the
+    /// one somebody most needs to be told the certificate of.
+    /// </remarks>
+    public class NTSKE_TLSInfo(X509Certificate2?                  ServerCertificate             = null,
+                               IEnumerable<X509Certificate2>?     CertificateChain              = null,
+                               SslPolicyErrors?                   CertificatePolicyErrors       = null,
+                               String?                            NegotiatedCipherSuite         = null,
+                               Int32?                             NegotiatedCipherSuiteId       = null,
+                               String?                            NegotiatedTLSVersion          = null,
+                               String?                            NegotiatedApplicationProtocol = null,
+                               Int32?                             KeyExchangeAlgorithm          = null,
+                               IEnumerable<X509Certificate2>?     ValidatedChain                = null,
+                               IEnumerable<X509ChainStatusFlags>? ChainStatus                   = null,
+                               DomainName?                        CheckedHostname               = null,
+                               X509RevocationMode?                RevocationMode                = null)
     {
 
         #region Properties
@@ -80,6 +91,37 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </summary>
         public Int32?                        KeyExchangeAlgorithm          { get; } = KeyExchangeAlgorithm;
 
+        /// <summary>
+        /// The chain as this client built it from the server's certificate: the server's own
+        /// first, and last the certificate it ended at - a root this machine trusts when the
+        /// validation went well.
+        /// </summary>
+        /// <remarks>
+        /// Not what the server sent, which is <see cref="CertificateChain"/>: a server usually
+        /// leaves its root out, and may send a cross-signed one that is not where the chain
+        /// ends here. The root this ends at is the one a pinned root is compared with, and its
+        /// validity counts as much as the server certificate's.
+        /// </remarks>
+        public IReadOnlyList<X509Certificate2> ValidatedChain              { get; } = [.. ValidatedChain ?? []];
+
+        /// <summary>
+        /// What building that chain found wrong with it - an untrusted root, a certificate out
+        /// of its validity, a revocation that could not be checked - and nothing when nothing
+        /// was.
+        /// </summary>
+        public IReadOnlyList<X509ChainStatusFlags> ChainStatus             { get; } = [.. ChainStatus ?? []];
+
+        /// <summary>
+        /// The name the certificate was checked against, or null when it was checked against
+        /// none.
+        /// </summary>
+        public DomainName?                   CheckedHostname               { get; } = CheckedHostname;
+
+        /// <summary>
+        /// How revocation was checked while the chain was built.
+        /// </summary>
+        public X509RevocationMode?           RevocationMode                { get; } = RevocationMode;
+
         #endregion
 
         #region WithHandshakeInfo(...)
@@ -98,7 +140,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                    NegotiatedCipherSuiteId,
                    NegotiatedTLSVersion,
                    NegotiatedApplicationProtocol,
-                   KeyExchangeAlgorithm
+                   KeyExchangeAlgorithm,
+                   ValidatedChain,
+                   ChainStatus,
+                   CheckedHostname,
+                   RevocationMode
                );
 
         #endregion

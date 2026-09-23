@@ -201,11 +201,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #endregion
 
-        #region SetCertificateInfo(ServerCertificate, CertificateChain, CertificatePolicyErrors)
+        #region SetCertificateInfo(ServerCertificate, CertificateChain, CertificatePolicyErrors, ...)
 
-        internal void SetCertificateInfo(X509Certificate2               ServerCertificate,
-                                         IEnumerable<X509Certificate2>  CertificateChain,
-                                         SslPolicyErrors                CertificatePolicyErrors)
+        internal void SetCertificateInfo(X509Certificate2                   ServerCertificate,
+                                         IEnumerable<X509Certificate2>      CertificateChain,
+                                         SslPolicyErrors                    CertificatePolicyErrors,
+                                         IEnumerable<X509Certificate2>?     ValidatedChain    = null,
+                                         IEnumerable<X509ChainStatusFlags>? ChainStatus       = null,
+                                         DomainName?                        CheckedHostname   = null,
+                                         X509RevocationMode?                RevocationMode    = null)
         {
 
             TLSInfo = new NTSKE_TLSInfo(
@@ -216,7 +220,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                           TLSInfo?.NegotiatedCipherSuiteId,
                           TLSInfo?.NegotiatedTLSVersion,
                           TLSInfo?.NegotiatedApplicationProtocol,
-                          TLSInfo?.KeyExchangeAlgorithm
+                          TLSInfo?.KeyExchangeAlgorithm,
+                          ValidatedChain,
+                          ChainStatus,
+                          CheckedHostname,
+                          RevocationMode
                       );
 
         }
@@ -348,10 +356,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 policyErrors |= SslPolicyErrors.RemoteCertificateNameMismatch;
             }
 
+            // Everything the validation found, kept before anything is decided on it - see
+            // NTSKE_TLSInfo. The chain as built here rather than as sent, because its end is
+            // the root this machine judged the certificate by; and copied, because the chain
+            // disposes of its own certificates with itself.
             NTSKETLSClient.SetCertificateInfo(
                 remoteCertificate,
                 certificateChain,
-                policyErrors
+                policyErrors,
+                ValidatedChain:   [.. chain.ChainElements.Select(element => X509CertificateLoader.LoadCertificate(element.Certificate.RawData))],
+                ChainStatus:      [.. chain.ChainStatus.  Select(status  => status.Status)],
+                CheckedHostname:  NTSKETLSClient.ExpectedHostname,
+                RevocationMode:   chain.ChainPolicy.RevocationMode
             );
 
             if (remoteCertificateValidator is not null)
