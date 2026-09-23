@@ -242,6 +242,33 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.TimeSync
 
         #endregion
 
+        #region TheVerdictReadsTheSameUnderEveryCulture()
+
+        /// <summary>
+        /// The half sentence a log line ends with keeps its decimal point under
+        /// a culture that writes a comma.
+        /// </summary>
+        /// <remarks>
+        /// The sentence is English and goes into log books. Under de-DE it used
+        /// to read "+2,5 ms from 3 server(s), spread 2,0 ms".
+        /// </remarks>
+        [Test]
+        [SetCulture("de-DE")]
+        public void TheVerdictReadsTheSameUnderEveryCulture()
+        {
+
+            var verdict = TimeSyncVerdict.From(
+                              [ Answer("a", 1.5), Answer("b", 2.5), Answer("c", 3.5) ],
+                              MinServers:    2,
+                              MaxDeviation:  oneMinute
+                          );
+
+            Assert.That(verdict.ToString(),  Is.EqualTo("+2.5 ms from 3 server(s), spread 2.0 ms"));
+
+        }
+
+        #endregion
+
         #region BandsAreAskedLowestPriorityFirst()
 
         /// <summary>

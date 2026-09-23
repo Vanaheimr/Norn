@@ -17,6 +17,8 @@
 
 #region Usings
 
+using System.Globalization;
+
 using org.GraphDefined.Vanaheimr.Norn.Monitoring;
 
 #endregion
@@ -235,10 +237,20 @@ namespace org.GraphDefined.Vanaheimr.Norn.TimeSync
 
         #region (override) ToString()
 
+        /// <summary>
+        /// The verdict as the half sentence a log line ends with.
+        /// </summary>
+        /// <remarks>
+        /// Invariant, because the sentence is English and ends up in log books:
+        /// under a German culture it read "+702,4 ms from 4 server(s), spread
+        /// 0,5 ms", a decimal comma in the middle of an English sentence, and a
+        /// log whose numbers change their punctuation with the machine that
+        /// wrote them.
+        /// </remarks>
         public override String ToString()
 
             => Outcome switch {
-                   TimeSyncOutcome.Usable           => $"{Offset!.Value.TotalMilliseconds:+0.0;-0.0} ms from {Answered} server(s), spread {Spread!.Value.TotalMilliseconds:0.0} ms{(DeviationExceeded ? " - beyond the agreed deviation" : "")}",
+                   TimeSyncOutcome.Usable           => String.Create(CultureInfo.InvariantCulture, $"{Offset!.Value.TotalMilliseconds:+0.0;-0.0} ms from {Answered} server(s), spread {Spread!.Value.TotalMilliseconds:0.0} ms{(DeviationExceeded ? " - beyond the agreed deviation" : "")}"),
                    TimeSyncOutcome.TooFewServers    => $"only {Answered} of {Required} server(s) answered",
                    _                                => "no server answered"
                };
