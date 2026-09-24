@@ -19,6 +19,7 @@
 
 using org.GraphDefined.Vanaheimr.Hermod.DNS;
 using org.GraphDefined.Vanaheimr.Norn.Monitoring;
+using org.GraphDefined.Vanaheimr.Norn.NTS;
 
 #endregion
 
@@ -174,6 +175,39 @@ namespace org.GraphDefined.Vanaheimr.Norn.TimeSync
             return lastVerdict ?? TimeSyncVerdict.From([], MinServers, MaxDeviation);
 
         }
+
+        #endregion
+
+
+        #region Describe()
+
+        /// <summary>
+        /// A group of time servers as a log line names it: every server in the
+        /// order configured, with whatever about it is not the usual.
+        /// </summary>
+        /// <remarks>
+        /// All of them, and all of that, because this is also what a change is
+        /// found by. It used to be the names of the servers switched on, in the
+        /// order they are asked: a server given another priority or a port of
+        /// its own was a change the log book never heard of, and one switched
+        /// off simply went missing from the line.
+        /// </remarks>
+        public String Describe()
+
+            => String.Join(", ", Sources.Select(source => {
+
+                   var unusual = new List<String>();
+
+                   if (source.Priority  != 0)                            unusual.Add($"priority {source.Priority}");
+                   if (source.NTSKEPort != NTSClient.DefaultNTSKE_Port)  unusual.Add($"NTS-KE port {source.NTSKEPort}");
+                   if (source.NTPPort   != NTSClient.DefaultNTP_Port)    unusual.Add($"NTP port {source.NTPPort}");
+                   if (!source.Enabled)                                  unusual.Add("switched off");
+
+                   return unusual.Count == 0
+                              ? source.Hostname.Trimmed
+                              : $"{source.Hostname.Trimmed} ({String.Join(", ", unusual)})";
+
+               }));
 
         #endregion
 
