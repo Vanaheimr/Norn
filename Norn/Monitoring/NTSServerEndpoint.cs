@@ -19,6 +19,8 @@
 
 using System.Security.Cryptography.X509Certificates;
 
+using Newtonsoft.Json;
+
 using org.GraphDefined.Vanaheimr.Hermod;
 using org.GraphDefined.Vanaheimr.Hermod.DNS;
 using org.GraphDefined.Vanaheimr.Norn.NTS;
@@ -74,22 +76,43 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         /// </summary>
         public IEnumerable<AEADAlgorithms>?    OfferedAEADAlgorithms  { get; set; }
 
-        public NTSServerEndpoint(DomainName                      Hostname,
-                                 IPPort?                         NTSKEPort              = null,
-                                 IPPort?                         NTPPort                = null,
-                                 Boolean                         Enabled                = true,
-                                 Byte                            Priority               = 0,
-                                 IEnumerable<X509Certificate2>?  RootCAs                = null,
-                                 IEnumerable<AEADAlgorithms>?    OfferedAEADAlgorithms  = null)
+        /// <summary>
+        /// What decides whether this server's NTS-KE certificate is believed, or
+        /// none for the usual rule: a chain to whatever the machine trusts, issued
+        /// for this host.
+        /// </summary>
+        /// <remarks>
+        /// Asked at every key exchange with this server, with the certificate,
+        /// the chain built for it and what building it found - so that whoever
+        /// configures the server can hold it to more than the machine does: a
+        /// fingerprint of its own or of its root, a root the machine has never
+        /// heard of, and a record of what it found either way. A key exchange it
+        /// refuses is one that did not happen, and the server is not asked for
+        /// the time.
+        ///
+        /// Never written into a configuration file: it is code, not a setting.
+        /// </remarks>
+        [JsonIgnore]
+        public RemoteTLSServerCertificateValidationHandler<NTSKE_TLSClient>?  RemoteCertificateValidator  { get; set; }
+
+        public NTSServerEndpoint(DomainName                                                     Hostname,
+                                 IPPort?                                                        NTSKEPort                    = null,
+                                 IPPort?                                                        NTPPort                      = null,
+                                 Boolean                                                        Enabled                      = true,
+                                 Byte                                                           Priority                     = 0,
+                                 IEnumerable<X509Certificate2>?                                 RootCAs                      = null,
+                                 IEnumerable<AEADAlgorithms>?                                   OfferedAEADAlgorithms        = null,
+                                 RemoteTLSServerCertificateValidationHandler<NTSKE_TLSClient>?  RemoteCertificateValidator   = null)
         {
 
-            this.Hostname               = Hostname;
-            this.NTSKEPort              = NTSKEPort ?? NTSClient.DefaultNTSKE_Port;
-            this.NTPPort                = NTPPort   ?? NTSClient.DefaultNTP_Port;
-            this.Enabled                = Enabled;
-            this.Priority               = Priority;
-            this.RootCAs                = RootCAs;
-            this.OfferedAEADAlgorithms  = OfferedAEADAlgorithms;
+            this.Hostname                    = Hostname;
+            this.NTSKEPort                   = NTSKEPort ?? NTSClient.DefaultNTSKE_Port;
+            this.NTPPort                     = NTPPort   ?? NTSClient.DefaultNTP_Port;
+            this.Enabled                     = Enabled;
+            this.Priority                    = Priority;
+            this.RootCAs                     = RootCAs;
+            this.OfferedAEADAlgorithms       = OfferedAEADAlgorithms;
+            this.RemoteCertificateValidator  = RemoteCertificateValidator;
 
         }
 

@@ -97,6 +97,28 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
         #endregion
 
+        #region ForgetKeyExchange(Hostname)
+
+        /// <summary>
+        /// Let go of the key exchange held for this server, so that the next
+        /// round makes a new one.
+        /// </summary>
+        /// <remarks>
+        /// For when what a key exchange was judged by has changed - the server's
+        /// certificate validator, above all. An exchange is reused for as long
+        /// as its cookies last, and the certificate is only looked at when one is
+        /// made: without this, a server held to a fingerprint from now on would
+        /// go on being asked on the strength of a handshake nobody checked it
+        /// in, for as long as half an hour.
+        /// </remarks>
+        /// <param name="Hostname">The server whose key exchange to forget.</param>
+        /// <returns>Whether there was one.</returns>
+        public Boolean ForgetKeyExchange(DomainName Hostname)
+
+            => ntskeCache.TryRemove(Hostname, out _);
+
+        #endregion
+
 
         #region MeasureAllServersParallel (CancellationToken)
 
@@ -227,7 +249,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                 {
 
                     ntskeFromCache   = false;
-                    ntskeMeasurement = await MeasureNTSKE(Server, CancellationToken);
+                    ntskeMeasurement = await MeasureNTSKE(Server, DNSClient, CancellationToken);
 
                     if (!ntskeMeasurement.Success)
                     {
@@ -345,7 +367,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
         #endregion
 
-        #region (private) MeasureNTSKE (Server,              CancellationToken)
+        #region (private) MeasureNTSKE (Server, DNSClient,   CancellationToken)
 
         /// <summary>
         /// Perform a full NTS-KE handshake and capture all timing information.
@@ -354,7 +376,19 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         /// NTS-KE response, so monitoring does not need a certificate-capturing
         /// validator workaround here.
         /// </summary>
+        /// <remarks>
+        /// With the DNS client the round was handed, which is the one step 1
+        /// resolved the name with. The key exchange used to make a client of its
+        /// own, and so asked whatever name servers the machine has - past a
+        /// resolver its owner had configured, and past one it had switched off by
+        /// taking its servers away.
+        ///
+        /// And with the server's own certificate validator, where it has one: the
+        /// handshake is the only moment its certificate is seen, and a key
+        /// exchange is reused for as long as its cookies last.
+        /// </remarks>
         private async Task<NTSKEMeasurementResult> MeasureNTSKE(NTSServerEndpoint  Server,
+                                                                DNSClient          DNSClient,
                                                                 CancellationToken  CancellationToken = default)
         {
 
@@ -362,8 +396,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                                 Server.Hostname,
                                 Server.NTSKEPort,
                                 Server.NTPPort,
-                                Timeout:       config.NTSKETimeout,
-                                TimeProvider:  timeProvider
+                                RemoteCertificateValidator:  Server.RemoteCertificateValidator,
+                                Timeout:                     config.NTSKETimeout,
+                                DNSClient:                   DNSClient,
+                                TimeProvider:                timeProvider
                             );
 
             var sw = Stopwatch.StartNew();
