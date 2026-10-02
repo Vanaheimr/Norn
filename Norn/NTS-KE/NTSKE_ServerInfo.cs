@@ -292,15 +292,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                 #region PublicKeys       [optional]
 
-                if (!JSON.ParseOptionalHashSet("publicKeys",
-                                               "NTS public keys",
-                                               s => s,
-                                               out HashSet<String> publicKeysBASE64,
-                                               out ErrorResponse))
-                {
-                    if (ErrorResponse is not null)
-                        return false;
-                }
+                JSON.ParseOptionalHashSet("publicKeys",
+                                          "NTS public keys",
+                                          s => s,
+                                          out HashSet<String> publicKeysBASE64,
+                                          out ErrorResponse);
+
+                if (ErrorResponse is not null)
+                    return false;
 
                 var publicKeys = publicKeysBASE64.Select(publicKeyBASE64 => publicKeyBASE64.FromBASE64()).ToHashSet();
 
@@ -322,29 +321,27 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                 #region Warnings         [optional]
 
-                if (!JSON.ParseOptionalHashSet("warnings",
-                                               "NTS warnings",
-                                               s => Warning.Create(s),
-                                               out HashSet<Warning> warnings,
-                                               out ErrorResponse))
-                {
-                    if (ErrorResponse is not null)
-                        return false;
-                }
+                JSON.ParseOptionalHashSet("warnings",
+                                          "NTS warnings",
+                                          s => Warning.Create(s),
+                                          out HashSet<Warning> warnings,
+                                          out ErrorResponse);
+
+                if (ErrorResponse is not null)
+                    return false;
 
                 #endregion
 
                 #region Errors           [optional]
 
-                if (!JSON.ParseOptionalHashSet("errors",
-                                               "NTS errors",
-                                               s => s,
-                                               out HashSet<String> errors,
-                                               out ErrorResponse))
-                {
-                    if (ErrorResponse is not null)
-                        return false;
-                }
+                JSON.ParseOptionalHashSet("errors",
+                                          "NTS errors",
+                                          s => s,
+                                          out HashSet<String> errors,
+                                          out ErrorResponse);
+
+                if (ErrorResponse is not null)
+                    return false;
 
                 #endregion
 
