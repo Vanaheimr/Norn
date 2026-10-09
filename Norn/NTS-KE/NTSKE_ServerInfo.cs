@@ -32,7 +32,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
     /// <summary>
     /// The Network Time Secure Key Exchange (NTS-KE) server information.
     /// </summary>
-    public class NTSKE_ServerInfo : IEquatable<NTSKE_ServerInfo>
+    public class NTSKE_ServerInfo : IEquatable<NTSKE_ServerInfo>,
+                                    ICBORSerializable<NTSKE_ServerInfo>
     {
 
         #region Data
@@ -419,6 +420,192 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             return CustomNTSKEServerInfoSerializer is not null
                        ? CustomNTSKEServerInfoSerializer(this, json)
                        : json;
+
+        }
+
+        #endregion
+
+
+        #region (static) TryParseCBOR(CBOR, out NTSKEServerInfo, out ErrorResponse)
+
+        /// <summary>
+        /// Try to read the given CBOR representation of a NTS-KE server info: the
+        /// keys of its JSON object - its keys, cookies and public keys as the
+        /// bytes they are, not BASE64.
+        /// </summary>
+        /// <param name="CBOR">The CBOR to be read.</param>
+        /// <param name="NTSKEServerInfo">The NTS-KE server info.</param>
+        /// <param name="ErrorResponse">An optional error response.</param>
+        public static Boolean TryParseCBOR(CBORValue                                   CBOR,
+                                           [NotNullWhen(true)]  out NTSKE_ServerInfo?  NTSKEServerInfo,
+                                           [NotNullWhen(false)] out String?            ErrorResponse)
+        {
+
+            NTSKEServerInfo = null;
+
+            try
+            {
+
+                if (CBOR.Kind != CBORValueKind.Map)
+                {
+                    ErrorResponse = "The given CBOR representation of a NTS-KE server info is not a map!";
+                    return false;
+                }
+
+                if (!CBOR.ParseMandatoryBytes("c2sKey", "C2S key", out var c2sKey, out ErrorResponse) ||
+                    !CBOR.ParseMandatoryBytes("s2cKey", "S2C key", out var s2cKey, out ErrorResponse))
+                {
+                    return false;
+                }
+
+                if (!TryParseList(CBOR, "cookies",    "NTS cookies",     true,  item => item.Kind == CBORValueKind.ByteString ? item.AsBytes() : null,                    out var cookies,    out ErrorResponse) ||
+                    !TryParseList(CBOR, "urls",       "NTS URLs",        true,  item => item.Kind == CBORValueKind.TextString ? URL.TryParse(item.AsText()) : null,       out var urls,       out ErrorResponse) ||
+                    !TryParseList(CBOR, "publicKeys", "NTS public keys", false, item => item.Kind == CBORValueKind.ByteString ? item.AsBytes() : null,                    out var publicKeys, out ErrorResponse) ||
+                    !TryParseList(CBOR, "warnings",   "NTS warnings",    false, item => item.Kind == CBORValueKind.TextString ? Warning.Create(item.AsText()) : null,     out var warnings,   out ErrorResponse) ||
+                    !TryParseList(CBOR, "errors",     "NTS errors",      false, item => item.Kind == CBORValueKind.TextString ? item.AsText() : null,                     out var errors,     out ErrorResponse))
+                {
+                    return false;
+                }
+
+                AEADAlgorithms? aeadAlgorithm = null;
+
+                if (CBOR.ParseOptionalText("aeadAlgorithm",
+                                           "AEAD algorithm",
+                                           out var aeadAlgorithmText,
+                                           out ErrorResponse))
+                {
+                    if (!AEADAlgorithmsExtensions.TryParse(aeadAlgorithmText!, out aeadAlgorithm, out ErrorResponse))
+                        return false;
+                }
+
+                if (ErrorResponse is not null)
+                    return false;
+
+                NTSKEServerInfo = new NTSKE_ServerInfo(
+                                      c2sKey,
+                                      s2cKey,
+                                      cookies,
+                                      urls.Select(url => url!.Value),
+                                      publicKeys,
+                                      aeadAlgorithm,
+                                      warnings,
+                                      errors
+                                  );
+
+                ErrorResponse = null;
+                return true;
+
+            }
+            catch (Exception e)
+            {
+                NTSKEServerInfo  = null;
+                ErrorResponse    = "The given CBOR representation of a NTS-KE server info is invalid: " + e.Message;
+                return false;
+            }
+
+        }
+
+        /// <summary>
+        /// Read the items of the array of the given key, each by the given reader - null for an invalid item.
+        /// </summary>
+        private static Boolean TryParseList<T>(CBORValue                         CBOR,
+                                               String                            Key,
+                                               String                            Description,
+                                               Boolean                           Mandatory,
+                                               Func<CBORValue, T?>               ReadItem,
+                                               out List<T>                       Values,
+                                               [NotNullWhen(false)] out String?  ErrorResponse)
+        {
+
+            Values         = [];
+            ErrorResponse  = null;
+
+            if (!CBOR.TryGetValue(CBORValue.FromText(Key), out var array))
+            {
+                if (Mandatory)
+                    ErrorResponse = $"Missing CBOR property '{Key}' ({Description})!";
+                return !Mandatory;
+            }
+
+            if (array.Kind != CBORValueKind.Array)
+            {
+                ErrorResponse = $"CBOR property '{Key}' ({Description}) is not an array!";
+                return false;
+            }
+
+            var items = array.AsArray();
+
+            for (var i = 0; i < items.Count; i++)
+            {
+
+                var item = ReadItem(items[i]);
+
+                if (item is null)
+                {
+                    ErrorResponse = $"CBOR property '{Key}' ({Description}) item {i} is invalid!";
+                    return false;
+                }
+
+                Values.Add(item);
+
+            }
+
+            return true;
+
+        }
+
+        #endregion
+
+        #region (static) ICBORSerializable<NTSKE_ServerInfo>.TryParse(CBOR, out NTSKEServerInfo, out ErrorResponse)
+
+        /// <summary>
+        /// Try to read the given CBOR representation of a NTS-KE server info - see TryParseCBOR().
+        /// </summary>
+        static Boolean ICBORSerializable<NTSKE_ServerInfo>.TryParse(CBORValue                         CBOR,
+                                                                    out NTSKE_ServerInfo              Value,
+                                                                    [NotNullWhen(false)] out String?  ErrorResponse)
+        {
+            var result = TryParseCBOR(CBOR, out var value, out ErrorResponse);
+            Value = value!;
+            return result;
+        }
+
+        #endregion
+
+        #region ToCBOR(CustomNTSKEServerInfoSerializer = null)
+
+        /// <summary>
+        /// Return the CBOR representation of this NTS-KE server info: the keys of
+        /// its JSON object, its keys, cookies and public keys as bytes.
+        /// </summary>
+        /// <param name="CustomNTSKEServerInfoSerializer">A delegate to serialize custom NTS-KE server infos.</param>
+        public CBORValue ToCBOR(CustomCBORSerializerDelegate<NTSKE_ServerInfo>? CustomNTSKEServerInfoSerializer = null)
+        {
+
+            var entries = new List<KeyValuePair<CBORValue, CBORValue>> {
+                              new (CBORValue.FromText("c2sKey"),   CBORValue.FromBytes(C2SKey)),
+                              new (CBORValue.FromText("s2cKey"),   CBORValue.FromBytes(S2CKey)),
+                              new (CBORValue.FromText("cookies"),  CBORValue.FromArray(Cookies.Select(cookie => CBORValue.FromBytes(cookie)))),
+                              new (CBORValue.FromText("urls"),     CBORValue.FromArray(URLs.   Select(url    => CBORValue.FromText (url.ToString()))))
+                          };
+
+            if (PublicKeys.Any())
+                entries.Add(new (CBORValue.FromText("publicKeys"),     CBORValue.FromArray(PublicKeys.Select(publicKey => CBORValue.FromBytes(publicKey)))));
+
+            if (AEADAlgorithm.HasValue)
+                entries.Add(new (CBORValue.FromText("aeadAlgorithm"),  CBORValue.FromText(AEADAlgorithm.Value.AsText())));
+
+            if (Warnings.Any())
+                entries.Add(new (CBORValue.FromText("warnings"),       CBORValue.FromArray(Warnings.Select(warning => CBORValue.FromText(warning.Text.FirstText())))));
+
+            if (Errors.Any())
+                entries.Add(new (CBORValue.FromText("errors"),         CBORValue.FromArray(Errors.Select(error => CBORValue.FromText(error)))));
+
+            var cbor = CBORValue.FromMap(entries);
+
+            return CustomNTSKEServerInfoSerializer is not null
+                       ? CustomNTSKEServerInfoSerializer(this, cbor)
+                       : cbor;
 
         }
 
