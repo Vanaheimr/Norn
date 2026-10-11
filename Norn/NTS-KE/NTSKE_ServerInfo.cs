@@ -474,12 +474,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                            out var aeadAlgorithmText,
                                            out ErrorResponse))
                 {
+
+                    if (ErrorResponse is not null)
+                        return false;
+
                     if (!AEADAlgorithmsExtensions.TryParse(aeadAlgorithmText!, out aeadAlgorithm, out ErrorResponse))
                         return false;
-                }
 
-                if (ErrorResponse is not null)
-                    return false;
+                }
 
                 NTSKEServerInfo = new NTSKE_ServerInfo(
                                       c2sKey,
