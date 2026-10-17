@@ -263,7 +263,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.Monitoring
             var hostname  = DomainName.Parse("nts-under-test.example");
 
             // Somebody to ask, so that the cache is consulted at all - at a port
-            // nothing listens on, so that asking fails at once.
+            // nothing listens on. Nobody is asked, though: the name has an A
+            // record in the cache, and no AAAA record, cached as well. A port
+            // nothing listens on does not fail at once everywhere - on Windows a
+            // datagram to it is dropped without a word - and the key exchange
+            // asks for both, so an AAAA query left to the network took its whole
+            // budget there.
             var dns       = new DNSClient(
                                 IPv4Address.Localhost,
                                 IPPort.Parse(9),
@@ -273,6 +278,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.Monitoring
             dns.DNSCache.Add(
                 DNSServiceName.Parse(hostname.ToString()),
                 new A(hostname, DNSQueryClasses.IN, TimeSpan.FromHours(1), IPv4Address.Localhost)
+            );
+
+            dns.DNSCache.AddNoData(
+                DNSServiceName.Parse(hostname.ToString()),
+                DNSResourceRecordTypes.AAAA,
+                TimeSpan.FromHours(1)
             );
 
             var result    = await Engine().MeasureSingleServer(
