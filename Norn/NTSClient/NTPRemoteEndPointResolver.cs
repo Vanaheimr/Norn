@@ -180,6 +180,50 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #endregion
 
+        #region QueryIPAddressesToConnect(DNSClient, Hostname, IPVersionPreference, Timeout, CancellationToken)
+
+        /// <summary>
+        /// The addresses to connect to the given name, as far as the given preference allows them: of one family
+        /// only, when only one will do, asked for that family alone; else of both, with the Resolution Delay of
+        /// RFC 8305 §3.
+        /// </summary>
+        /// <remarks>
+        /// With both families, AAAA and A are asked for at once, and once one of them has answered with addresses
+        /// the other is waited for 50 ms and no longer (see Hermod's Query_IPAddressesToConnect): a name server
+        /// that never answers for one family costs 50 ms, and not the whole budget of the key exchange or the NTP
+        /// request. Measured with a name whose A record was in the cache and whose AAAA query went to a name server
+        /// that dropped it: the key exchange, with a budget of 10 s, waited for the AAAA answer until it timed out.
+        /// A family that alone will do is not cut short by the other one's answer: it is the only one asked for.
+        /// </remarks>
+        /// <param name="DNSClient">The DNS client to ask.</param>
+        /// <param name="Hostname">The name to connect to.</param>
+        /// <param name="IPVersionPreference">Which address families will do, and which is preferred.</param>
+        /// <param name="Timeout">The timeout of each query.</param>
+        /// <param name="CancellationToken">A cancellation token.</param>
+        public static async Task<IEnumerable<IIPAddress>> QueryIPAddressesToConnect(DNSClient            DNSClient,
+                                                                                   DomainName           Hostname,
+                                                                                   IPVersionPreference  IPVersionPreference,
+                                                                                   TimeSpan             Timeout,
+                                                                                   CancellationToken    CancellationToken = default)
+
+            => IPVersionPreference switch {
+
+                   IPVersionPreference.IPv6Only  => (await DNSClient.Query_IPv6Addresses(Hostname,
+                                                                                         Timeout,
+                                                                                         CancellationToken: CancellationToken).ConfigureAwait(false)).Cast<IIPAddress>(),
+
+                   IPVersionPreference.IPv4Only  => (await DNSClient.Query_IPv4Addresses(Hostname,
+                                                                                         Timeout,
+                                                                                         CancellationToken: CancellationToken).ConfigureAwait(false)).Cast<IIPAddress>(),
+
+                   _                             =>  await DNSClient.Query_IPAddressesToConnect(Hostname,
+                                                                                                Timeout:            Timeout,
+                                                                                                CancellationToken:  CancellationToken).ConfigureAwait(false)
+
+               };
+
+        #endregion
+
         #region ResolveAsync(NTSKEResponse, FallbackHost, FallbackPort, DNSClient, IPVersionPreference, Timeout, CancellationToken)
 
 /// <param name="ChosenServer">
@@ -256,10 +300,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                 try
                 {
-                    ipAddresses = await DNSClient.Query_IPAddresses(
+                    ipAddresses = await QueryIPAddressesToConnect(
+                                           DNSClient,
                                            DomainName.Parse(normalized),
-                                           Timeout:            Timeout,
-                                           CancellationToken:  CancellationToken
+                                           IPVersionPreference,
+                                           Timeout,
+                                           CancellationToken
                                        ).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException)

@@ -54,6 +54,19 @@ Console.WriteLine(ntp.Diagnostics.StopwatchRoundTripTime);
 Console.WriteLine(ntp.Diagnostics.CookiePoolDiagnostics?.AvailableCookieCount);
 ```
 
+### Name resolution
+
+The key exchange host, and an NTP server the key exchange names by name, are
+resolved with the Resolution Delay of RFC 8305 §3 ("Happy Eyeballs Version 2"):
+AAAA and A are asked for at once, and once one family has answered with
+addresses the other is waited for 50 ms and no longer. A name server that never
+answers for one family - an AAAA query dropped on the way, a resolver that knows
+only the A record - so costs 50 ms, and not the whole budget of the key
+exchange. The addresses are tried IPv6 first, unless `IPVersionPreference`
+says otherwise; `IPv6Only` and `IPv4Only` ask for that family alone. The
+monitoring's own DNS measurement still waits for both answers, to see all the
+addresses a name has.
+
 ### NTS server
 
 ```csharp
@@ -141,6 +154,7 @@ other perfectly, and no test with Norn on both ends could ever have found it.
 - [rfc5905 - Network Time Protocol Version 4: Protocol and Algorithms Specification](https://datatracker.ietf.org/doc/html/rfc5905)
 - [rfc7384 - Security Requirements of Time Protocols in Packet Switched Networks](https://datatracker.ietf.org/doc/html/rfc7384)
 - [rfc7822 - Network Time Protocol Version 4 (NTPv4) Extension Fields](https://datatracker.ietf.org/doc/html/rfc7822)
+- [rfc8305 - Happy Eyeballs Version 2: Better Connectivity Using Concurrency](https://datatracker.ietf.org/doc/html/rfc8305) - the Resolution Delay of its section 3
 - [rfc8915 - Network Time Security for the Network Time Protocol](https://datatracker.ietf.org/doc/html/rfc8915)
 
 

@@ -299,6 +299,51 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.Monitoring
         #endregion
 
 
+        #region TheKeyExchangeDoesNotWaitForAnAAAAAnswerOnceItHasTheAAnswer()
+
+        /// <summary>
+        /// The key exchange asks for AAAA and A at once, and once the A answer is
+        /// there it waits for the AAAA answer the Resolution Delay of RFC 8305,
+        /// 50 ms, and no longer.
+        /// </summary>
+        /// <remarks>
+        /// Only the A record is cached here; the AAAA query goes to a port nothing
+        /// listens on, which on Windows drops the datagram without a word. Waiting
+        /// for both answers, the key exchange waited for the AAAA answer until its
+        /// budget of 10 s was spent, twice over with the name server asked again,
+        /// and failed - with the address it needed in the cache all along.
+        /// </remarks>
+        [Test]
+        public async Task TheKeyExchangeDoesNotWaitForAnAAAAAnswerOnceItHasTheAAnswer()
+        {
+
+            var hostname  = DomainName.Parse("nts-a-only.example");
+
+            var dns       = new DNSClient(
+                                IPv4Address.Localhost,
+                                IPPort.Parse(9),
+                                QueryTimeout: TimeSpan.FromSeconds(1)
+                            );
+
+            dns.DNSCache.Add(
+                DNSServiceName.Parse(hostname.ToString()),
+                new A(hostname, DNSQueryClasses.IN, TimeSpan.FromHours(1), IPv4Address.Localhost)
+            );
+
+            var result    = await Engine().MeasureSingleServer(
+                                      Endpoint(hostname, (sender, certificate, chain, client, errors) => TLSValidationResult.Success()),
+                                      Guid.NewGuid(),
+                                      dns
+                                  );
+
+            Assert.That(result.NTSKE?.Success,        Is.True,  result.ErrorMessage?.ToString());
+            Assert.That(result.NTSKE!.TotalDuration,  Is.LessThan(TimeSpan.FromSeconds(3)), "not the budget of the key exchange");
+
+        }
+
+        #endregion
+
+
         #region (private static) FindFreeTCPPort() / FindFreeUDPPort()
 
         private static IPPort FindFreeTCPPort()

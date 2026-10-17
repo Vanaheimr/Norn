@@ -436,11 +436,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                         ? IPv6Address.Parse(literalIPAddress.ToString())
                                         : IPv4Address.Parse(literalIPAddress.ToString()) ];
 
+                // AAAA and A at once, and not waiting for a family that does not answer once the other has:
+                // the Resolution Delay of RFC 8305 §3, so that a name server dropping one of the two queries
+                // does not take the whole budget of the key exchange.
                 else
-                    ipAddresses = await DNSClient.Query_IPAddresses(
+                    ipAddresses = await NTPRemoteEndPointResolver.QueryIPAddressesToConnect(
+                                            DNSClient,
                                             Hostname,
-                                            Timeout:            timeout,
-                                            CancellationToken:  timeoutCTS.Token
+                                            this.IPVersionPreference,
+                                            timeout,
+                                            timeoutCTS.Token
                                         ).ConfigureAwait(false);
 
                 resolvedIPAddresses  = this.IPVersionPreference switch {
