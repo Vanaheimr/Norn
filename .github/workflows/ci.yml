@@ -60,8 +60,8 @@ jobs:
         working-directory: Norn
         run: dotnet build NornTests/NornTests.csproj --configuration Release
 
-      # 70 tests, a few seconds: AES-SIV and CMAC vectors, NTP and NTS-KE wire formats,
-      # cookie sealing, client-side response validation, and an in-process NTS server on
+      # A few seconds: AES-SIV and CMAC vectors, NTP and NTS-KE wire formats, cookie
+      # sealing, client-side response validation, and an in-process NTS server on
       # loopback ports.
       #
       # Left out: Category "External" and "LiveNetwork" — real NTS-KE handshakes and NTP

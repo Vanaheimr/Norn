@@ -4,7 +4,7 @@
 
 <img src="Logo/norn-logo.svg" alt="drawing" width="25%"/>
 
-This software library allow you to implement and use the *Network Time Secure* protocol as defined by the IETF together with some vendor extensions for additional use cases.
+This software library allows you to implement and use the *Network Time Secure* protocol as defined by the IETF together with some vendor extensions for additional use cases.
 
 ## Quickstart
 
@@ -160,7 +160,7 @@ other perfectly, and no test with Norn on both ends could ever have found it.
 
 ### Project Security Policy
 
-We take security very seriously abd continuously review security vulnerabilities within the code, and try to provide fixes in a timely manner.
+We take security very seriously and continuously review security vulnerabilities within the code, and try to provide fixes in a timely manner.
 
 Please report security vulnerabilities in the Issues section of this repository. By keeping security issues visible, we leverage our community in helping fix them promptly.
 

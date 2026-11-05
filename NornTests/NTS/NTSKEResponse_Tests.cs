@@ -181,7 +181,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         {
 
             var records = CreateValidResponseRecords(
-                              NTSKE_Record.Error("Server refused request")
+                              NTSKE_Record.Error(NTSKEErrorCodes.BadRequest)
                           );
 
             Assert.That(
