@@ -35,8 +35,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.Monitoring
 
     /// <summary>
     /// What a measurement engine hands the client that makes a key exchange:
-    /// the server's own certificate validator, and the name servers of the
-    /// round - and when it makes a key exchange again.
+    /// the server's own certificate validator, the AEAD algorithms its endpoint
+    /// names, and the name servers of the round - and when it makes a key
+    /// exchange again.
     /// </summary>
     /// <remarks>
     /// Against a server of Norn's own on the loopback interface, as the NTS
@@ -338,6 +339,85 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.Monitoring
 
             Assert.That(result.NTSKE?.Success,        Is.True,  result.ErrorMessage?.ToString());
             Assert.That(result.NTSKE!.TotalDuration,  Is.LessThan(TimeSpan.FromSeconds(3)), "not the budget of the key exchange");
+
+        }
+
+        #endregion
+
+        #region TheKeyExchangeOffersWhatTheEndpointNames()
+
+        /// <summary>
+        /// An endpoint that names its AEAD algorithms is offered those and no
+        /// others, and one that names none the client's own list.
+        /// </summary>
+        /// <remarks>
+        /// The server here agrees to both of the client's, and chooses from the
+        /// client's list in the client's order (RFC 8915 § 4.1.5): offered the
+        /// whole list, it agrees on AES-128-GCM-SIV, and offered AES-SIV-CMAC-256
+        /// alone, on that one. The engine used to make its client without the
+        /// endpoint's list, so an endpoint naming AES-SIV-CMAC-256 got
+        /// AES-128-GCM-SIV.
+        /// </remarks>
+        [Test]
+        public async Task TheKeyExchangeOffersWhatTheEndpointNames()
+        {
+
+            var named     = Endpoint(loopback, (sender, certificate, chain, client, errors) => TLSValidationResult.Success());
+            named.OfferedAEADAlgorithms = [ AEADAlgorithms.AES_SIV_CMAC_256 ];
+
+            var unnamed   = Endpoint(loopback, (sender, certificate, chain, client, errors) => TLSValidationResult.Success());
+
+            var engine1   = Engine();
+            var result1   = await engine1.MeasureSingleServer(named,   Guid.NewGuid(), NoNameServers());
+
+            var engine2   = Engine();
+            var result2   = await engine2.MeasureSingleServer(unnamed, Guid.NewGuid(), NoNameServers());
+
+            Assert.Multiple(() => {
+                Assert.That(result1.Success,                                       Is.True,  result1.ErrorMessage?.ToString());
+                Assert.That(engine1.KeyExchanges[loopback].NTSKEResponse?.AEADAlgorithm,
+                            Is.EqualTo(AEADAlgorithms.AES_SIV_CMAC_256),            "the endpoint's algorithm was not the one offered");
+                Assert.That(result2.Success,                                       Is.True,  result2.ErrorMessage?.ToString());
+                Assert.That(engine2.KeyExchanges[loopback].NTSKEResponse?.AEADAlgorithm,
+                            Is.EqualTo(AEADAlgorithms.AES_128_GCM_SIV),             "an endpoint naming none was not offered the client's list");
+            });
+
+        }
+
+        #endregion
+
+        #region AKeyExchangeOnAnAlgorithmNoLongerOfferedIsMadeAgain()
+
+        /// <summary>
+        /// A key exchange that agreed on an algorithm the endpoint no longer
+        /// offers is not reused: the next round makes a new one, on what it
+        /// offers now, and reuses that.
+        /// </summary>
+        [Test]
+        public async Task AKeyExchangeOnAnAlgorithmNoLongerOfferedIsMadeAgain()
+        {
+
+            var engine    = Engine();
+            var endpoint  = Endpoint(loopback, (sender, certificate, chain, client, errors) => TLSValidationResult.Success());
+
+            var first     = await engine.MeasureSingleServer(endpoint, Guid.NewGuid(), NoNameServers());
+            var before    = engine.KeyExchanges[loopback].NTSKEResponse?.AEADAlgorithm;
+
+            endpoint.OfferedAEADAlgorithms = [ AEADAlgorithms.AES_SIV_CMAC_256 ];
+
+            var second    = await engine.MeasureSingleServer(endpoint, Guid.NewGuid(), NoNameServers());
+            var after     = engine.KeyExchanges[loopback].NTSKEResponse?.AEADAlgorithm;
+
+            var third     = await engine.MeasureSingleServer(endpoint, Guid.NewGuid(), NoNameServers());
+
+            Assert.Multiple(() => {
+                Assert.That(first. Success,          Is.True,                             first. ErrorMessage?.ToString());
+                Assert.That(before,                  Is.EqualTo(AEADAlgorithms.AES_128_GCM_SIV));
+                Assert.That(second.NTSKEFromCache,   Is.False,                            "the key exchange on the other algorithm was reused");
+                Assert.That(second.Success,          Is.True,                             second.ErrorMessage?.ToString());
+                Assert.That(after,                   Is.EqualTo(AEADAlgorithms.AES_SIV_CMAC_256));
+                Assert.That(third. NTSKEFromCache,   Is.True,                             "the new key exchange was not reused");
+            });
 
         }
 

@@ -386,6 +386,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         /// And with the server's own certificate validator, where it has one: the
         /// handshake is the only moment its certificate is seen, and a key
         /// exchange is reused for as long as its cookies last.
+        ///
+        /// And offering the AEAD algorithms the server's endpoint names, where it
+        /// names any. They used to be read from nowhere, so an endpoint held to
+        /// one algorithm was offered the client's whole list.
         /// </remarks>
         private async Task<NTSKEMeasurementResult> MeasureNTSKE(NTSServerEndpoint  Server,
                                                                 DNSClient          DNSClient,
@@ -397,6 +401,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                                 Server.NTSKEPort,
                                 Server.NTPPort,
                                 RemoteCertificateValidator:  Server.RemoteCertificateValidator,
+                                OfferedAEADAlgorithms:       Server.OfferedAEADAlgorithms,
                                 Timeout:                     config.NTSKETimeout,
                                 DNSClient:                   DNSClient,
                                 TimeProvider:                timeProvider
@@ -869,11 +874,22 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
         #region (private) GetOrRefreshNTSKE (Server)
 
+        /// <summary>
+        /// The key exchange held for this server, where it may be reused.
+        /// </summary>
+        /// <remarks>
+        /// Not one that agreed on an algorithm the endpoint no longer offers:
+        /// its cookies and keys are of that algorithm, so reusing it would go on
+        /// with what the endpoint was changed to rule out.
+        /// </remarks>
         private CachedNTSKEState? GetOrRefreshNTSKE(NTSServerEndpoint Server)
         {
 
             if (ntskeCache.TryGetValue(Server.Hostname, out var cached) &&
-                !cached.NeedsRefresh(config.NTSKERefreshInterval, timeProvider))
+                !cached.NeedsRefresh(config.NTSKERefreshInterval, timeProvider) &&
+                (Server.OfferedAEADAlgorithms is not { } offered ||
+                 cached.NTSKEResponse is not { } response        ||
+                 offered.Contains(response.AEADAlgorithm)))
             {
                 return cached;
             }
