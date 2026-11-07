@@ -135,6 +135,19 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         public Double?                         DelayVarAsymmetry      { get; set; }
 
         /// <summary>
+        /// The key exchange server to ask for the keys and cookies, where it is another than
+        /// <see cref="Hostname"/> - or none, where the host name is the key exchange server.
+        /// </summary>
+        /// <remarks>
+        /// The NTSKEServerURL of an NTP client in the Secure Time Synchronization white paper.
+        /// The host name stays the server this endpoint is, and is asked for as its NTP server;
+        /// the NTP server is still the one the key exchange response names, or this key exchange
+        /// server where it names none (RFC 8915 § 4.1.7). The certificate shown is this key
+        /// exchange server's, and the key exchange is kept, as before, by the host name.
+        /// </remarks>
+        public DomainName?                     NTSKEHost              { get; set; }
+
+        /// <summary>
         /// What decides whether this server's NTS-KE certificate is believed, or
         /// none for the usual rule: a chain to whatever the machine trusts, issued
         /// for this host.
@@ -164,7 +177,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                                  TimeSpan?                                                      MinRefresh                   = null,
                                  TimeSpan?                                                      MaxRefresh                   = null,
                                  TimeSpan?                                                      DelayAsymmetry               = null,
-                                 Double?                                                        DelayVarAsymmetry            = null)
+                                 Double?                                                        DelayVarAsymmetry            = null,
+                                 DomainName?                                                    NTSKEHost                    = null)
         {
 
             this.Hostname                    = Hostname;
@@ -179,6 +193,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
             this.MaxRefresh                  = MaxRefresh;
             this.DelayAsymmetry              = DelayAsymmetry;
             this.DelayVarAsymmetry           = DelayVarAsymmetry;
+            this.NTSKEHost                   = NTSKEHost;
 
         }
 

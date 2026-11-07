@@ -144,6 +144,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public IReadOnlyList<AEADAlgorithms> OfferedAEADAlgorithms { get; }
 
         /// <summary>
+        /// The NTP server this client asks its key exchange server for, or none where the key
+        /// exchange server is to name it, or be it.
+        /// </summary>
+        /// <remarks>
+        /// Sent as an NTPv4 Server Negotiation record in every key exchange request, over TLS and
+        /// over SSH alike. Not critical: a server that does not know it goes on as without it,
+        /// and the response decides either way (RFC 8915 § 4.1.7).
+        /// </remarks>
+        public DomainName? RequestedNTPServer { get; }
+
+        /// <summary>
         /// The most recent successful key exchange, whoever asked for it.
         /// </summary>
         /// <remarks>
@@ -207,6 +218,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// for a client that queries the same server repeatedly, and a single query can never
         /// use it at all.
         /// </param>
+        /// <param name="RequestedNTPServer">
+        /// The NTP server to ask the key exchange server for, where it is another than the key
+        /// exchange server itself: an NTPv4 Server Negotiation record in the request (RFC 8915
+        /// § 4.1.7). The NTP server is still the one the response names, or the key exchange
+        /// server where it names none.
+        /// </param>
         public NTSClient(DomainName                                                     Hostname,
                          IPPort?                                                        NTSKE_Port                   = null,
                          IPPort?                                                        NTP_Port                     = null,
@@ -219,7 +236,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                          Boolean                                                        InterleavedMode              = false,
                          IEnumerable<AEADAlgorithms>?                                   OfferedAEADAlgorithms        = null,
                          Boolean                                                        CompliantAES128GCMSIVExporterContext = true,
-                         TimeProvider?                                                  TimeProvider                 = null)
+                         TimeProvider?                                                  TimeProvider                 = null,
+                         DomainName?                                                    RequestedNTPServer           = null)
         {
 
             this.Id                          = Id                  ?? RandomExtensions.RandomUInt16();
@@ -237,6 +255,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                    Where(NTSAEAD.IsSupported).
                                                    ToArray();
             this.CompliantAES128GCMSIVExporterContext = CompliantAES128GCMSIVExporterContext;
+            this.RequestedNTPServer          = RequestedNTPServer;
 
             if (this.OfferedAEADAlgorithms.Count == 0)
                 throw new ArgumentException("At least one of the offered AEAD algorithms has to be one this client can perform.",
@@ -247,14 +266,19 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         #endregion
 
 
-        #region (private) BuildNTSKERequest (RequestNTSPublicKeys = false, OverSSH = false)
+        #region BuildNTSKERequest (RequestNTSPublicKeys = false, OverSSH = false)
 
         /// <summary>
         /// Create a new NTS-KE request.
         /// </summary>
+        /// <remarks>
+        /// Public so that what a key exchange asks for can be seen without one: the records a
+        /// request carries are this client's settings, and a server that ignores one of them
+        /// does not say so.
+        /// </remarks>
         /// <param name="RequestNTSPublicKeys">Whether to request the public keys used for NTS response signing.</param>
         /// <param name="OverSSH">Whether the request goes over the SSH subsystem instead of TLS.</param>
-        private Byte[] BuildNTSKERequest(Boolean RequestNTSPublicKeys = false,
+        public  Byte[] BuildNTSKERequest(Boolean RequestNTSPublicKeys = false,
                                          Boolean OverSSH              = false)
         {
 
@@ -290,6 +314,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             if (RequestNTSPublicKeys)
                 records.Add(NTSKE_Record.NTSRequestPublicKey());
+
+            // The NTP server asked for, on both transports, before the end of the message.
+            if (RequestedNTPServer is DomainName ntpServer)
+                records.Add(new NTSKERecords.NTPv4ServerNegotiation(false, System.Text.Encoding.ASCII.GetBytes(ntpServer.Trimmed)));
 
             records.Add(NTSKE_Record.EndOfMessage);
 

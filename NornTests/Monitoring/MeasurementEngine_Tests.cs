@@ -684,6 +684,81 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.Monitoring
 
         #endregion
 
+        #region AKeyExchangeRequestAsksForTheRequestedNTPServerOnBothTransports()
+
+        /// <summary>
+        /// A client told to ask for an NTP server sends an NTPv4 Server
+        /// Negotiation record naming it - not critical, before the end of the
+        /// message - over TLS and over SSH alike; one not told sends none.
+        /// </summary>
+        [Test]
+        public void AKeyExchangeRequestAsksForTheRequestedNTPServerOnBothTransports()
+        {
+
+            static NTSKE_Record[] Records(Byte[] Request)
+            {
+                Assert.That(NTSKE_Record.TryParse(Request, out var records, out var error), Is.True, error);
+                return [.. records!];
+            }
+
+            var asking   = new NTSClient(DomainName.Parse("ntske.example.org"), RequestedNTPServer: DomainName.Parse("ntp.example.org"));
+            var plain    = new NTSClient(DomainName.Parse("ntske.example.org"));
+
+            var tls      = Records(asking.BuildNTSKERequest());
+            var ssh      = Records(asking.BuildNTSKERequest(OverSSH: true));
+            var none     = Records(plain. BuildNTSKERequest());
+
+            Assert.Multiple(() => {
+
+                foreach (var (records, transport) in new[] { (tls, "TLS"), (ssh, "SSH") })
+                {
+                    var asked = records.Where(record => record.Type == NTSKE_RecordTypes.NTPv4ServerNegotiation).ToArray();
+                    Assert.That(asked,                                                   Has.Length.EqualTo(1),  transport);
+                    Assert.That(System.Text.Encoding.ASCII.GetString(asked[0].Body),    Is.EqualTo("ntp.example.org"),  transport);
+                    Assert.That(asked[0].IsCritical,                                     Is.False,  transport);
+                    Assert.That(records[^1].Type,                                        Is.EqualTo(NTSKE_RecordTypes.EndOfMessage),  $"{transport}: the end of the message is not last");
+                }
+
+                Assert.That(none.Select(record => record.Type),  Has.None.EqualTo(NTSKE_RecordTypes.NTPv4ServerNegotiation));
+
+            });
+
+        }
+
+        #endregion
+
+        #region AnEndpointWithAKeyExchangeServerOfItsOwnIsMeasuredThroughIt()
+
+        /// <summary>
+        /// An endpoint whose host name no resolver knows, but which names a key
+        /// exchange server of its own, makes its key exchange there - and, the
+        /// response naming no NTP server, asks that server for the time. The key
+        /// exchange is kept by the endpoint's host name.
+        /// </summary>
+        [Test]
+        public async Task AnEndpointWithAKeyExchangeServerOfItsOwnIsMeasuredThroughIt()
+        {
+
+            var engine    = Engine();
+            var unknown   = DomainName.Parse("time.example.invalid");
+            var endpoint  = Endpoint(unknown, (sender, certificate, chain, client, errors) => TLSValidationResult.Success());
+
+            var without   = await engine.MeasureSingleServer(endpoint, Guid.NewGuid(), NoNameServers());
+
+            endpoint.NTSKEHost = loopback;
+
+            var with      = await engine.MeasureSingleServer(endpoint, Guid.NewGuid(), NoNameServers());
+
+            Assert.Multiple(() => {
+                Assert.That(without.Success,                      Is.False,  "a host name nobody knows was reached");
+                Assert.That(with.   Success,                      Is.True,   with.ErrorMessage?.ToString());
+                Assert.That(engine.KeyExchanges.ContainsKey(unknown),  Is.True,  "the key exchange is not kept by the endpoint's host name");
+            });
+
+        }
+
+        #endregion
+
         #region AnEndpointWithoutARefreshOfItsOwnHasTheEnginesInterval()
 
         /// <summary>

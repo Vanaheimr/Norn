@@ -428,15 +428,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                                                                 CancellationToken  CancellationToken = default)
         {
 
+            // At the endpoint's own key exchange server, where it names one, asking it for the
+            // endpoint's host name as the NTP server.
             var ntsClient = new NTSClient(
-                                Server.Hostname,
+                                Server.NTSKEHost ?? Server.Hostname,
                                 Server.NTSKEPort,
                                 Server.NTPPort,
                                 RemoteCertificateValidator:  Server.RemoteCertificateValidator,
                                 OfferedAEADAlgorithms:       Server.OfferedAEADAlgorithms,
                                 Timeout:                     config.NTSKETimeout,
                                 DNSClient:                   DNSClient,
-                                TimeProvider:                timeProvider
+                                TimeProvider:                timeProvider,
+                                RequestedNTPServer:          Server.NTSKEHost is not null ? Server.Hostname : null
                             );
 
             var sw = Stopwatch.StartNew();
@@ -1147,11 +1150,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
             var ntskeResponse  = CachedState.NTSKEResponse;
 
+            // Where the response names no NTP server, it is the key exchange server: the
+            // endpoint's own, where it names one, and its host name otherwise.
+            var keyExchange    = Server.NTSKEHost ?? Server.Hostname;
+
             // The text and not the domain name. What the key exchange named may
             // be an address, which a DomainName cannot hold - and the check
             // below was written expecting one, so it could never have fired.
-            var hostText       = NTPRemoteEndPointResolver.GetRemoteHostText(ntskeResponse, Server.Hostname);
-            var host           = NTPRemoteEndPointResolver.GetRemoteHost    (ntskeResponse, Server.Hostname);
+            var hostText       = NTPRemoteEndPointResolver.GetRemoteHostText(ntskeResponse, keyExchange);
+            var host           = NTPRemoteEndPointResolver.GetRemoteHost    (ntskeResponse, keyExchange);
             var port           = NTPRemoteEndPointResolver.GetRemotePort    (ntskeResponse, Server.NTPPort);
             var normalized     = hostText.Trim('[', ']').TrimEnd('.');
 
@@ -1165,7 +1172,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
             // wrong.
             else if ((ntskeResponse?.NTPv4ServerNames.Any() != true ||
                       String.Equals(normalized,
-                                    Server.Hostname.ToString().TrimEnd('.'),
+                                    keyExchange.ToString().TrimEnd('.'),
                                     StringComparison.OrdinalIgnoreCase)) &&
                             ntskeResponse?.TimingInfo?.ConnectedIPAddress is not null)
                 ipAddress = ntskeResponse. TimingInfo. ConnectedIPAddress;
