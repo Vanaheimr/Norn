@@ -17,6 +17,10 @@
 
 #region Usings
 
+using System.Buffers.Binary;
+using System.Security.Cryptography;
+using System.Text;
+
 using Org.BouncyCastle.Tls;
 
 #endregion
@@ -25,10 +29,35 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 {
 
     /// <summary>
+    /// The one function the keys of RFC 8915 § 5.1 are derived with: keying material of the
+    /// given length for a label and a context.
+    /// </summary>
+    /// <remarks>
+    /// Over TLS this is the TLS exporter. NTS-KE over SSH has no TLS, and gets the same function
+    /// from one of two other sources: the SSH exporter of the connection (option A of the white
+    /// paper "NTS Key Establishment over SSH", section 4.3), or a secret the server sends in the
+    /// SSH Key Binding record (option B, section 4.4). Everything above this function — the
+    /// label, the five-octet context, the key lengths — is the same for all three.
+    /// </remarks>
+    /// <param name="Label">The exporter label, <see cref="NTSKE_ExportedKeys.ExporterLabel"/> for NTS.</param>
+    /// <param name="Context">The exporter context, see <see cref="NTSKE_ExportedKeys.Context"/>.</param>
+    /// <param name="Length">How many octets of keying material to derive.</param>
+    public delegate Byte[] NTSKE_Exporter(String  Label,
+                                          Byte[]  Context,
+                                          Int32   Length);
+
+
+    /// <summary>
     /// The client-to-server and server-to-client keys of RFC 8915 § 5.1, derived from a finished
     /// NTS-KE handshake for every algorithm that could still be agreed.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// The derivation runs on an <see cref="NTSKE_Exporter"/>, so that TLS, the SSH exporter and
+    /// the secret transported over SSH are interchangeable sources of one and the same
+    /// derivation — see <see cref="TLSExporter"/>, <see cref="SSHExporter"/> and
+    /// <see cref="TransportedSecretExporter"/>.
+    /// </para>
     /// <para>
     /// Every algorithm, because the TLS exporter can only be used from the handshake-complete
     /// callback. BouncyCastle discards the exporter secret the moment it returns — "Export of key
@@ -59,6 +88,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// algorithm.
         /// </summary>
         public const String ExporterLabel = "EXPORTER-network-time-security";
+
+        /// <summary>
+        /// The length of the secret that option B of NTS-KE over SSH transports in the SSH Key
+        /// Binding record: thirty-two octets, the output length of SHA-256, which is what
+        /// HKDF-Expand needs as its pseudorandom key at the least.
+        /// </summary>
+        public const Int32  TransportedSecretLength = 32;
 
         /// <summary>
         /// Keyed by the algorithm the session will use <em>and</em> the algorithm id written into
@@ -148,6 +184,130 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #endregion
 
+        #region (static) TLSExporter(TLSContext)
+
+        /// <summary>
+        /// The TLS exporter of RFC 8446 § 7.5, which is where RFC 8915 takes its keys from.
+        /// </summary>
+        /// <param name="TLSContext">A TLS context inside its handshake-complete callback.</param>
+        public static NTSKE_Exporter TLSExporter(TlsContext TLSContext)
+
+            => (label, context, length) => TLSContext.ExportKeyingMaterial(label, context, length);
+
+        #endregion
+
+        #region (static) SSHExporter(ExporterSecret, HashAlgorithm)
+
+        /// <summary>
+        /// Option A of NTS-KE over SSH: the SSH exporter of the connection, section 4.3 of the
+        /// white paper "NTS Key Establishment over SSH".
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// SSH-Exporter(label, context, L) = HKDF-Expand(PRK = exporter_secret, info =
+        /// string(label) || string(context), L), with HMAC over the hash function of the key
+        /// exchange method. This is that second half.
+        /// </para>
+        /// <para>
+        /// The first half, exporter_secret = HASH(K || H || string("ssh-exporter@open.charging.cloud")
+        /// || session_id), needs the shared secret K of the key exchange, which only the SSH stack
+        /// ever holds — so it has to come from there, and no SSH stack hands it out yet.
+        /// </para>
+        /// </remarks>
+        /// <param name="ExporterSecret">The exporter_secret of the SSH connection.</param>
+        /// <param name="HashAlgorithm">The hash function of the key exchange method.</param>
+        public static NTSKE_Exporter SSHExporter(Byte[]             ExporterSecret,
+                                                 HashAlgorithmName  HashAlgorithm)
+
+            => HKDFExpandExporter(
+                   ExporterSecret.ToArray(),
+                   HashAlgorithm
+               );
+
+        #endregion
+
+        #region (static) TransportedSecretExporter(NTSKESecret)
+
+        /// <summary>
+        /// Option B of NTS-KE over SSH: the secret the server sends in the SSH Key Binding record,
+        /// section 4.4 of the white paper "NTS Key Establishment over SSH".
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// NTS-Exporter(label, context, L) = HKDF-Expand-SHA256(PRK = nts_ke_secret, info =
+        /// string(label) || string(context), L) — option A with another pseudorandom key, which is
+        /// why both share <see cref="HKDFExpandExporter"/>.
+        /// </para>
+        /// <para>
+        /// It is safe because the secret travels inside the SSH channel whose far end the client
+        /// has authenticated by its host key: whoever can read the secret can read and forge the
+        /// records and the cookies as well, and has broken SSH itself.
+        /// </para>
+        /// </remarks>
+        /// <param name="NTSKESecret">The <see cref="TransportedSecretLength"/> octets of nts_ke_secret.</param>
+        /// <exception cref="ArgumentException">The secret is not <see cref="TransportedSecretLength"/> octets long.</exception>
+        public static NTSKE_Exporter TransportedSecretExporter(Byte[] NTSKESecret)
+        {
+
+            if (NTSKESecret.Length != TransportedSecretLength)
+                throw new ArgumentException($"The transported NTS-KE secret must be {TransportedSecretLength} octets long, not {NTSKESecret.Length}.",
+                                            nameof(NTSKESecret));
+
+            return HKDFExpandExporter(
+                       NTSKESecret.ToArray(),
+                       HashAlgorithmName.SHA256
+                   );
+
+        }
+
+        #endregion
+
+        #region (static) ExporterInfo(Label, Context)
+
+        /// <summary>
+        /// The HKDF info of both SSH sources: string(label) || string(context), each as an SSH
+        /// string, i.e. with a 32-bit length in network byte order before its octets.
+        /// </summary>
+        /// <remarks>
+        /// Two length-prefixed fields rather than a bare concatenation, so that no label and
+        /// context can be shifted into another pair that gives the same info.
+        /// </remarks>
+        /// <param name="Label">The exporter label.</param>
+        /// <param name="Context">The exporter context.</param>
+        public static Byte[] ExporterInfo(String  Label,
+                                          Byte[]  Context)
+        {
+
+            var label  = Encoding.ASCII.GetBytes(Label);
+            var info   = new Byte[4 + label.Length + 4 + Context.Length];
+
+            BinaryPrimitives.WriteUInt32BigEndian(info.AsSpan(0),                (UInt32) label.  Length);
+            label.  CopyTo(info, 4);
+
+            BinaryPrimitives.WriteUInt32BigEndian(info.AsSpan(4 + label.Length), (UInt32) Context.Length);
+            Context.CopyTo(info, 4 + label.Length + 4);
+
+            return info;
+
+        }
+
+        #endregion
+
+        #region (private static) HKDFExpandExporter(PRK, HashAlgorithm)
+
+        private static NTSKE_Exporter HKDFExpandExporter(Byte[]             PRK,
+                                                         HashAlgorithmName  HashAlgorithm)
+
+            => (label, context, length) => HKDF.Expand(
+                                               HashAlgorithm,
+                                               PRK,
+                                               length,
+                                               ExporterInfo(label, context)
+                                           );
+
+        #endregion
+
+
         #region (static) ExportAll(TLSContext)
 
         /// <summary>
@@ -155,6 +315,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </summary>
         /// <param name="TLSContext">A TLS context inside its handshake-complete callback.</param>
         public static NTSKE_ExportedKeys ExportAll(TlsContext TLSContext)
+
+            => ExportAll(TLSExporter(TLSContext));
+
+        #endregion
+
+        #region (static) ExportAll(Exporter)
+
+        /// <summary>
+        /// Derive every key pair that this key exchange could still turn out to need.
+        /// </summary>
+        /// <param name="Exporter">The source of the keying material.</param>
+        public static NTSKE_ExportedKeys ExportAll(NTSKE_Exporter Exporter)
         {
 
             var exportedKeys = new NTSKE_ExportedKeys();
@@ -165,12 +337,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             foreach (var algorithm in NTSAEAD.Implemented)
             {
 
-                exportedKeys.Export(TLSContext, algorithm, CompliantExporterContext: true);
+                exportedKeys.Export(Exporter, algorithm, CompliantExporterContext: true);
 
                 // And the same algorithm again under chrony's context, for a peer that turns out
                 // not to have asked for the compliant one.
                 if (ExporterAlgorithmFor(algorithm, CompliantExporterContext: false) != algorithm)
-                    exportedKeys.Export(TLSContext, algorithm, CompliantExporterContext: false);
+                    exportedKeys.Export(Exporter, algorithm, CompliantExporterContext: false);
 
             }
 
@@ -180,9 +352,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #endregion
 
-        #region (private) Export(TLSContext, Algorithm, CompliantExporterContext)
+        #region (private) Export(Exporter, Algorithm, CompliantExporterContext)
 
-        private void Export(TlsContext      TLSContext,
+        private void Export(NTSKE_Exporter  Exporter,
                             AEADAlgorithms  Algorithm,
                             Boolean         CompliantExporterContext)
         {
@@ -194,12 +366,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             var exporterAlgorithm  = ExporterAlgorithmFor(Algorithm, CompliantExporterContext);
 
             keys[(Algorithm, exporterAlgorithm)] = (
-                TLSContext.ExportKeyingMaterial(
+                Exporter(
                     ExporterLabel,
                     Context(exporterAlgorithm, ServerToClient: false),
                     keyLength
                 ),
-                TLSContext.ExportKeyingMaterial(
+                Exporter(
                     ExporterLabel,
                     Context(exporterAlgorithm, ServerToClient: true),
                     keyLength

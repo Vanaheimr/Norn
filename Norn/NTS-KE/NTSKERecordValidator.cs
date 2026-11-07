@@ -31,27 +31,43 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
     public static class NTSKERecordValidator
     {
 
-        #region ValidateServerResponse(Records, out ErrorMessage, out ErrorCategory)
+        #region ValidateServerResponse(Records, out ErrorMessage, out ErrorCategory, OverSSH = false)
 
+        /// <param name="Records">The records of the server's response.</param>
+        /// <param name="ErrorMessage">Why the response is not acceptable.</param>
+        /// <param name="ErrorCategory">What kind of failure that is.</param>
+        /// <param name="OverSSH">Whether the response came over the SSH subsystem, where the SSH Key Binding record is known.</param>
         public static Boolean ValidateServerResponse(IEnumerable<NTSKE_Record>              Records,
                                                      [NotNullWhen(false)] out String?       ErrorMessage,
-                                                     out NTSKEErrorCategory                 ErrorCategory)
+                                                     out NTSKEErrorCategory                 ErrorCategory,
+                                                     Boolean                                OverSSH   = false)
 
             => ValidateServerResponse(
                    Records,
                    out ErrorMessage,
                    out ErrorCategory,
-                   out _
+                   out _,
+                   OverSSH
                );
 
         #endregion
 
-        #region ValidateServerResponse(Records, out ErrorMessage, out ErrorCategory, out WarningMessages)
+        #region ValidateServerResponse(Records, out ErrorMessage, out ErrorCategory, out WarningMessages, OverSSH = false)
 
+        /// <param name="Records">The records of the server's response.</param>
+        /// <param name="ErrorMessage">Why the response is not acceptable.</param>
+        /// <param name="ErrorCategory">What kind of failure that is.</param>
+        /// <param name="WarningMessages">The warnings of the response, formatted.</param>
+        /// <param name="OverSSH">
+        /// Whether the response came over the SSH subsystem. Only there is the critical SSH Key
+        /// Binding record known: over TLS it says that the server mistook the transport, and the
+        /// keys it implies are not the ones this client derives from the TLS exporter.
+        /// </param>
         public static Boolean ValidateServerResponse(IEnumerable<NTSKE_Record>              Records,
                                                      [NotNullWhen(false)] out String?       ErrorMessage,
                                                      out NTSKEErrorCategory                 ErrorCategory,
-                                                     out IEnumerable<String>                WarningMessages)
+                                                     out IEnumerable<String>                WarningMessages,
+                                                     Boolean                                OverSSH   = false)
         {
 
             var records = Records.ToList();
@@ -68,7 +84,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             {
 
                 if (record.IsCritical &&
-                    !IsKnownRecordType(record.Type))
+                    !IsKnownRecordType(record.Type) &&
+                    !(OverSSH && record.Type == NTSKE_RecordTypes.SSHKeyBinding))
                 {
 
                     ErrorMessage   = $"NTS-KE response contains an unknown critical record type {(UInt16) record.Type}.";
@@ -163,6 +180,35 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 ErrorMessage   = "NTS-KE response negotiated an unsupported AEAD algorithm.";
                 ErrorCategory  = NTSKEErrorCategory.UnsupportedAlgorithm;
                 return false;
+
+            }
+
+
+            // Over SSH the keys come from the one SSH Key Binding record of the response, and
+            // nothing else can say which source to derive them from: no record means no keys,
+            // two mean two different answers to the same question.
+            if (OverSSH)
+            {
+
+                var keyBindingRecords = records.Count(record => record.Type == NTSKE_RecordTypes.SSHKeyBinding);
+
+                if (keyBindingRecords == 0)
+                {
+
+                    ErrorMessage   = "NTS-KE response over SSH did not select a source of its keys in an SSH Key Binding record.";
+                    ErrorCategory  = NTSKEErrorCategory.MissingRequiredRecord;
+                    return false;
+
+                }
+
+                if (keyBindingRecords > 1)
+                {
+
+                    ErrorMessage   = $"NTS-KE response over SSH carries {keyBindingRecords} SSH Key Binding records instead of one.";
+                    ErrorCategory  = NTSKEErrorCategory.Protocol;
+                    return false;
+
+                }
 
             }
 

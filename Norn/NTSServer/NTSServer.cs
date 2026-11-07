@@ -32,6 +32,8 @@ using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Hermod;
 using org.GraphDefined.Vanaheimr.Hermod.DNS;
 using org.GraphDefined.Vanaheimr.Hermod.HTTP;
+using org.GraphDefined.Vanaheimr.Hermod.SSH;
+using org.GraphDefined.Vanaheimr.Hermod.SSH.Server;
 
 using org.GraphDefined.Vanaheimr.Norn.NTP;
 
@@ -139,6 +141,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         private readonly         X509Certificate?                         tlsCertificate;
         private readonly         ECPrivateKeyParameters?                  tlsPrivateKey;
         private readonly         String?                                  tlsServerSubjectName;
+        private readonly         ISshUserAuthenticator?                   sshAuthenticator;
+        private                  SshServer?                               sshServer;
 
         private                  Int64                                    ntpRequestsReceived;
         private                  Int64                                    ntpRequestsRejected;
@@ -172,6 +176,20 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// The NTP UDP port.
         /// </summary>
         public IPPort            UDPPort         { get; }      = IPPort.NTP;
+
+        /// <summary>
+        /// The TCP port of the SSH listener for NTS-KE over SSH, or null when this server has none.
+        /// </summary>
+        /// <remarks>
+        /// Without a listener of its own the server can still answer NTS-KE over SSH on somebody
+        /// else's, see <see cref="ServeSSHSubsystemAsync"/>.
+        /// </remarks>
+        public IPPort?                     SSHPort       { get; }
+
+        /// <summary>
+        /// The host keys of the SSH listener, which clients pin. Empty when there is no listener.
+        /// </summary>
+        public IReadOnlyList<ISshHostKey>  SSHHostKeys   { get; }
 
         /// <summary>
         /// The size of the buffer used for receiving NTP packets.
@@ -345,6 +363,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <param name="RateLimiter">An optional RFC 8633 § 5.4 request rate limiter (default: none, so every request is answered).</param>
         /// <param name="SupportedAEADAlgorithms">The AEAD algorithms to agree to (default: <see cref="NTSAEAD.Supported"/>).</param>
         /// <param name="TimeProvider">The optional clock this server reads and reports (default: <see cref="System.TimeProvider.System"/>).</param>
+        /// <param name="SSHPort">The optional TCP port of an SSH listener for NTS-KE over SSH (default: none).</param>
+        /// <param name="SSHHostKeys">The host keys of that listener (default: a fresh Ed25519 key, which no client can have pinned yet).</param>
+        /// <param name="SSHAuthenticator">Who may log in to that listener; required with <paramref name="SSHPort"/>.</param>
         public NTSServer(I18NString?        Description    = null,
                          IPPort?            NTSKEPort      = null,
                          IPPort?            NTSPort        = null,
@@ -373,8 +394,25 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                          InterleavedModePolicy? InterleavedMode           = null,
                          NTPRateLimiter?    RateLimiter                   = null,
                          IEnumerable<AEADAlgorithms>? SupportedAEADAlgorithms = null,
-                         TimeProvider?      TimeProvider                  = null)
+                         TimeProvider?      TimeProvider                  = null,
+                         IPPort?            SSHPort                       = null,
+                         IEnumerable<ISshHostKey>? SSHHostKeys            = null,
+                         ISshUserAuthenticator?    SSHAuthenticator       = null)
         {
+
+            // An SSH listener hands out cookies to whoever logs in, so who that may be is never a
+            // default: there is no SSH server here that lets everybody in by accident.
+            if (SSHPort.HasValue && SSHAuthenticator is null)
+                throw new ArgumentException("An SSH listener for NTS-KE needs an authenticator that says who may log in.",
+                                            nameof(SSHAuthenticator));
+
+            this.SSHPort                      = SSHPort;
+            this.SSHHostKeys                  = SSHPort.HasValue
+                                                    ? SSHHostKeys?.ToArray() is { Length: > 0 } hostKeys
+                                                          ? hostKeys
+                                                          : [ SshHostKey.GenerateEd25519() ]
+                                                    : [];
+            this.sshAuthenticator             = SSHAuthenticator;
 
             this.TimeProvider                 = TimeProvider                 ?? System.TimeProvider.System;
             this.Description                  = Description                  ?? I18NString.Empty;
@@ -601,7 +639,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// records, so a malformed request was answered with a successful handshake and a
         /// client's offers were ignored in favour of this server's defaults.
         /// </summary>
-        private NTSKENegotiation NegotiateNTSKE(IEnumerable<NTSKE_Record> NTSKERequest)
+        /// <param name="NTSKERequest">The records of the request.</param>
+        /// <param name="OverSSH">
+        /// Whether the request came over the SSH subsystem. Only there is the SSH Key Binding
+        /// record known; over TLS its critical bit makes it an unrecognized critical record, as it
+        /// would be for any server that follows RFC 8915.
+        /// </param>
+        private NTSKENegotiation NegotiateNTSKE(IEnumerable<NTSKE_Record>  NTSKERequest,
+                                                Boolean                    OverSSH   = false)
         {
 
             var records = NTSKERequest.ToArray();
@@ -610,7 +655,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             // Type MUST ignore the record if the Critical Bit is 0 and MUST treat it as an
             // error if the Critical Bit is 1", and § 4.1.3 code 0 covers exactly that case.
             var unknownCritical = records.FirstOrDefault(record => record.IsCritical &&
-                                                                   !IsKnownRecordType(record.Type));
+                                                                   !IsKnownRecordType(record.Type) &&
+                                                                   !(OverSSH && record.Type == NTSKE_RecordTypes.SSHKeyBinding));
 
             if (unknownCritical is not null)
                 return NTSKENegotiation.Refuse(
@@ -695,7 +741,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             // do it — chrony's clients cannot, and answering one of those with the compliant
             // derivation produces a session neither side can use. Under any other algorithm the
             // record has nothing to say, so it is not echoed and does not change the keys.
-            var compliantAES128GCMSIVExporterContext = negotiatedAEAD == AEADAlgorithms.AES_128_GCM_SIV &&
+            //
+            // Over SSH it has nothing to say either: the deviation it works around lives in the
+            // TLS-based implementations, and NTS-KE over SSH always uses § 5.1's context.
+            var compliantAES128GCMSIVExporterContext = !OverSSH &&
+                                                       negotiatedAEAD == AEADAlgorithms.AES_128_GCM_SIV &&
                                                        records.Any(record => record.Type == NTSKE_RecordTypes.CompliantAES128GCMSIVExporterContext);
 
             return NTSKENegotiation.Accept(
@@ -756,10 +806,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #region (private) BuildNTSKEResponseRecords(Negotiation, NTSKERequest, C2SKey, S2CKey)
 
+        /// <param name="Negotiation">What the request agreed.</param>
+        /// <param name="NTSKERequest">The records of the request.</param>
+        /// <param name="C2SKey">The client-to-server key the cookies carry.</param>
+        /// <param name="S2CKey">The server-to-client key the cookies carry.</param>
+        /// <param name="KeyBinding">The SSH Key Binding record of a response over SSH, which says where the two keys came from.</param>
         private IEnumerable<NTSKE_Record> BuildNTSKEResponseRecords(NTSKENegotiation           Negotiation,
                                                                     IEnumerable<NTSKE_Record>  NTSKERequest,
                                                                     Byte[]                    C2SKey,
-                                                                    Byte[]                    S2CKey)
+                                                                    Byte[]                    S2CKey,
+                                                                    NTSKE_Record?             KeyBinding   = null)
         {
 
             // Both lists carry what was actually agreed, and are empty when nothing was —
@@ -778,6 +834,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             // with. Silence means chrony's, which is what silence has always meant.
             if (Negotiation.CompliantAES128GCMSIVExporterContext)
                 ntsKERecords.Add(NTSKE_Record.CompliantAES128GCMSIVExporterContext());
+
+            if (KeyBinding is not null)
+                ntsKERecords.Add(KeyBinding);
 
             // Everything below concerns an NTPv4 association. Without one there is nothing to
             // point the client at and nothing a cookie could authenticate.
@@ -836,6 +895,161 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             ntsKERecords.Add(NTSKE_Record.EndOfMessage);
 
             return ntsKERecords;
+
+        }
+
+        #endregion
+
+        #region ServeSSHSubsystemAsync(Context, CancellationToken)
+
+        /// <summary>
+        /// Serve one NTS-KE exchange over SSH: read the request from the channel of the subsystem
+        /// <see cref="NTSKE_SSH.SubsystemName"/>, answer it, and end the channel.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Public, and shaped as the subsystem handler of Hermod's SSH server, so that it serves
+        /// the SSH listener of this server as well as the shared SSH listener of a charging
+        /// infrastructure node, which offers NTS-KE next to OCPP (section 8.3 of the white paper).
+        /// Whoever serves it decides who may open the subsystem; this only answers.
+        /// </para>
+        /// <para>
+        /// One exchange per channel, as RFC 8915 has one per TLS connection. Option B takes
+        /// nothing from the connection, so a client may open the subsystem again on the same
+        /// connection, and every exchange gets a secret of its own.
+        /// </para>
+        /// </remarks>
+        /// <param name="Context">The session and the channel of the subsystem.</param>
+        /// <param name="CancellationToken">Fires when the channel is closed or the SSH server stops.</param>
+        public async ValueTask ServeSSHSubsystemAsync(SshSubsystemContext  Context,
+                                                      CancellationToken    CancellationToken)
+        {
+
+            System.Threading.Interlocked.Increment(ref ntskeConnectionsAccepted);
+
+            if (!await ntskeConnectionSemaphore.WaitAsync(0, CancellationToken).ConfigureAwait(false))
+            {
+                System.Threading.Interlocked.Increment(ref ntskeConnectionsRejected);
+                DebugX.Log($"Closing NTS-KE over SSH from {Context.Session.Peer}: too many concurrent key exchanges.");
+                return;     // and the SSH server closes the channel
+            }
+
+            try
+            {
+
+                // The request is given NTSKERequestTimeout, and the answer a little more, so that a
+                // request that never arrived complete can still be told why it was refused.
+                using var requestCTS = CancellationTokenSource.CreateLinkedTokenSource(CancellationToken);
+                requestCTS.CancelAfter(NTSKERequestTimeout + TimeSpan.FromSeconds(5));
+
+                var (requestBytes, errorMessage) = await NTSKEMessageReader.ReadAsync(
+                                                             Context.Channel.Input,
+                                                             NTSKERequestTimeout,
+                                                             MaxNTSKERequestSize,
+                                                             requestCTS.Token
+                                                         ).ConfigureAwait(false);
+
+                var ntsKERecords = AnswerNTSKERequestOverSSH(
+                                       requestBytes,
+                                       errorMessage,
+                                       Context.Session
+                                   );
+
+                await Context.Channel.SendDataAsync(ntsKERecords.ToByteArray(), requestCTS.Token).ConfigureAwait(false);
+                await Context.Channel.SendEofAsync (                             requestCTS.Token).ConfigureAwait(false);
+
+                System.Threading.Interlocked.Increment(ref ntskeResponsesSent);
+
+            }
+            catch (Exception e)
+            {
+                System.Threading.Interlocked.Increment(ref ntskeHandshakeFailures);
+                DebugX.Log($"NTS-KE over SSH from {Context.Session.Peer} failed: {e.Message}");
+            }
+            finally
+            {
+                ntskeConnectionSemaphore.Release();
+            }
+
+        }
+
+        #endregion
+
+        #region (private) AnswerNTSKERequestOverSSH(RequestBytes, ReadError, Session)
+
+        /// <summary>
+        /// The response to an NTS-KE request over SSH: the records of RFC 8915 as over TLS, plus
+        /// the SSH Key Binding record that carries the secret the keys are derived from.
+        /// </summary>
+        /// <param name="RequestBytes">The request, or null when none arrived complete.</param>
+        /// <param name="ReadError">Why no request arrived complete.</param>
+        /// <param name="Session">Who sent it.</param>
+        private IEnumerable<NTSKE_Record> AnswerNTSKERequestOverSSH(Byte[]?         RequestBytes,
+                                                                    String?         ReadError,
+                                                                    SshSessionInfo  Session)
+        {
+
+            IEnumerable<NTSKE_Record> Refuse(NTSKEErrorCodes ErrorCode, String? Reason)
+            {
+                System.Threading.Interlocked.Increment(ref ntskeRequestsInvalid);
+                DebugX.Log($"Refusing NTS-KE request over SSH from {Session.Username} ({Session.Peer}) with error {(UInt16) ErrorCode}: {Reason}");
+                return BuildNTSKEErrorRecords(ErrorCode);
+            }
+
+            if (RequestBytes is null)
+                return Refuse(NTSKEErrorCodes.BadRequest, ReadError);
+
+            if (!NTSKE_Record.TryParse(RequestBytes, out var ntsKERequest, out var errorResponse))
+                return Refuse(NTSKEErrorCodes.BadRequest, errorResponse);
+
+            var negotiation = NegotiateNTSKE(ntsKERequest, OverSSH: true);
+
+            if (negotiation.ErrorCode.HasValue)
+                return Refuse(negotiation.ErrorCode.Value, negotiation.Reason);
+
+            #region SSH Key Binding (section 5 of the white paper)
+
+            // Exactly one: the record is how the client says which sources of keys it can use,
+            // and the server cannot pick from two lists.
+            var keyBindings = ntsKERequest.OfType<NTSKERecords.SSHKeyBinding>().ToArray();
+
+            if (keyBindings.Length != 1)
+                return Refuse(NTSKEErrorCodes.BadRequest,
+                              $"the request carries {keyBindings.Length} SSH Key Binding records instead of one");
+
+            if (!keyBindings[0].TryGetOfferedMethods(out var offeredMethods, out var methodError))
+                return Refuse(NTSKEErrorCodes.BadRequest, methodError);
+
+            // The first method of the client's list that this server supports — which is the
+            // transport, as long as no SSH stack hands out the exporter of option A. A client that
+            // does not offer it is not following the white paper, which makes the transport
+            // mandatory to implement.
+            if (!offeredMethods.Contains((UInt16) SSHKeyBindingMethods.Transport))
+                return Refuse(NTSKEErrorCodes.BadRequest,
+                              $"the SSH Key Binding record offers {String.Join(", ", offeredMethods.Select(method => $"0x{method:x4}"))}, " +
+                              $"but not the transport (0x{(UInt16) SSHKeyBindingMethods.Transport:x4}) this server supports");
+
+            #endregion
+
+            // A secret of its own for every exchange. It travels inside the SSH channel, whose far
+            // end the client authenticated by its host key, and leaves this method only there.
+            var ntsKESecret       = RandomNumberGenerator.GetBytes(NTSKE_ExportedKeys.TransportedSecretLength);
+
+            // Always § 5.1's context: see NegotiateNTSKE on why record 1024 means nothing here.
+            var (c2sKey, s2cKey)  = NTSKE_ExportedKeys.ExportAll(NTSKE_ExportedKeys.TransportedSecretExporter(ntsKESecret)).
+                                                       For(negotiation.AEADAlgorithm ?? NTSAEAD.Default,
+                                                           CompliantExporterContext: true);
+
+            return BuildNTSKEResponseRecords(
+                       negotiation,
+                       ntsKERequest,
+                       c2sKey,
+                       s2cKey,
+                       NTSKE_Record.SSHKeyBindingResponse(
+                           SSHKeyBindingMethods.Transport,
+                           ntsKESecret
+                       )
+                   );
 
         }
 
@@ -1436,6 +1650,40 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             #endregion
 
+            #region Start NTS-KE SSH server
+
+            // A special-purpose SSH server, section 8.1 of the white paper: the NTS-KE subsystem
+            // and nothing else. No shell, no exec, no SFTP and no forwarding are configured, and
+            // Hermod's SSH server offers nothing it was not told to.
+            if (SSHPort.HasValue)
+            {
+
+                sshServer = new SshServer(
+                                new SshServerOptions {
+                                    HostKeys       = SSHHostKeys,
+                                    Authenticator  = sshAuthenticator!,
+                                    Subsystems     = (session, name, ct) => ValueTask.FromResult<SshSubsystemHandler?>(
+                                                                                name == NTSKE_SSH.SubsystemName
+                                                                                    ? ServeSSHSubsystemAsync
+                                                                                    : null
+                                                                            )
+                                }
+                            );
+
+                await sshServer.StartAsync(
+                          new IPSocket(
+                              ListenIPAddress,
+                              SSHPort.Value
+                          ),
+                          CancellationToken
+                      ).ConfigureAwait(false);
+
+                DebugX.Log($"NTS-KE over SSH started on port {SSHPort}/TCP");
+
+            }
+
+            #endregion
+
         }
 
         #endregion
@@ -1458,6 +1706,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             try { udpSocket?.Close(); } catch { }
             try { tcpSocket?.Close(); } catch { }
+
+            if (sshServer is not null)
+            {
+                try { await sshServer.DisposeAsync().ConfigureAwait(false); } catch { }
+                sshServer = null;
+            }
 
             var listenerTasks = new[] {
                                     udpLoopTask,

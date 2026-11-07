@@ -213,6 +213,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                    body
                                ),
 
+                        NTSKE_RecordTypes.SSHKeyBinding
+                            => new NTSKERecords.SSHKeyBinding(
+                                   critical,
+                                   body
+                               ),
+
 
                         _   => new NTSKE_Record(
                                    critical,
@@ -454,6 +460,34 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             => new NTSKERecords.NTSPublicKey(
                    false,
                    PublicKey.ToByteArray()
+               );
+
+        /// <summary>
+        /// SSH Key Binding of a request: the methods the client offers, most preferred first.
+        /// </summary>
+        /// <remarks>
+        /// Critical, unlike the vendor extensions above: a server that does not know it has no
+        /// keys to give, and must say so rather than carry on.
+        /// </remarks>
+        /// <param name="Methods">The offered methods, most preferred first.</param>
+        public static NTSKE_Record  SSHKeyBindingRequest(params SSHKeyBindingMethods[] Methods)
+
+            => new NTSKERecords.SSHKeyBinding(
+                   true,
+                   ToNetworkByteOrder([.. Methods.Select(method => (UInt16) method)])
+               );
+
+        /// <summary>
+        /// SSH Key Binding of a response: the method the server selected, and its data.
+        /// </summary>
+        /// <param name="Method">The selected method.</param>
+        /// <param name="NTSKESecret">The secret of <see cref="SSHKeyBindingMethods.Transport"/>; nothing for the exporter.</param>
+        public static NTSKE_Record  SSHKeyBindingResponse(SSHKeyBindingMethods  Method,
+                                                          Byte[]?               NTSKESecret   = null)
+
+            => new NTSKERecords.SSHKeyBinding(
+                   true,
+                   [.. ToNetworkByteOrder((UInt16) Method), .. NTSKESecret ?? []]
                );
 
         #endregion

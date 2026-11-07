@@ -26,6 +26,8 @@ using Org.BouncyCastle.Tls;
 using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Hermod;
 using org.GraphDefined.Vanaheimr.Hermod.DNS;
+using org.GraphDefined.Vanaheimr.Hermod.SSH;
+using org.GraphDefined.Vanaheimr.Hermod.SSH.Client;
 
 using org.GraphDefined.Vanaheimr.Norn.NTP;
 
@@ -245,13 +247,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         #endregion
 
 
-        #region (private) BuildNTSKERequest (RequestNTSPublicKeys = false)
+        #region (private) BuildNTSKERequest (RequestNTSPublicKeys = false, OverSSH = false)
 
         /// <summary>
         /// Create a new NTS-KE request.
         /// </summary>
         /// <param name="RequestNTSPublicKeys">Whether to request the public keys used for NTS response signing.</param>
-        private Byte[] BuildNTSKERequest(Boolean RequestNTSPublicKeys = false)
+        /// <param name="OverSSH">Whether the request goes over the SSH subsystem instead of TLS.</param>
+        private Byte[] BuildNTSKERequest(Boolean RequestNTSPublicKeys = false,
+                                         Boolean OverSSH              = false)
         {
 
             var records = new List<NTSKE_Record>() {
@@ -268,11 +272,21 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             // this client can do. Without this record chrony's server assumes the other one — and
             // so must this client, or the two agree on an algorithm and then never manage to
             // exchange a packet on it.
-            if (CompliantAES128GCMSIVExporterContext &&
+            //
+            // Not over SSH, though: the deviation lives in the TLS-based implementations, and NTS-KE
+            // over SSH always derives with RFC 8915 § 5.1's context.
+            if (!OverSSH &&
+                CompliantAES128GCMSIVExporterContext &&
                 OfferedAEADAlgorithms.Contains(AEADAlgorithms.AES_128_GCM_SIV))
             {
                 records.Add(NTSKE_Record.CompliantAES128GCMSIVExporterContext());
             }
+
+            // Where the keys may come from without a TLS exporter. Only the transport of option B
+            // for now: the SSH exporter of option A would need the shared secret of the SSH key
+            // exchange, which the SSH client does not hand out.
+            if (OverSSH)
+                records.Add(NTSKE_Record.SSHKeyBindingRequest(SSHKeyBindingMethods.Transport));
 
             if (RequestNTSPublicKeys)
                 records.Add(NTSKE_Record.NTSRequestPublicKey());
@@ -754,6 +768,210 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             {
                 return NTSKEResult.Failed(
                            "NTS-KE operation canceled.",
+                           NTSKEErrorCategory.Canceled,
+                           TakeTimingInfoSnapshot()
+                       );
+            }
+            catch (Exception ex)
+            {
+                return NTSKEResult.Failed(
+                           ex.Message,
+                           TakeTimingInfoSnapshot()
+                       );
+            }
+
+        }
+
+        #endregion
+
+        #region GetNTSKERecordsOverSSH (SSHClient, RequestNTSPublicKeys = false, Timeout = null, CancellationToken = default)
+
+        /// <summary>
+        /// Get NTS-KE records over SSH instead of TLS: the subsystem
+        /// <see cref="NTSKE_SSH.SubsystemName"/> of the white paper "NTS Key Establishment over
+        /// SSH", with the transported secret of option B.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The SSH connection is the caller's. Connecting, verifying the host key against a pin or
+        /// an SSH CA, and logging in with the client's key all happen before this, and the trust
+        /// placed in that host key is the trust in the cookies this returns. It is also what lets
+        /// the key exchange run as one more channel of a connection that already carries OCPP
+        /// (section 8.3 of the white paper), without a handshake of its own.
+        /// </para>
+        /// <para>
+        /// NTP afterwards is exactly as after a key exchange over TLS: the response carries the
+        /// keys and the cookies, and <c>QueryTime</c> takes it as it is.
+        /// </para>
+        /// </remarks>
+        /// <param name="SSHClient">An SSH connection to the NTS-KE server, authenticated in both directions.</param>
+        /// <param name="RequestNTSPublicKeys">Whether to request the public keys used for NTS response signing.</param>
+        /// <param name="Timeout">An optional timeout.</param>
+        /// <param name="CancellationToken">An optional cancellation token.</param>
+        public async Task<NTSKEResult> GetNTSKERecordsOverSSH(SshClient          SSHClient,
+                                                              Boolean            RequestNTSPublicKeys   = false,
+                                                              TimeSpan?          Timeout                = null,
+                                                              CancellationToken  CancellationToken      = default)
+        {
+
+            var timeout                = Timeout ?? this.Timeout ?? DefaultTimeout;
+            var totalStopwatch         = Stopwatch.StartNew();
+            var ntsKEProtocolDuration  = default(TimeSpan?);
+
+            // No DNS, no TCP and no TLS of its own: the SSH connection was there before.
+            NTSKE_TimingInfo TakeTimingInfoSnapshot()
+                => new (
+                       NTSKEProtocolDuration:  ntsKEProtocolDuration,
+                       TotalDuration:          totalStopwatch.Elapsed
+                   );
+
+            try
+            {
+
+                using var timeoutCTS = CancellationTokenSource.CreateLinkedTokenSource(CancellationToken);
+                timeoutCTS.CancelAfter(timeout);
+
+                var ntsKEStopwatch = Stopwatch.StartNew();
+
+                SshMuxChannel channel;
+
+                try
+                {
+                    channel = await SSHClient.OpenSubsystemAsync(
+                                        NTSKE_SSH.SubsystemName,
+                                        timeoutCTS.Token
+                                    ).ConfigureAwait(false);
+                }
+                catch (SshWireException e)
+                {
+
+                    // Section 3.2 of the white paper: a client whose subsystem request is refused
+                    // gives up, and never falls back to another transport in silence — that would
+                    // trade the host key it pinned for whatever the other transport trusts.
+                    return NTSKEResult.Failed(
+                               $"The SSH server refused the subsystem '{NTSKE_SSH.SubsystemName}': {e.Message}",
+                               NTSKEErrorCategory.SSHSubsystem,
+                               TakeTimingInfoSnapshot()
+                           );
+
+                }
+
+                try
+                {
+
+                    await channel.SendDataAsync(
+                              BuildNTSKERequest(RequestNTSPublicKeys, OverSSH: true),
+                              timeoutCTS.Token
+                          ).ConfigureAwait(false);
+
+                    // The records delimit themselves by their lengths, just as over TLS, so the
+                    // same reader serves: the channel is a byte stream like any other.
+                    var readResult = await NTSKEMessageReader.ReadAsync(
+                                               channel.Input,
+                                               timeout,
+                                               MaxNTSKEResponseSize,
+                                               timeoutCTS.Token
+                                           ).ConfigureAwait(false);
+
+                    ntsKEProtocolDuration = ntsKEStopwatch.Elapsed;
+
+                    if (readResult.ErrorMessage is not null)
+                        return NTSKEResult.Failed(
+                                   readResult.ErrorMessage,
+                                   TakeTimingInfoSnapshot()
+                               );
+
+                    if (readResult.ResponseBytes is null ||
+                        readResult.ResponseBytes.Length == 0)
+                        return NTSKEResult.Failed(
+                                   "No NTS-KE response received over SSH!",
+                                   NTSKEErrorCategory.Timeout,
+                                   TakeTimingInfoSnapshot()
+                               );
+
+                    if (!NTSKE_Record.TryParse(readResult.ResponseBytes, out var records, out var errorResponse))
+                        return NTSKEResult.Failed(
+                                   errorResponse ?? "Could not parse NTS-KE response!",
+                                   NTSKEErrorCategory.Protocol,
+                                   TakeTimingInfoSnapshot()
+                               );
+
+                    if (!NTSKERecordValidator.ValidateServerResponse(records, out var validationError, out var validationErrorCategory, OverSSH: true))
+                        return NTSKEResult.Failed(
+                                   validationError ?? "Invalid NTS-KE response!",
+                                   validationErrorCategory,
+                                   TakeTimingInfoSnapshot()
+                               );
+
+                    // The choice is from the offered list, as over TLS — see GetNTSKERecords.
+                    var negotiated = new NTSKE_Response(records, [], []).AEADAlgorithm;
+
+                    if (!OfferedAEADAlgorithms.Contains(negotiated))
+                        return NTSKEResult.Failed(
+                                   $"The server chose AEAD algorithm {negotiated.AsText()} " +
+                                   $"({(UInt16) negotiated}), which this client did not offer " +
+                                   $"({String.Join(", ", OfferedAEADAlgorithms.Select(algorithm => algorithm.AsText()))}).",
+                                   NTSKEErrorCategory.UnsupportedAlgorithm,
+                                   TakeTimingInfoSnapshot()
+                               );
+
+                    // The validator has made sure that there is exactly one.
+                    var keyBinding = records.OfType<NTSKERecords.SSHKeyBinding>().Single();
+
+                    if (!keyBinding.TryGetSelection(out var method, out var ntsKESecret, out var selectionError))
+                        return NTSKEResult.Failed(
+                                   selectionError,
+                                   NTSKEErrorCategory.Protocol,
+                                   TakeTimingInfoSnapshot()
+                               );
+
+                    if (method != SSHKeyBindingMethods.Transport)
+                        return NTSKEResult.Failed(
+                                   $"The server selected the SSH Key Binding method {method} (0x{(UInt16) method:x4}), " +
+                                   $"which this client did not offer.",
+                                   NTSKEErrorCategory.Protocol,
+                                   TakeTimingInfoSnapshot()
+                               );
+
+                    // Always § 5.1's context over SSH, which record 1024 does not change.
+                    (C2S_Key, S2C_Key) = NTSKE_ExportedKeys.ExportAll(NTSKE_ExportedKeys.TransportedSecretExporter(ntsKESecret)).
+                                                            For(negotiated, CompliantExporterContext: true);
+
+                    var ntsKEResponse = new NTSKE_Response(
+                                            records,
+                                            C2S_Key,
+                                            S2C_Key,
+                                            TakeTimingInfoSnapshot()
+                                        );
+
+                    LastNTSKEResponse = ntsKEResponse;
+
+                    return NTSKEResult.SuccessResult(ntsKEResponse);
+
+                }
+                finally
+                {
+                    try
+                    {
+                        await channel.CloseAsync(CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch
+                    { }
+                }
+
+            }
+            catch (OperationCanceledException) when (!CancellationToken.IsCancellationRequested)
+            {
+                return NTSKEResult.Failed(
+                           "NTS-KE operation over SSH timed out.",
+                           NTSKEErrorCategory.Timeout,
+                           TakeTimingInfoSnapshot()
+                       );
+            }
+            catch (OperationCanceledException) when (CancellationToken.IsCancellationRequested)
+            {
+                return NTSKEResult.Failed(
+                           "NTS-KE operation over SSH canceled.",
                            NTSKEErrorCategory.Canceled,
                            TakeTimingInfoSnapshot()
                        );

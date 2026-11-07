@@ -29,6 +29,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         TCPConnect,
         TLSHandshake,
         TLSCertificate,
+
+        /// <summary>
+        /// The SSH server refused the NTS-KE subsystem, so it does not speak NTS-KE over SSH, or
+        /// not to this login.
+        /// </summary>
+        SSHSubsystem,
+
         Timeout,
         Protocol,
         UnknownCriticalRecord,

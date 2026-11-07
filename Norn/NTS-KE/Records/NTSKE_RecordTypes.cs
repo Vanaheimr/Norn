@@ -44,6 +44,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                16384 => "NTS Request PublicKey",
                16385 => "NTS PublicKey",
+               16386 => "SSH Key Binding",
 
                 1024 => "Compliant AES-128-GCM-SIV Exporter Context",
 
@@ -124,6 +125,24 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// NTS Public Key — a Norn extension, not an RFC 8915 record.
         /// </summary>
         NTSPublicKey               = 16385,
+
+        /// <summary>
+        /// SSH Key Binding — NTS-KE over SSH, not an RFC 8915 record: where the keys come from
+        /// when there is no TLS exporter, and the secret of option B.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Section 5 of the white paper "NTS Key Establishment over SSH". Provisional, from the
+        /// same private range as the two records above; a coordinated value would be one from the
+        /// "Specification Required" range 1024 to 16383.
+        /// </para>
+        /// <para>
+        /// Unlike the two above it always goes out critical. It only ever travels over the SSH
+        /// subsystem, whose name already says that the server knows it, and a server reached over
+        /// TLS on port 4460 must refuse it rather than hand out keys the client cannot derive.
+        /// </para>
+        /// </remarks>
+        SSHKeyBinding              = 16386,
 
 
         /// <summary>
