@@ -128,6 +128,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         /// </summary>
         public Boolean                       PreflightSent             { get; init; }
 
+        /// <summary>
+        /// The digitally signed response the server was asked for after the
+        /// measurement, where its endpoint asks for one: see
+        /// NTSServerEndpoint.SignedResponses.
+        /// </summary>
+        public SignedResponseResult?         SignedResponse            { get; init; }
+
         #endregion
 
         #region Constructor(s)

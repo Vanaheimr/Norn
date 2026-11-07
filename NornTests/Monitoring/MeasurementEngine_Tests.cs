@@ -759,6 +759,44 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.Monitoring
 
         #endregion
 
+        #region AnEndpointAskingForSignedResponsesGetsOneAfterEachMeasurement()
+
+        /// <summary>
+        /// An endpoint asking for signed responses gets one after each
+        /// measurement, signed with the server's key 1 and checked against the
+        /// public key its key exchange named - and costing no cookie. One not
+        /// asking gets none.
+        /// </summary>
+        [Test]
+        public async Task AnEndpointAskingForSignedResponsesGetsOneAfterEachMeasurement()
+        {
+
+            var engine    = Engine();
+            var endpoint  = Endpoint(loopback, (sender, certificate, chain, client, errors) => TLSValidationResult.Success());
+
+            var plain     = await engine.MeasureSingleServer(endpoint, Guid.NewGuid(), NoNameServers());
+
+            endpoint.SignedResponses = true;
+
+            var first     = await engine.MeasureSingleServer(endpoint, Guid.NewGuid(), NoNameServers());
+            var second    = await engine.MeasureSingleServer(endpoint, Guid.NewGuid(), NoNameServers());
+
+            Assert.Multiple(() => {
+                Assert.That(plain. SignedResponse,                       Is.Null);
+                Assert.That(first. NTSKEFromCache,                       Is.False,  "a key exchange without the public keys was reused");
+                Assert.That(first. SignedResponse?.Success,              Is.True,   first.SignedResponse?.ErrorMessage);
+                Assert.That(first. SignedResponse?.KeyId,                Is.EqualTo(1));
+                Assert.That(first. SignedResponse?.Verified,             Is.True,   "the signature was not the key's");
+                Assert.That(first. SignedResponse?.Packet?.Length,       Is.GreaterThan(48));
+                Assert.That(second.NTSKEFromCache,                       Is.True);
+                Assert.That(second.SignedResponse?.Verified,             Is.True);
+                Assert.That(second.NTP?.RemainingCookiesAfterQuery,      Is.EqualTo(first.NTP?.RemainingCookiesAfterQuery),  "a signed response cost a cookie");
+            });
+
+        }
+
+        #endregion
+
         #region AnEndpointWithoutARefreshOfItsOwnHasTheEnginesInterval()
 
         /// <summary>

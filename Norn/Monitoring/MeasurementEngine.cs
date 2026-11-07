@@ -323,6 +323,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
                 var ntpResult = await MeasureNTP(Server, cachedState, CancellationToken);
 
+                // ──── Step 4: a signed response, where asked for, after what was measured ────
+                var signedResponse = Server.SignedResponses && ntpResult.Success
+                                         ? await RequestSignedResponse(cachedState, CancellationToken)
+                                         : null;
+
                 totalStopwatch.Stop();
 
                 return new NTSMeasurementResult(Server.Hostname, RoundId, Timestamp: timeProvider.GetUtcNow()) {
@@ -331,6 +336,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                            NTSKEFromCache  = ntskeFromCache,
                            NTP             = ntpResult,
                            PreflightSent   = preflightSent,
+                           SignedResponse  = signedResponse,
                            Success         = ntpResult.Success,
                            ErrorMessage    = ntpResult.ErrorMessage,
                            ErrorCategory   = ntpResult.ErrorCategory,
@@ -444,9 +450,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
             var sw = Stopwatch.StartNew();
 
+            // With the server's public keys, where its responses are to be
+            // signed: they are what a signature is checked against.
             var ntskeResult = await ntsClient.GetNTSKERecords(
-                                   Timeout:            config.NTSKETimeout,
-                                   CancellationToken:  CancellationToken
+                                   RequestNTSPublicKeys:  Server.SignedResponses,
+                                   Timeout:               config.NTSKETimeout,
+                                   CancellationToken:     CancellationToken
                                );
 
             sw.Stop();
@@ -934,6 +943,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
             if (ntskeCache.TryGetValue(Server.Hostname, out var cached) &&
                 !cached.NeedsRefresh(config.NTSKERefreshInterval, timeProvider) &&
+                // Not one without the public keys signed responses are checked against.
+                (!Server.SignedResponses || cached.NTSKEResponse?.PublicKeys.Any() == true) &&
                 (Server.OfferedAEADAlgorithms is not { } offered ||
                  cached.NTSKEResponse is not { } response        ||
                  offered.Contains(response.AEADAlgorithm)))
@@ -947,6 +958,68 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
         #endregion
 
+
+        #region (private) RequestSignedResponse(CachedState, CancellationToken)
+
+        /// <summary>
+        /// Ask the server for a digitally signed response, as a second, scheduled
+        /// one, and check its signature against the public key it names.
+        /// </summary>
+        /// <remarks>
+        /// Costs no cookie: its answer brings a new one, as every answer does.
+        /// Its timing is no measurement - the second response leaves the server
+        /// once it is signed.
+        /// </remarks>
+        private async Task<SignedResponseResult> RequestSignedResponse(CachedNTSKEState   CachedState,
+                                                                       CancellationToken  CancellationToken)
+        {
+
+            if (CachedState.NTSClient is not NTSClient ntsClient)
+                return new SignedResponseResult(false, ErrorMessage: "NTS client not available from cache");
+
+            var keys = CachedState.NTSKEResponse?.PublicKeys.ToArray() ?? [];
+
+            try
+            {
+
+                var answer = await ntsClient.QueryTime(
+                                       Timeout:              config.NTPTimeout,
+                                       NTSKEResponse:        CachedState.NTSKEResponse,
+                                       SignedResponseMode:   SignedResponseMode.Scheduled,
+                                       SignedResponseKeyId:  keys.FirstOrDefault()?.Id ?? 1,
+                                       CancellationToken:    CancellationToken
+                                   );
+
+                CachedState.RemainingCookies = ToByteCookieCount(answer.CookiePoolDiagnostics?.AvailableCookieCount ??
+                                                                 answer.RemainingCookiesAfterQuery);
+
+                if (!answer.Success || answer.Response is not NTPPacket response)
+                    return new SignedResponseResult(false, ErrorMessage: answer.ErrorMessage ?? "No signed response");
+
+                var packet    = response.ToByteArray();
+
+                if (response.NTSSignedResponse() is not NTSSignedResponseExtension signature)
+                    return new SignedResponseResult(false, packet, ErrorMessage: "The response was not signed");
+
+                var key       = keys.FirstOrDefault(key => key.Id == signature.KeyId);
+
+                return new SignedResponseResult(
+                           true,
+                           packet,
+                           signature.KeyId,
+                           key is not null ? signature.Verify(response, key) : null,
+                           key is null ? $"The key exchange named no public key {signature.KeyId}" : null
+                       );
+
+            }
+            catch (Exception e) when (!CancellationToken.IsCancellationRequested)
+            {
+                return new SignedResponseResult(false, ErrorMessage: e.Message);
+            }
+
+        }
+
+        #endregion
 
         #region (private) SendPreflight(CachedState, CancellationToken)
 

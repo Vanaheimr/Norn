@@ -148,6 +148,21 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         public DomainName?                     NTSKEHost              { get; set; }
 
         /// <summary>
+        /// Whether the server is asked for a digitally signed response after
+        /// every measurement.
+        /// </summary>
+        /// <remarks>
+        /// The SignedResponses of an NTP client in the Secure Time
+        /// Synchronization white paper: a proof for the secure metrological log
+        /// book that the server said what it said, which an attacker holding the
+        /// symmetric keys of NTS could otherwise have said for it. Asked for
+        /// after the measurement and not in it, as a second, scheduled response,
+        /// so that the signing slows down nothing measured. Its key exchange
+        /// asks for the server's public keys.
+        /// </remarks>
+        public Boolean                         SignedResponses        { get; set; }
+
+        /// <summary>
         /// What decides whether this server's NTS-KE certificate is believed, or
         /// none for the usual rule: a chain to whatever the machine trusts, issued
         /// for this host.
@@ -178,7 +193,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                                  TimeSpan?                                                      MaxRefresh                   = null,
                                  TimeSpan?                                                      DelayAsymmetry               = null,
                                  Double?                                                        DelayVarAsymmetry            = null,
-                                 DomainName?                                                    NTSKEHost                    = null)
+                                 DomainName?                                                    NTSKEHost                    = null,
+                                 Boolean                                                        SignedResponses              = false)
         {
 
             this.Hostname                    = Hostname;
@@ -194,6 +210,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
             this.DelayAsymmetry              = DelayAsymmetry;
             this.DelayVarAsymmetry           = DelayVarAsymmetry;
             this.NTSKEHost                   = NTSKEHost;
+            this.SignedResponses             = SignedResponses;
 
         }
 
