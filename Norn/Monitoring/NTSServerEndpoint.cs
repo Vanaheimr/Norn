@@ -77,6 +77,33 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         public IEnumerable<AEADAlgorithms>?    OfferedAEADAlgorithms  { get; set; }
 
         /// <summary>
+        /// The shortest time after a key exchange with this server before the
+        /// next one, or none for the engine's <see cref="MonitoringConfig.NTSKERefreshInterval"/>.
+        /// </summary>
+        /// <remarks>
+        /// From the Secure Time Synchronization white paper, where this is the
+        /// MinRefresh of an NTP client. The next key exchange is made at a random
+        /// time between this and <see cref="MaxRefresh"/>, so that many clients
+        /// do not reach the same server at the same moment. A key exchange is the
+        /// only moment the server's certificate is seen, and cookies alone would
+        /// go on for much longer; one whose cookies run out is made again at
+        /// once, whatever this says.
+        /// </remarks>
+        public TimeSpan?                       MinRefresh             { get; set; }
+
+        /// <summary>
+        /// The longest time after a key exchange with this server before the
+        /// next one, or none for <see cref="MinRefresh"/> - or, where that is none
+        /// as well, the engine's <see cref="MonitoringConfig.NTSKERefreshInterval"/>.
+        /// </summary>
+        /// <remarks>
+        /// A key exchange due that fails is not made up for with the old one:
+        /// the server is not asked for the time until a new one succeeds, as a
+        /// certificate refused at it must not be gone on with.
+        /// </remarks>
+        public TimeSpan?                       MaxRefresh             { get; set; }
+
+        /// <summary>
         /// What decides whether this server's NTS-KE certificate is believed, or
         /// none for the usual rule: a chain to whatever the machine trusts, issued
         /// for this host.
@@ -102,7 +129,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                                  Byte                                                           Priority                     = 0,
                                  IEnumerable<X509Certificate2>?                                 RootCAs                      = null,
                                  IEnumerable<AEADAlgorithms>?                                   OfferedAEADAlgorithms        = null,
-                                 RemoteTLSServerCertificateValidationHandler<NTSKE_TLSClient>?  RemoteCertificateValidator   = null)
+                                 RemoteTLSServerCertificateValidationHandler<NTSKE_TLSClient>?  RemoteCertificateValidator   = null,
+                                 TimeSpan?                                                      MinRefresh                   = null,
+                                 TimeSpan?                                                      MaxRefresh                   = null)
         {
 
             this.Hostname                    = Hostname;
@@ -113,6 +142,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
             this.RootCAs                     = RootCAs;
             this.OfferedAEADAlgorithms       = OfferedAEADAlgorithms;
             this.RemoteCertificateValidator  = RemoteCertificateValidator;
+            this.MinRefresh                  = MinRefresh;
+            this.MaxRefresh                  = MaxRefresh;
 
         }
 

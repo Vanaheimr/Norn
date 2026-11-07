@@ -423,6 +423,134 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.Monitoring
 
         #endregion
 
+        #region (class) ShiftedClock / FixedRandom
+
+        /// <summary>
+        /// The machine's clock, moved on by whatever a test says: a key exchange
+        /// due in hours is due now, while the server and the packets keep to
+        /// real time.
+        /// </summary>
+        private sealed class ShiftedClock : TimeProvider
+        {
+            public TimeSpan Shift { get; set; }
+            public override DateTimeOffset GetUtcNow() => base.GetUtcNow() + Shift;
+        }
+
+        /// <summary>
+        /// A random number that is always the same one.
+        /// </summary>
+        private sealed class FixedRandom(Double Value) : Random
+        {
+            public override Double NextDouble() => Value;
+        }
+
+        #endregion
+
+        #region AKeyExchangeIsMadeAgainOnceItsEndpointsRefreshIsDue()
+
+        /// <summary>
+        /// A key exchange is reused until the endpoint's refresh is due, and made
+        /// again after that.
+        /// </summary>
+        [Test]
+        public async Task AKeyExchangeIsMadeAgainOnceItsEndpointsRefreshIsDue()
+        {
+
+            var clock     = new ShiftedClock();
+            var engine    = new MeasurementEngine(new MonitoringConfig { NTPTimeout = TimeSpan.FromSeconds(5), NTSKETimeout = TimeSpan.FromSeconds(10) }, clock);
+            var endpoint  = Endpoint(loopback, (sender, certificate, chain, client, errors) => TLSValidationResult.Success());
+
+            endpoint.MinRefresh = TimeSpan.FromHours(12);
+            endpoint.MaxRefresh = TimeSpan.FromHours(12);
+
+            var first     = await engine.MeasureSingleServer(endpoint, Guid.NewGuid(), NoNameServers());
+
+            clock.Shift   = TimeSpan.FromHours(11);
+            var second    = await engine.MeasureSingleServer(endpoint, Guid.NewGuid(), NoNameServers());
+
+            clock.Shift   = TimeSpan.FromHours(12) + TimeSpan.FromMinutes(1);
+            var third     = await engine.MeasureSingleServer(endpoint, Guid.NewGuid(), NoNameServers());
+
+            Assert.Multiple(() => {
+                Assert.That(first. Success,          Is.True,   first. ErrorMessage?.ToString());
+                Assert.That(second.NTSKEFromCache,   Is.True,   "made again before its refresh was due");
+                Assert.That(third. NTSKEFromCache,   Is.False,  "reused after its refresh was due");
+                Assert.That(third. Success,          Is.True,   third. ErrorMessage?.ToString());
+            });
+
+        }
+
+        #endregion
+
+        #region TheNextKeyExchangeIsDueAtARandomTimeBetweenMinAndMaxRefresh()
+
+        /// <summary>
+        /// The next key exchange is due at a random time between the endpoint's
+        /// MinRefresh and MaxRefresh: halfway, for a random number of one half.
+        /// </summary>
+        [Test]
+        public async Task TheNextKeyExchangeIsDueAtARandomTimeBetweenMinAndMaxRefresh()
+        {
+
+            var clock     = new ShiftedClock();
+            var engine    = new MeasurementEngine(new MonitoringConfig { NTPTimeout = TimeSpan.FromSeconds(5), NTSKETimeout = TimeSpan.FromSeconds(10) }, clock, new FixedRandom(0.5));
+            var endpoint  = Endpoint(loopback, (sender, certificate, chain, client, errors) => TLSValidationResult.Success());
+
+            endpoint.MinRefresh = TimeSpan.FromHours(12);
+            endpoint.MaxRefresh = TimeSpan.FromHours(24);
+
+            var first     = await engine.MeasureSingleServer(endpoint, Guid.NewGuid(), NoNameServers());
+            var due       = engine.KeyExchanges[loopback].RefreshAt - engine.KeyExchanges[loopback].LastRefreshed;
+
+            clock.Shift   = TimeSpan.FromHours(17) + TimeSpan.FromMinutes(59);
+            var second    = await engine.MeasureSingleServer(endpoint, Guid.NewGuid(), NoNameServers());
+
+            clock.Shift   = TimeSpan.FromHours(18) + TimeSpan.FromMinutes(1);
+            var third     = await engine.MeasureSingleServer(endpoint, Guid.NewGuid(), NoNameServers());
+
+            Assert.Multiple(() => {
+                Assert.That(first. Success,          Is.True,                         first. ErrorMessage?.ToString());
+                Assert.That(due,                     Is.EqualTo(TimeSpan.FromHours(18)));
+                Assert.That(second.NTSKEFromCache,   Is.True,                         "made again before it was due");
+                Assert.That(third. NTSKEFromCache,   Is.False,                        "reused after it was due");
+            });
+
+        }
+
+        #endregion
+
+        #region AnEndpointWithoutARefreshOfItsOwnHasTheEnginesInterval()
+
+        /// <summary>
+        /// An endpoint that names no refresh has the engine's refresh interval,
+        /// as every endpoint had before - half an hour, unless configured.
+        /// </summary>
+        [Test]
+        public async Task AnEndpointWithoutARefreshOfItsOwnHasTheEnginesInterval()
+        {
+
+            var clock     = new ShiftedClock();
+            var engine    = new MeasurementEngine(new MonitoringConfig { NTPTimeout = TimeSpan.FromSeconds(5), NTSKETimeout = TimeSpan.FromSeconds(10) }, clock);
+            var endpoint  = Endpoint(loopback, (sender, certificate, chain, client, errors) => TLSValidationResult.Success());
+
+            var first     = await engine.MeasureSingleServer(endpoint, Guid.NewGuid(), NoNameServers());
+
+            clock.Shift   = TimeSpan.FromMinutes(29);
+            var second    = await engine.MeasureSingleServer(endpoint, Guid.NewGuid(), NoNameServers());
+
+            clock.Shift   = TimeSpan.FromMinutes(31);
+            var third     = await engine.MeasureSingleServer(endpoint, Guid.NewGuid(), NoNameServers());
+
+            Assert.Multiple(() => {
+                Assert.That(first. Success,          Is.True,   first. ErrorMessage?.ToString());
+                Assert.That(second.NTSKEFromCache,   Is.True,   "made again within the engine's interval");
+                Assert.That(third. NTSKEFromCache,   Is.False,  "reused beyond the engine's interval");
+            });
+
+        }
+
+        #endregion
+
 
         #region (private static) FindFreeTCPPort() / FindFreeUDPPort()
 

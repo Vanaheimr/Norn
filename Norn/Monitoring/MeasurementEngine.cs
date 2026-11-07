@@ -46,8 +46,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
     /// It is also handed to every <see cref="NTSClient"/> the engine creates, so a measurement
     /// and the client that produced it agree on what time it is.
     /// </param>
+    /// <param name="Random">Where the time of the next key exchange between an endpoint's MinRefresh and MaxRefresh comes from.</param>
     public class MeasurementEngine(MonitoringConfig  Configuration,
-                                   TimeProvider?     TimeProvider   = null)
+                                   TimeProvider?     TimeProvider   = null,
+                                   Random?           Random         = null)
     {
 
         #region Data
@@ -55,6 +57,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         private readonly ConcurrentDictionary<DomainName, CachedNTSKEState>  ntskeCache    = [];
         private readonly MonitoringConfig                                    config        = Configuration;
         private readonly TimeProvider                                        timeProvider  = TimeProvider ?? System.TimeProvider.System;
+        private readonly Random                                              random        = Random       ?? System.Random.Shared;
 
         /// <summary>
         /// What each server has told this engine about how welcome it is, per RFC 5905 § 7.4.
@@ -459,10 +462,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
             var cookiePoolDiagnostics = ntsClient.CookiePoolDiagnostics;
 
             // Cache the NTS-KE state
+            var refreshed = timeProvider.GetUtcNow();
+
             ntskeCache[Server.Hostname] = new CachedNTSKEState {
                                               NTSKEResponse     = ntskeResponse,
                                               NTSClient         = ntsClient,
-                                              LastRefreshed     = timeProvider.GetUtcNow(),
+                                              LastRefreshed     = refreshed,
+                                              RefreshAt         = refreshed + RefreshDelay(Server),
                                               RemainingCookies  = ToByteCookieCount(cookiePoolDiagnostics.AvailableCookieCount)
                                           };
 
@@ -700,6 +706,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                 {
                     CachedState.NTSKEResponse  = ntsClient.LastNTSKEResponse;
                     CachedState.LastRefreshed  = timeProvider.GetUtcNow();
+                    CachedState.RefreshAt      = CachedState.LastRefreshed + RefreshDelay(Server);
                 }
 
 
@@ -900,6 +907,32 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
         #endregion
 
+
+        #region (private) RefreshDelay(Server)
+
+        /// <summary>
+        /// How long after a key exchange with the given server the next one is
+        /// due: a random time between its MinRefresh and its MaxRefresh.
+        /// </summary>
+        /// <remarks>
+        /// An endpoint that names neither has the engine's refresh interval, as
+        /// before; one that names only one of them has that one. A MaxRefresh
+        /// shorter than the MinRefresh is taken as the MinRefresh.
+        /// </remarks>
+        private TimeSpan RefreshDelay(NTSServerEndpoint Server)
+        {
+
+            var min = Server.MinRefresh ?? Server.MaxRefresh ?? config.NTSKERefreshInterval;
+            var max = Server.MaxRefresh ?? min;
+
+            if (max <= min)
+                return min;
+
+            return min + (max - min) * random.NextDouble();
+
+        }
+
+        #endregion
 
         #region (private static) ToByteCookieCount(CookieCount)
 
