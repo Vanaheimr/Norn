@@ -64,6 +64,19 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         /// </summary>
         private readonly ConcurrentDictionary<DomainName, NTPServerAccessState> accessStates = [];
 
+        /// <summary>
+        /// The delays of the last exchanges with each server, which the shortest
+        /// of is what DelayVarAsymmetry measures a hold-up against.
+        /// </summary>
+        private readonly ConcurrentDictionary<DomainName, Queue<TimeSpan>>     recentDelays = [];
+
+        /// <summary>
+        /// How many of the last delays of a server its shortest delay is taken
+        /// from: enough to have seen one without a hold-up, few enough that a
+        /// changed path is soon what is measured against.
+        /// </summary>
+        public const Int32 RecentDelays = 16;
+
         #endregion
 
         #region Properties
@@ -812,6 +825,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                 // δ = (T4 - T1) - (T3 - T2)
                 var delay   = ntpResponse.RoundTripDelay ?? ((t4 - t1) - (t3 - t2));
 
+                // ──── Correct it for what is known about the path ────
+                var correction = OffsetCorrection(Server.DelayAsymmetry,
+                                                  Server.DelayVarAsymmetry,
+                                                  delay,
+                                                  ShortestRecentDelay(Server.Hostname, delay));
+
 
                 // ──── Check NTS extensions ────
                 var uniqueIdMatched = ntpResponse.UniqueIdentifier() is not null;
@@ -828,7 +847,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                            T3_ServerTransmit           = t3,
                            T4_ClientReceive            = t4,
 
-                           Offset                      = offset,
+                           Offset                      = offset + correction,
+                           MeasuredOffset              = offset,
+                           OffsetCorrection            = correction,
                            RoundTripDelay              = delay,
                            StopwatchRTT                = stopwatchRTT,
                            RemoteHost                  = remoteInfo.Host,
@@ -907,6 +928,62 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
         #endregion
 
+
+        #region (static) OffsetCorrection(DelayAsymmetry, DelayVarAsymmetry, Delay, ShortestDelay)
+
+        /// <summary>
+        /// What is added to an offset measured with a server, for what is known
+        /// about the path to it: its DelayAsymmetry, and its DelayVarAsymmetry
+        /// times how much longer the delay was than the shortest of the last ones.
+        /// </summary>
+        /// <param name="DelayAsymmetry">The fixed correction, or null for none.</param>
+        /// <param name="DelayVarAsymmetry">Where a hold-up was, from -0.5 (on the way there) to +0.5 (on the way back), or null for half each.</param>
+        /// <param name="Delay">The round-trip delay of the measurement.</param>
+        /// <param name="ShortestDelay">The shortest round-trip delay of the last measurements with the server, this one included.</param>
+        public static TimeSpan OffsetCorrection(TimeSpan?  DelayAsymmetry,
+                                                Double?    DelayVarAsymmetry,
+                                                TimeSpan   Delay,
+                                                TimeSpan   ShortestDelay)
+        {
+
+            var correction = DelayAsymmetry ?? TimeSpan.Zero;
+
+            if (DelayVarAsymmetry is Double asymmetry && asymmetry != 0 && Delay > ShortestDelay)
+                correction += TimeSpan.FromTicks((Int64) Math.Round(Math.Clamp(asymmetry, -0.5, 0.5) * (Delay - ShortestDelay).Ticks));
+
+            return correction;
+
+        }
+
+        #endregion
+
+        #region (private) ShortestRecentDelay(Hostname, Delay)
+
+        /// <summary>
+        /// Keep the given delay as the newest of the server's, and say the
+        /// shortest of the last ones, this one included.
+        /// </summary>
+        private TimeSpan ShortestRecentDelay(DomainName  Hostname,
+                                             TimeSpan    Delay)
+        {
+
+            var delays = recentDelays.GetOrAdd(Hostname, _ => new Queue<TimeSpan>(RecentDelays));
+
+            lock (delays)
+            {
+
+                delays.Enqueue(Delay);
+
+                while (delays.Count > RecentDelays)
+                    delays.Dequeue();
+
+                return delays.Min();
+
+            }
+
+        }
+
+        #endregion
 
         #region (private) RefreshDelay(Server)
 

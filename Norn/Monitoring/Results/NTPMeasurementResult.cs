@@ -84,6 +84,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         public TimeSpan                 Offset                        { get; init; }
 
         /// <summary>
+        /// The offset as measured, before what is known about the path to the
+        /// server corrected it: Offset is this plus <see cref="OffsetCorrection"/>.
+        /// </summary>
+        public TimeSpan                 MeasuredOffset                { get; init; }
+
+        /// <summary>
+        /// What the server's DelayAsymmetry and DelayVarAsymmetry added to the
+        /// measured offset; zero where it has neither.
+        /// </summary>
+        public TimeSpan                 OffsetCorrection              { get; init; }
+
+        /// <summary>
         /// Round-trip delay: δ = (T4 - T1) - (T3 - T2)
         /// </summary>
         public TimeSpan                 RoundTripDelay                { get; init; }
@@ -287,6 +299,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                                  new JProperty("t4_clientReceive",             T4_ClientReceive.  ToISO8601()),
 
                                  new JProperty("offsetMs",                     Math.Round(Offset.        TotalMilliseconds, 6)),
+                                 OffsetCorrection != TimeSpan.Zero
+                                     ? new JProperty("offsetCorrectionMs",     Math.Round(OffsetCorrection.TotalMilliseconds, 6))
+                                     : null,
                                  new JProperty("roundTripDelayMs",             Math.Round(RoundTripDelay.TotalMilliseconds, 6)),
                                  new JProperty("stopwatchRttMs",               Math.Round(StopwatchRTT.  TotalMilliseconds, 6)),
 

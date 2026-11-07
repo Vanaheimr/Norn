@@ -104,6 +104,37 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         public TimeSpan?                       MaxRefresh             { get; set; }
 
         /// <summary>
+        /// A correction added to every offset measured with this server, for a
+        /// known stable asymmetry of the delays on the way there and back - or
+        /// none for no correction.
+        /// </summary>
+        /// <remarks>
+        /// The DelayAsymmetry of an NTP client in the Secure Time Synchronization
+        /// white paper, and chrony's "offset": where packets to the server are on
+        /// average 100 microseconds slower than packets back, the measured offset
+        /// is 50 microseconds too large, and the correction is -50 microseconds.
+        /// </remarks>
+        public TimeSpan?                       DelayAsymmetry         { get; set; }
+
+        /// <summary>
+        /// How much more the delay varies on the way to this server than on the
+        /// way back, from -0.5 to +0.5, or none for no correction.
+        /// </summary>
+        /// <remarks>
+        /// The DelayVarAsymmetry of an NTP client in the Secure Time
+        /// Synchronization white paper, and chrony's "asymmetry". A measurement
+        /// whose delay is longer than the shortest of the last ones was held up
+        /// somewhere, and the offset measures that hold-up as half of it on each
+        /// way. This value says where it was: -0.5 all on the way there, +0.5
+        /// all on the way back, 0 half each, as the offset assumes. The offset
+        /// is corrected by the value times the hold-up: by -0.5 times it where it
+        /// was all on the way there, which made the offset too large by half of
+        /// it. Use it only where the network is known to be asymmetric in this
+        /// way.
+        /// </remarks>
+        public Double?                         DelayVarAsymmetry      { get; set; }
+
+        /// <summary>
         /// What decides whether this server's NTS-KE certificate is believed, or
         /// none for the usual rule: a chain to whatever the machine trusts, issued
         /// for this host.
@@ -131,7 +162,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                                  IEnumerable<AEADAlgorithms>?                                   OfferedAEADAlgorithms        = null,
                                  RemoteTLSServerCertificateValidationHandler<NTSKE_TLSClient>?  RemoteCertificateValidator   = null,
                                  TimeSpan?                                                      MinRefresh                   = null,
-                                 TimeSpan?                                                      MaxRefresh                   = null)
+                                 TimeSpan?                                                      MaxRefresh                   = null,
+                                 TimeSpan?                                                      DelayAsymmetry               = null,
+                                 Double?                                                        DelayVarAsymmetry            = null)
         {
 
             this.Hostname                    = Hostname;
@@ -144,6 +177,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
             this.RemoteCertificateValidator  = RemoteCertificateValidator;
             this.MinRefresh                  = MinRefresh;
             this.MaxRefresh                  = MaxRefresh;
+            this.DelayAsymmetry              = DelayAsymmetry;
+            this.DelayVarAsymmetry           = DelayVarAsymmetry;
 
         }
 

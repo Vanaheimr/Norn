@@ -519,6 +519,110 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.Monitoring
 
         #endregion
 
+        #region TheOffsetCorrectionIsWhatThePathIsKnownToDo()
+
+        /// <summary>
+        /// The correction of an offset: the DelayAsymmetry as it is, and the
+        /// DelayVarAsymmetry times how much longer the delay was than the
+        /// shortest - by -0.5 times it where the hold-up was all on the way
+        /// there, which made the offset too large by half of it. Nothing where
+        /// the delay was the shortest, and never more than half the hold-up.
+        /// </summary>
+        [Test]
+        public void TheOffsetCorrectionIsWhatThePathIsKnownToDo()
+        {
+
+            static TimeSpan ms(Double milliseconds) => TimeSpan.FromMilliseconds(milliseconds);
+
+            Assert.Multiple(() => {
+                Assert.That(MeasurementEngine.OffsetCorrection(null,     null,  ms(10), ms(4)),  Is.EqualTo(TimeSpan.Zero));
+                Assert.That(MeasurementEngine.OffsetCorrection(ms(-0.05), null, ms(10), ms(4)),  Is.EqualTo(ms(-0.05)));
+                Assert.That(MeasurementEngine.OffsetCorrection(null,     -0.5,  ms(10), ms(4)),  Is.EqualTo(ms(-3)));
+                Assert.That(MeasurementEngine.OffsetCorrection(null,      0.5,  ms(10), ms(4)),  Is.EqualTo(ms(3)));
+                Assert.That(MeasurementEngine.OffsetCorrection(null,      0.25, ms(10), ms(4)),  Is.EqualTo(ms(1.5)));
+                Assert.That(MeasurementEngine.OffsetCorrection(null,     -0.5,  ms(4),  ms(4)),  Is.EqualTo(TimeSpan.Zero),  "no hold-up");
+                Assert.That(MeasurementEngine.OffsetCorrection(null,      0.9,  ms(10), ms(4)),  Is.EqualTo(ms(3)),          "never more than half the hold-up");
+                Assert.That(MeasurementEngine.OffsetCorrection(ms(1),    -0.5,  ms(10), ms(4)),  Is.EqualTo(ms(-2)));
+            });
+
+        }
+
+        #endregion
+
+        #region TheDelayAsymmetryIsAddedToTheMeasuredOffset()
+
+        /// <summary>
+        /// A measurement's offset is the measured one plus the endpoint's
+        /// DelayAsymmetry, and says both.
+        /// </summary>
+        [Test]
+        public async Task TheDelayAsymmetryIsAddedToTheMeasuredOffset()
+        {
+
+            var engine    = Engine();
+            var endpoint  = Endpoint(loopback, (sender, certificate, chain, client, errors) => TLSValidationResult.Success());
+
+            endpoint.DelayAsymmetry = TimeSpan.FromMilliseconds(50);
+
+            var result    = await engine.MeasureSingleServer(endpoint, Guid.NewGuid(), NoNameServers());
+            var ntp       = result.NTP;
+
+            Assert.Multiple(() => {
+                Assert.That(result.Success,         Is.True,  result.ErrorMessage?.ToString());
+                Assert.That(ntp?.OffsetCorrection,  Is.EqualTo(TimeSpan.FromMilliseconds(50)));
+                Assert.That(ntp?.Offset,            Is.EqualTo(ntp?.MeasuredOffset + TimeSpan.FromMilliseconds(50)));
+            });
+
+        }
+
+        #endregion
+
+        #region AHoldUpIsCorrectedAgainstTheShortestOfTheLastDelays()
+
+        /// <summary>
+        /// The DelayVarAsymmetry corrects a measurement by how much longer its
+        /// delay was than the shortest of the server's last ones: nothing for
+        /// the first, which is the shortest so far, and for the next ones what
+        /// their delays say.
+        /// </summary>
+        [Test]
+        public async Task AHoldUpIsCorrectedAgainstTheShortestOfTheLastDelays()
+        {
+
+            var engine    = Engine();
+            var endpoint  = Endpoint(loopback, (sender, certificate, chain, client, errors) => TLSValidationResult.Success());
+
+            endpoint.DelayVarAsymmetry = -0.5;
+
+            var results   = new List<NTPMeasurementResult>();
+
+            for (var i = 0; i < 4; i++)
+            {
+                var result = await engine.MeasureSingleServer(endpoint, Guid.NewGuid(), NoNameServers());
+                Assert.That(result.Success, Is.True, result.ErrorMessage?.ToString());
+                results.Add(result.NTP!);
+            }
+
+            Assert.Multiple(() => {
+
+                Assert.That(results[0].OffsetCorrection,  Is.EqualTo(TimeSpan.Zero),  "the first is the shortest so far");
+
+                for (var i = 1; i < results.Count; i++)
+                {
+                    var shortest = results.Take(i + 1).Min(result => result.RoundTripDelay);
+                    Assert.That(results[i].OffsetCorrection,
+                                Is.EqualTo(MeasurementEngine.OffsetCorrection(null, -0.5, results[i].RoundTripDelay, shortest)),
+                                $"measurement {i + 1}");
+                    Assert.That(results[i].Offset,
+                                Is.EqualTo(results[i].MeasuredOffset + results[i].OffsetCorrection));
+                }
+
+            });
+
+        }
+
+        #endregion
+
         #region AnEndpointWithoutARefreshOfItsOwnHasTheEnginesInterval()
 
         /// <summary>
