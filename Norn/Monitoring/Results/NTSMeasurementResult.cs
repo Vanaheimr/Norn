@@ -122,6 +122,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         /// </summary>
         public TimeSpan                      TotalDuration             { get; init; }
 
+        /// <summary>
+        /// Whether the query was sent a first time, whose answer was ignored,
+        /// before the one measured: see MeasurementEngine.MeasureSingleServer.
+        /// </summary>
+        public Boolean                       PreflightSent             { get; init; }
+
         #endregion
 
         #region Constructor(s)

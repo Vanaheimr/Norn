@@ -152,9 +152,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.TimeSync
         /// </remarks>
         /// <param name="Engine">The measurement engine doing the asking.</param>
         /// <param name="DNSClient">How names are resolved.</param>
+        /// <param name="Preflight">Whether every server asked is first sent a packet whose answer is ignored - see MeasurementEngine.MeasureSingleServer.</param>
         public async Task<TimeSyncVerdict> Measure(MeasurementEngine  Engine,
                                                    DNSClient          DNSClient,
-                                                   CancellationToken  CancellationToken = default)
+                                                   CancellationToken  CancellationToken  = default,
+                                                   Boolean            Preflight          = false)
         {
 
             TimeSyncVerdict? lastVerdict = null;
@@ -162,7 +164,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.TimeSync
             foreach (var band in Bands())
             {
 
-                var round    = await Engine.MeasureServersParallel(band, DNSClient, CancellationToken);
+                var round    = await Engine.MeasureServersParallel(band, DNSClient, CancellationToken, Preflight);
                 var verdict  = TimeSyncVerdict.From(round.ServerResults, MinServers, MaxDeviation);
 
                 if (verdict.IsUsable)

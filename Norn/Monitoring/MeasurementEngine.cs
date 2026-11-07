@@ -162,9 +162,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         /// is unchanged, including the inter-server metrics, which are then
         /// computed across the servers that were actually asked.
         /// </remarks>
+        /// <param name="Preflight">Whether every server is first sent a packet whose answer is ignored - see <see cref="MeasureSingleServer"/>.</param>
         public async Task<MeasurementRound> MeasureServersParallel(IEnumerable<NTSServerEndpoint>  Servers,
                                                                    DNSClient                       DNSClient,
-                                                                   CancellationToken               CancellationToken = default)
+                                                                   CancellationToken               CancellationToken  = default,
+                                                                   Boolean                         Preflight          = false)
         {
 
             var roundId          = UUIDv7.Generate();
@@ -173,7 +175,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
             // Launch all server measurements simultaneously
             var enabledServers   = Servers.Where(s => s.Enabled).ToList();
-            var tasks            = enabledServers.Select(server => MeasureSingleServer(server, roundId, DNSClient, CancellationToken)).ToArray();
+            var tasks            = enabledServers.Select(server => MeasureSingleServer(server, roundId, DNSClient, CancellationToken, Preflight)).ToArray();
             var results          = await Task.WhenAll(tasks);
 
             roundStopwatch.Stop();
@@ -202,10 +204,21 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         /// 2. NTS-KE handshake (if cookies expired or pool exhausted)
         /// 3. NTS-authenticated NTP query with precise T1/T2/T3/T4 timing
         /// </summary>
+        /// <remarks>
+        /// With Preflight, the query of step 3 is sent twice, and the answer to
+        /// the first is ignored: the Preflight of the Secure Time
+        /// Synchronization white paper, chrony's "presend". A server not asked
+        /// for a while is reached through an ARP lookup, a firewall's new state,
+        /// a tunnel being set up - delays that are not the server's, and would
+        /// be measured as an asymmetric delay. The first packet takes them, and
+        /// costs no cookie: its answer brings a new one, as every answer does.
+        /// </remarks>
+        /// <param name="Preflight">Whether to send the query a first time, whose answer is ignored.</param>
         public async Task<NTSMeasurementResult> MeasureSingleServer(NTSServerEndpoint  Server,
                                                                     Guid               RoundId,
                                                                     DNSClient          DNSClient,
-                                                                    CancellationToken  CancellationToken = default)
+                                                                    CancellationToken  CancellationToken  = default,
+                                                                    Boolean            Preflight          = false)
         {
 
             var totalStopwatch  = Stopwatch.StartNew();
@@ -305,7 +318,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
                 }
 
-                // ──── Step 3: NTP Query ────
+                // ──── Step 3: NTP Query, a first time to be ignored where asked ────
+                var preflightSent = Preflight && await SendPreflight(cachedState, CancellationToken);
+
                 var ntpResult = await MeasureNTP(Server, cachedState, CancellationToken);
 
                 totalStopwatch.Stop();
@@ -315,6 +330,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                            NTSKE           = ntskeMeasurement,
                            NTSKEFromCache  = ntskeFromCache,
                            NTP             = ntpResult,
+                           PreflightSent   = preflightSent,
                            Success         = ntpResult.Success,
                            ErrorMessage    = ntpResult.ErrorMessage,
                            ErrorCategory   = ntpResult.ErrorCategory,
@@ -928,6 +944,49 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
         #endregion
 
+
+        #region (private) SendPreflight(CachedState, CancellationToken)
+
+        /// <summary>
+        /// Send the server the query of a measurement, and ignore its answer:
+        /// whether it was sent, and the cookies kept up to date.
+        /// </summary>
+        /// <remarks>
+        /// Waiting for the answer, or the NTP timeout, before the measurement: an
+        /// answer still on its way would be taken for the measurement's.
+        /// </remarks>
+        private async Task<Boolean> SendPreflight(CachedNTSKEState   CachedState,
+                                                  CancellationToken  CancellationToken)
+        {
+
+            if (CachedState.NTSClient is not NTSClient ntsClient)
+                return false;
+
+            try
+            {
+
+                var answer = await ntsClient.QueryTime(
+                                       Timeout:            config.NTPTimeout,
+                                       NTSKEResponse:      CachedState.NTSKEResponse,
+                                       CancellationToken:  CancellationToken
+                                   );
+
+                CachedState.RemainingCookies = ToByteCookieCount(answer.CookiePoolDiagnostics?.AvailableCookieCount ??
+                                                                 answer.RemainingCookiesAfterQuery);
+
+                return true;
+
+            }
+            catch (Exception) when (!CancellationToken.IsCancellationRequested)
+            {
+                // What it found is what it was sent to find out, and nothing
+                // more: the measurement after it says what the server does.
+                return true;
+            }
+
+        }
+
+        #endregion
 
         #region (static) OffsetCorrection(DelayAsymmetry, DelayVarAsymmetry, Delay, ShortestDelay)
 

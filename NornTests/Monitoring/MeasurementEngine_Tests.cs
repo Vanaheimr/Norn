@@ -623,6 +623,67 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.Monitoring
 
         #endregion
 
+        #region APreflightSendsTheQueryOnceMoreBeforeTheMeasuredOne()
+
+        /// <summary>
+        /// With Preflight, a measurement sends its query a first time and ignores
+        /// the answer: two cookies spent instead of one, and no fewer left, as
+        /// each answer brings a new one. Without, one.
+        /// </summary>
+        [Test]
+        public async Task APreflightSendsTheQueryOnceMoreBeforeTheMeasuredOne()
+        {
+
+            var engine    = Engine();
+            var endpoint  = Endpoint(loopback, (sender, certificate, chain, client, errors) => TLSValidationResult.Success());
+
+            var first     = await engine.MeasureSingleServer(endpoint, Guid.NewGuid(), NoNameServers());
+            var second    = await engine.MeasureSingleServer(endpoint, Guid.NewGuid(), NoNameServers(), Preflight: true);
+            var third     = await engine.MeasureSingleServer(endpoint, Guid.NewGuid(), NoNameServers());
+
+            Assert.Multiple(() => {
+                Assert.That(first. Success,                                                   Is.True,  first. ErrorMessage?.ToString());
+                Assert.That(second.Success,                                                   Is.True,  second.ErrorMessage?.ToString());
+                Assert.That(first. PreflightSent,                                             Is.False);
+                Assert.That(second.PreflightSent,                                             Is.True);
+                Assert.That(second.NTP?.CookiesConsumed - first. NTP?.CookiesConsumed,        Is.EqualTo(2),  "the query was not sent a first time");
+                Assert.That(third. NTP?.CookiesConsumed - second.NTP?.CookiesConsumed,        Is.EqualTo(1));
+                Assert.That(second.NTP?.RemainingCookiesAfterQuery,                           Is.EqualTo(first.NTP?.RemainingCookiesAfterQuery),  "the first answer brought no cookie");
+            });
+
+        }
+
+        #endregion
+
+        #region AGroupSendsAPreflightToTheServersItAsks()
+
+        /// <summary>
+        /// A group asked with Preflight has its servers sent their queries a
+        /// first time, and one asked without does not.
+        /// </summary>
+        [Test]
+        public async Task AGroupSendsAPreflightToTheServersItAsks()
+        {
+
+            var engine    = Engine();
+            var group     = new org.GraphDefined.Vanaheimr.Norn.TimeSync.TimeSourceGroup(
+                                "legal",
+                                [ Endpoint(loopback, (sender, certificate, chain, client, errors) => TLSValidationResult.Success()) ]
+                            );
+
+            var without   = await group.Measure(engine, NoNameServers());
+            var with      = await group.Measure(engine, NoNameServers(), Preflight: true);
+
+            Assert.Multiple(() => {
+                Assert.That(without.Results.Select(result => result.PreflightSent),  Is.EqualTo(new[] { false }));
+                Assert.That(with.   Results.Select(result => result.PreflightSent),  Is.EqualTo(new[] { true  }));
+                Assert.That(with.   Results.Select(result => result.Success),        Is.EqualTo(new[] { true  }));
+            });
+
+        }
+
+        #endregion
+
         #region AnEndpointWithoutARefreshOfItsOwnHasTheEnginesInterval()
 
         /// <summary>
