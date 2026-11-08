@@ -68,6 +68,96 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         #endregion
 
 
+        #region AValidatorOfOnesOwnIsLeftToAskAboutRevocation()
+
+        /// <summary>
+        /// Where a validator of one's own judges the certificate, the chain it is handed asked
+        /// nothing about revocation: that is the validator's to ask.
+        /// </summary>
+        [Test]
+        public void AValidatorOfOnesOwnIsLeftToAskAboutRevocation()
+        {
+
+            var policy = ValidatingTlsAuthentication.ChainPolicyFor(AskHere: false);
+
+            Assert.That(policy.RevocationMode, Is.EqualTo(X509RevocationMode.NoCheck));
+
+        }
+
+        #endregion
+
+        #region WithoutAValidatorTheKeyExchangeAsksOnlineAndNoLongerThanTheWait()
+
+        /// <summary>
+        /// Without a validator, the key exchange asks of the whole chain, online, for no longer
+        /// than its time limit, and forgives a status that could not be had wherever it is.
+        /// </summary>
+        [Test]
+        public void WithoutAValidatorTheKeyExchangeAsksOnlineAndNoLongerThanTheWait()
+        {
+
+            var policy = ValidatingTlsAuthentication.ChainPolicyFor(AskHere: true);
+
+            Assert.Multiple(() => {
+                Assert.That(policy.RevocationMode,          Is.EqualTo(X509RevocationMode.Online));
+                Assert.That(policy.RevocationFlag,          Is.EqualTo(X509RevocationFlag.EntireChain));
+                Assert.That(policy.UrlRetrievalTimeout,     Is.EqualTo(NTSKE_TLSClient.RevocationWait));
+                Assert.That(NTSKE_TLSClient.RevocationWait, Is.EqualTo(TimeSpan.FromSeconds(3)));
+                Assert.That(policy.VerificationFlags,       Is.EqualTo(X509VerificationFlags.IgnoreEndRevocationUnknown                  |
+                                                                       X509VerificationFlags.IgnoreCertificateAuthorityRevocationUnknown |
+                                                                       X509VerificationFlags.IgnoreRootRevocationUnknown));
+            });
+
+        }
+
+        #endregion
+
+        #region ARevocationStatusThatCouldNotBeHadIsNoChainError()
+
+        /// <summary>
+        /// A list or a responder out of reach is not held against the certificate, wherever in
+        /// the chain it is, and however the platform reports it.
+        /// </summary>
+        [Test]
+        public void ARevocationStatusThatCouldNotBeHadIsNoChainError()
+        {
+
+            Assert.Multiple(() => {
+                Assert.That(ValidatingTlsAuthentication.ChainErrorsOf(false, [ X509ChainStatusFlags.RevocationStatusUnknown ]),                                       Is.False);
+                Assert.That(ValidatingTlsAuthentication.ChainErrorsOf(false, [ X509ChainStatusFlags.OfflineRevocation ]),                                             Is.False);
+                Assert.That(ValidatingTlsAuthentication.ChainErrorsOf(false, [ X509ChainStatusFlags.RevocationStatusUnknown, X509ChainStatusFlags.OfflineRevocation ]), Is.False);
+                Assert.That(ValidatingTlsAuthentication.ChainErrorsOf(true,  [ X509ChainStatusFlags.RevocationStatusUnknown ]),                                       Is.False);
+                Assert.That(ValidatingTlsAuthentication.ChainErrorsOf(true,  []),                                                                                     Is.False);
+            });
+
+        }
+
+        #endregion
+
+        #region ARevokedCertificateAndEverythingElseIsAChainError()
+
+        /// <summary>
+        /// A certificate known to be revoked is a chain error, as is everything else that keeps a
+        /// chain from being built - also beside a status that could not be had - and a chain not
+        /// built that says nothing of why.
+        /// </summary>
+        [Test]
+        public void ARevokedCertificateAndEverythingElseIsAChainError()
+        {
+
+            Assert.Multiple(() => {
+                Assert.That(ValidatingTlsAuthentication.ChainErrorsOf(false, [ X509ChainStatusFlags.Revoked ]),                                                       Is.True);
+                Assert.That(ValidatingTlsAuthentication.ChainErrorsOf(false, [ X509ChainStatusFlags.Revoked, X509ChainStatusFlags.RevocationStatusUnknown ]),          Is.True);
+                Assert.That(ValidatingTlsAuthentication.ChainErrorsOf(false, [ X509ChainStatusFlags.UntrustedRoot, X509ChainStatusFlags.RevocationStatusUnknown ]),    Is.True);
+                Assert.That(ValidatingTlsAuthentication.ChainErrorsOf(false, [ X509ChainStatusFlags.NotTimeValid ]),                                                  Is.True);
+                Assert.That(ValidatingTlsAuthentication.ChainErrorsOf(false, []),                                                                                     Is.True);
+            });
+
+        }
+
+        #endregion
+
+
         private static Boolean HostnameMatches(X509Certificate2 Certificate,
                                                String           Hostname)
         {

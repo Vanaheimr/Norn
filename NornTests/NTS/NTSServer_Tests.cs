@@ -19,6 +19,7 @@
 
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography.X509Certificates;
 
 using NUnit.Framework;
 
@@ -515,19 +516,24 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         /// A validator of its own accepts this server's self-signed certificate, and the
         /// exchange goes ahead - and what the standard validation found is kept all the same:
         /// the chain as it was built, why it did not validate, the name it was checked against,
-        /// and how revocation was asked.
+        /// and that revocation was not asked, because the validator is handed the chain to ask
+        /// that itself.
         /// </summary>
         [Test]
         public async Task TheValidationIsKeptWhenAValidatorAccepts()
         {
+
+            X509RevocationMode? handedOver = null;
 
             var ntsClient = new NTSClient(
                                 Hermod.DNS.DomainName.Localhost,
                                 NTSKE_Port:                  testNTSKEPort,
                                 NTP_Port:                    testNTPPort,
                                 IPVersionPreference:         IPVersionPreference.IPv4Only,
-                                RemoteCertificateValidator:  (sender, serverCertificate, certificateChain, ntsKETLSClient, sslPolicyErrors)
-                                                                 => TLSValidationResult.Success()
+                                RemoteCertificateValidator:  (sender, serverCertificate, certificateChain, ntsKETLSClient, sslPolicyErrors) => {
+                                                                 handedOver = certificateChain?.ChainPolicy.RevocationMode;
+                                                                 return TLSValidationResult.Success();
+                                                             }
                             );
 
             var result    = await ntsClient.GetNTSKERecords(RequestNTSPublicKeys: false);
@@ -547,7 +553,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
                 Assert.That(tls.CertificatePolicyErrors,           Is.Not.EqualTo(System.Net.Security.SslPolicyErrors.None));
                 Assert.That(tls.CheckedHostname,                   Is.EqualTo(Hermod.DNS.DomainName.Localhost));
-                Assert.That(tls.RevocationMode,                    Is.EqualTo(System.Security.Cryptography.X509Certificates.X509RevocationMode.Online));
+                Assert.That(tls.RevocationMode,                    Is.EqualTo(X509RevocationMode.NoCheck));
+                Assert.That(handedOver,                            Is.EqualTo(X509RevocationMode.NoCheck),
+                            "the validator was handed a chain that asked about revocation already");
 
             });
 
@@ -584,6 +592,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                 Assert.That(tls.ValidatedChain,               Is.Not.Empty);
                 Assert.That(tls.ChainStatus,                  Does.Contain(System.Security.Cryptography.X509Certificates.X509ChainStatusFlags.UntrustedRoot));
                 Assert.That(tls.CertificatePolicyErrors?.HasFlag(System.Net.Security.SslPolicyErrors.RemoteCertificateChainErrors),  Is.True);
+                Assert.That(tls.RevocationMode,               Is.EqualTo(X509RevocationMode.Online),
+                            "without a validator, nobody but the key exchange asks whether the certificate is revoked");
             });
 
         }

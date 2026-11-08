@@ -36,6 +36,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
     /// <summary>
     /// The Network Time Security Key Establishment (NTS-KE) TLS client.
     /// </summary>
+    /// <remarks>
+    /// Whether the server's certificate is revoked is asked by whoever judges it. A validator of
+    /// one's own is handed the chain built without asking, and asks itself, as it sees fit and
+    /// within a time limit of its own. Without one, the chain is built asking online, for at most
+    /// <see cref="RevocationWait"/>: a certificate known to be revoked is a chain error, and one
+    /// whose status could not be had is not held against it - see
+    /// <see cref="ValidatingTlsAuthentication.ChainErrorsOf"/>.
+    /// </remarks>
     public class NTSKE_TLSClient(RemoteTLSServerCertificateValidationHandler<NTSKE_TLSClient>?  RemoteCertificateValidator    = null,
                                  DomainName?                                                    ExpectedHostname              = null)
 
@@ -60,6 +68,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         #endregion
 
         #region Properties
+
+        /// <summary>
+        /// How long the handshake waits for a revocation list or an OCSP responder, where no
+        /// validator of one's own judges the server's certificate, before it goes ahead without
+        /// the answer: inside the handshake, which a responder out of reach would otherwise hold
+        /// up for as long as the operating system waits.
+        /// </summary>
+        public static TimeSpan  RevocationWait  { get; } = TimeSpan.FromSeconds(3);
 
         public TlsContext?  NTSKEContext    { get; private set; }
 
@@ -330,13 +346,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                         Select(certificate => X509CertificateLoader.LoadCertificate(certificate.GetEncoded())).
                                         ToArray();
 
-            // Validate the chain with .NET’s X509Chain
+            // Validate the chain with .NET's X509Chain, asking about revocation only where no
+            // validator of one's own is there to ask - see ChainPolicyFor.
             using var chain = new X509Chain {
-                                  ChainPolicy = {
-                                      RevocationMode    = X509RevocationMode.   Online,
-                                      RevocationFlag    = X509RevocationFlag.   EntireChain,
-                                      VerificationFlags = X509VerificationFlags.NoFlag
-                                  }
+                                  ChainPolicy = ChainPolicyFor(AskHere: remoteCertificateValidator is null)
                               };
 
 
@@ -347,7 +360,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             var policyErrors = SslPolicyErrors.None;
 
             // Validate the chain via the leafCertificate
-            if (!chain.Build(remoteCertificate))
+            if (ChainErrorsOf(chain.Build(remoteCertificate), chain.ChainStatus.Select(status => status.Status)))
                 policyErrors |= SslPolicyErrors.RemoteCertificateChainErrors;
 
             if (NTSKETLSClient.ExpectedHostname is not null &&
@@ -392,6 +405,58 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 throw new TlsFatalAlert(AlertDescription.certificate_unknown);
 
         }
+
+        /// <summary>
+        /// How the chain of the server's certificate is built: asking whether anything in it is
+        /// revoked, or leaving that to a validator of one's own.
+        /// </summary>
+        /// <remarks>
+        /// Where it is asked here, it is asked online, of the whole chain, for at most
+        /// <see cref="NTSKE_TLSClient.RevocationWait"/>, and a certificate whose status could not
+        /// be had is not held against it - see <see cref="ChainErrorsOf"/>. Where a validator
+        /// judges the certificate, it is not asked here: the validator is handed the chain to
+        /// ask itself, as it sees fit and within a time limit of its own. A chain asked about
+        /// here already would have held the handshake up for as long as the operating system
+        /// waits for a list out of reach, and made a revoked certificate a chain that does not
+        /// validate rather than a certificate that is revoked.
+        /// </remarks>
+        /// <param name="AskHere">Whether no validator of one's own judges the certificate.</param>
+        public static X509ChainPolicy ChainPolicyFor(Boolean AskHere)
+
+            => AskHere
+                   ? new X509ChainPolicy {
+                         RevocationMode       = X509RevocationMode.Online,
+                         RevocationFlag       = X509RevocationFlag.EntireChain,
+                         UrlRetrievalTimeout  = NTSKE_TLSClient.RevocationWait,
+                         VerificationFlags    = X509VerificationFlags.IgnoreEndRevocationUnknown                  |
+                                                X509VerificationFlags.IgnoreCertificateAuthorityRevocationUnknown |
+                                                X509VerificationFlags.IgnoreRootRevocationUnknown
+                     }
+                   : new X509ChainPolicy {
+                         RevocationMode       = X509RevocationMode.NoCheck,
+                         VerificationFlags    = X509VerificationFlags.NoFlag
+                     };
+
+        /// <summary>
+        /// Whether a chain that was built - or not - has errors: whether it did not build for
+        /// anything but a revocation status that could not be had.
+        /// </summary>
+        /// <remarks>
+        /// A list or a responder out of reach is not held against the certificate. The flags that
+        /// say so are not reported the same way everywhere: where the platform reports the chain
+        /// as not built for them alone, it is built all the same. A certificate that is revoked,
+        /// and everything else, is an error.
+        /// </remarks>
+        /// <param name="Built">What building the chain returned.</param>
+        /// <param name="ChainStatus">What the chain reported.</param>
+        public static Boolean ChainErrorsOf(Boolean                            Built,
+                                            IEnumerable<X509ChainStatusFlags>  ChainStatus)
+
+            => !Built &&
+               !(ChainStatus.Any() &&
+                 ChainStatus.All(status => status is X509ChainStatusFlags.NoError
+                                                  or X509ChainStatusFlags.RevocationStatusUnknown
+                                                  or X509ChainStatusFlags.OfflineRevocation));
 
         /// <summary>
         /// Whether the server's certificate was issued for the host this client dialled —

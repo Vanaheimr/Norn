@@ -207,7 +207,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <param name="NTSKE_Port">An optional NTS-KE port (default: 4460).</param>
         /// <param name="NTP_Port">An optional NTP port (default: 123).</param>
         /// <param name="Id">An optional unique identifier for the client.</param>
-        /// <param name="RemoteCertificateValidator">An optional remote certificate validator.</param>
+        /// <param name="RemoteCertificateValidator">An optional remote certificate validator. It is handed the chain built without asking whether anything in it is revoked, and asks that itself; without one, the key exchange asks online, for at most NTSKE_TLSClient.RevocationWait.</param>
         /// <param name="IPVersionPreference">The IP version preference for NTS-KE and NTP/NTS network connections.</param>
         /// <param name="Timeout">An optional timeout for the NTS-KE/NTS requests.</param>
         /// <param name="DNSClient">An optional DNS client to use.</param>

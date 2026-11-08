@@ -118,7 +118,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public DomainName?                   CheckedHostname               { get; } = CheckedHostname;
 
         /// <summary>
-        /// How revocation was checked while the chain was built.
+        /// How revocation was checked while the chain was built: online where nobody else
+        /// judges the certificate, and not at all where a validator of one's own does, which
+        /// asks itself - see <see cref="NTSKE_TLSClient"/>.
         /// </summary>
         public X509RevocationMode?           RevocationMode                { get; } = RevocationMode;
 
