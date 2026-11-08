@@ -931,6 +931,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             {
                 System.Threading.Interlocked.Increment(ref ntskeConnectionsRejected);
                 DebugX.Log($"Closing NTS-KE over SSH from {Context.Session.Peer}: too many concurrent key exchanges.");
+                await SendExitStatusAsync(Context.Channel, 1, CancellationToken).ConfigureAwait(false);
                 return;     // and the SSH server closes the channel
             }
 
@@ -956,7 +957,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                    );
 
                 await Context.Channel.SendDataAsync(ntsKERecords.ToByteArray(), requestCTS.Token).ConfigureAwait(false);
-                await Context.Channel.SendEofAsync (                             requestCTS.Token).ConfigureAwait(false);
+
+                // Data, exit-status, EOF, and then the SSH server closes the channel: the order of
+                // OpenSSH's sshd. Without an exit-status `ssh -s` reports the exchange as failed
+                // (exit code 255), although every record arrived. 0 means cookies, 1 an Error record.
+                await SendExitStatusAsync(Context.Channel,
+                                          ntsKERecords.Any(record => record.Type == NTSKE_RecordTypes.Error) ? 1U : 0U,
+                                          requestCTS.Token).ConfigureAwait(false);
+
+                await Context.Channel.SendEofAsync(requestCTS.Token).ConfigureAwait(false);
 
                 System.Threading.Interlocked.Increment(ref ntskeResponsesSent);
 
@@ -965,11 +974,38 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             {
                 System.Threading.Interlocked.Increment(ref ntskeHandshakeFailures);
                 DebugX.Log($"NTS-KE over SSH from {Context.Session.Peer} failed: {e.Message}");
+                await SendExitStatusAsync(Context.Channel, 1, CancellationToken.None).ConfigureAwait(false);
             }
             finally
             {
                 ntskeConnectionSemaphore.Release();
             }
+
+        }
+
+        #endregion
+
+        #region (private static) SendExitStatusAsync(Channel, ExitStatus, CancellationToken)
+
+        /// <summary>
+        /// Tell the client how the subsystem ended (RFC 4254, section 6.10), as an SSH server does
+        /// when the program behind a subsystem exits. A channel that is already gone has nobody
+        /// left to tell, so a failure here is not one of the exchange.
+        /// </summary>
+        private static async ValueTask SendExitStatusAsync(SshMuxChannel      Channel,
+                                                           UInt32             ExitStatus,
+                                                           CancellationToken  CancellationToken)
+        {
+
+            var payload = new Byte[4];
+            System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(payload, ExitStatus);
+
+            try
+            {
+                await Channel.SendRequestAsync("exit-status", false, payload, CancellationToken).ConfigureAwait(false);
+            }
+            catch
+            { }
 
         }
 
