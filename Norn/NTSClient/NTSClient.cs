@@ -278,8 +278,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </remarks>
         /// <param name="RequestNTSPublicKeys">Whether to request the public keys used for NTS response signing.</param>
         /// <param name="OverSSH">Whether the request goes over the SSH subsystem instead of TLS.</param>
+        /// <param name="OfferSSHExporter">Whether to offer the SSH exporter of option A before the transport of option B: only for a client that holds the exporter of its connection.</param>
         public  Byte[] BuildNTSKERequest(Boolean RequestNTSPublicKeys = false,
-                                         Boolean OverSSH              = false)
+                                         Boolean OverSSH              = false,
+                                         Boolean OfferSSHExporter     = false)
         {
 
             var records = new List<NTSKE_Record>() {
@@ -306,11 +308,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 records.Add(NTSKE_Record.CompliantAES128GCMSIVExporterContext());
             }
 
-            // Where the keys may come from without a TLS exporter. Only the transport of option B
-            // for now: the SSH exporter of option A would need the shared secret of the SSH key
-            // exchange, which the SSH client does not hand out.
+            // Where the keys may come from without a TLS exporter: the exporter of the SSH
+            // connection first where this client holds it, and always the transport of option B,
+            // which the white paper makes mandatory. A client behind OpenSSH's ssh -s holds no
+            // exporter, and offers the transport alone.
             if (OverSSH)
-                records.Add(NTSKE_Record.SSHKeyBindingRequest(SSHKeyBindingMethods.Transport));
+                records.Add(OfferSSHExporter
+                                ? NTSKE_Record.SSHKeyBindingRequest(SSHKeyBindingMethods.Exporter, SSHKeyBindingMethods.Transport)
+                                : NTSKE_Record.SSHKeyBindingRequest(SSHKeyBindingMethods.Transport));
 
             if (RequestNTSPublicKeys)
                 records.Add(NTSKE_Record.NTSRequestPublicKey());
@@ -812,12 +817,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #endregion
 
-        #region GetNTSKERecordsOverSSH (SSHClient, RequestNTSPublicKeys = false, Timeout = null, CancellationToken = default)
+        #region GetNTSKERecordsOverSSH (SSHClient, RequestNTSPublicKeys = false, OfferSSHExporter = true, Timeout = null, CancellationToken = default)
 
         /// <summary>
         /// Get NTS-KE records over SSH instead of TLS: the subsystem
         /// <see cref="NTSKE_SSH.SubsystemName"/> of the white paper "NTS Key Establishment over
-        /// SSH", with the transported secret of option B.
+        /// SSH", with the exporter of the connection (option A) or the transported secret
+        /// (option B), whichever the server selects.
         /// </summary>
         /// <remarks>
         /// <para>
@@ -828,16 +834,25 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// (section 8.3 of the white paper), without a handshake of its own.
         /// </para>
         /// <para>
+        /// The exporter is offered first, as section 4.5 of the white paper prefers it where both
+        /// ends terminate SSH themselves, and the transport after it; with
+        /// <paramref name="OfferSSHExporter"/> false the transport alone. Every exchange gets keys
+        /// of its own either way, from the nonce or the secret the server sends with it, so a
+        /// client may make as many on one connection as it likes.
+        /// </para>
+        /// <para>
         /// NTP afterwards is exactly as after a key exchange over TLS: the response carries the
         /// keys and the cookies, and <c>QueryTime</c> takes it as it is.
         /// </para>
         /// </remarks>
         /// <param name="SSHClient">An SSH connection to the NTS-KE server, authenticated in both directions.</param>
         /// <param name="RequestNTSPublicKeys">Whether to request the public keys used for NTS response signing.</param>
+        /// <param name="OfferSSHExporter">Whether to offer the exporter of the connection (option A) before the transport (option B).</param>
         /// <param name="Timeout">An optional timeout.</param>
         /// <param name="CancellationToken">An optional cancellation token.</param>
         public async Task<NTSKEResult> GetNTSKERecordsOverSSH(SshClient          SSHClient,
                                                               Boolean            RequestNTSPublicKeys   = false,
+                                                              Boolean            OfferSSHExporter       = true,
                                                               TimeSpan?          Timeout                = null,
                                                               CancellationToken  CancellationToken      = default)
         {
@@ -888,7 +903,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 {
 
                     await channel.SendDataAsync(
-                              BuildNTSKERequest(RequestNTSPublicKeys, OverSSH: true),
+                              BuildNTSKERequest(RequestNTSPublicKeys, OverSSH: true, OfferSSHExporter: OfferSSHExporter),
                               timeoutCTS.Token
                           ).ConfigureAwait(false);
 
@@ -946,14 +961,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     // The validator has made sure that there is exactly one.
                     var keyBinding = records.OfType<NTSKERecords.SSHKeyBinding>().Single();
 
-                    if (!keyBinding.TryGetSelection(out var method, out var ntsKESecret, out var selectionError))
+                    if (!keyBinding.TryGetSelection(out var method, out var methodData, out var selectionError))
                         return NTSKEResult.Failed(
                                    selectionError,
                                    NTSKEErrorCategory.Protocol,
                                    TakeTimingInfoSnapshot()
                                );
 
-                    if (method != SSHKeyBindingMethods.Transport)
+                    if (method == SSHKeyBindingMethods.Exporter && !OfferSSHExporter)
                         return NTSKEResult.Failed(
                                    $"The server selected the SSH Key Binding method {method} (0x{(UInt16) method:x4}), " +
                                    $"which this client did not offer.",
@@ -961,8 +976,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                    TakeTimingInfoSnapshot()
                                );
 
-                    // Always § 5.1's context over SSH, which record 1024 does not change.
-                    (C2S_Key, S2C_Key) = NTSKE_ExportedKeys.ExportAll(NTSKE_ExportedKeys.TransportedSecretExporter(ntsKESecret)).
+                    // Always § 5.1's context over SSH, which record 1024 does not change. The
+                    // exporter of the connection with the nonce of this exchange, or the secret.
+                    (C2S_Key, S2C_Key) = NTSKE_ExportedKeys.ExportAll(method == SSHKeyBindingMethods.Exporter
+                                                                          ? NTSKE_ExportedKeys.SSHExporter(SSHClient.Exporter, methodData)
+                                                                          : NTSKE_ExportedKeys.TransportedSecretExporter(methodData)).
                                                             For(negotiated, CompliantExporterContext: true);
 
                     var ntsKEResponse = new NTSKE_Response(

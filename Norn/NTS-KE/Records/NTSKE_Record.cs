@@ -481,13 +481,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// SSH Key Binding of a response: the method the server selected, and its data.
         /// </summary>
         /// <param name="Method">The selected method.</param>
-        /// <param name="NTSKESecret">The secret of <see cref="SSHKeyBindingMethods.Transport"/>; nothing for the exporter.</param>
+        /// <param name="MethodData">The nonce of <see cref="SSHKeyBindingMethods.Exporter"/>, or the secret of <see cref="SSHKeyBindingMethods.Transport"/>.</param>
         public static NTSKE_Record  SSHKeyBindingResponse(SSHKeyBindingMethods  Method,
-                                                          Byte[]?               NTSKESecret   = null)
+                                                          Byte[]                MethodData)
 
             => new NTSKERecords.SSHKeyBinding(
                    true,
-                   [.. ToNetworkByteOrder((UInt16) Method), .. NTSKESecret ?? []]
+                   [.. ToNetworkByteOrder((UInt16) Method), .. MethodData]
                );
 
         #endregion

@@ -31,7 +31,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
     {
 
         /// <summary>
-        /// Option A: the SSH exporter of the connection. No data in the response.
+        /// Option A: the SSH exporter of the connection. A nonce of
+        /// <see cref="NTSKE_ExportedKeys.ExporterNonceLength"/> octets in the response, which the
+        /// server chooses afresh for every key exchange.
         /// </summary>
         Exporter   = 0x0001,
 
@@ -54,14 +56,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS.NTSKERecords
     /// <remarks>
     /// <para>
     /// In a request the body is a list of 16-bit method ids in order of preference. In a response
-    /// it is the one method the server selected, followed by the data of that method: nothing for
+    /// it is the one method the server selected, followed by the data of that method: the nonce for
     /// <see cref="SSHKeyBindingMethods.Exporter"/>, the secret for
     /// <see cref="SSHKeyBindingMethods.Transport"/>.
     /// </para>
     /// <para>
     /// The two directions are read by two methods rather than told apart by the record itself,
-    /// because the record cannot know which way it travelled: a response choosing the exporter is
-    /// two octets, and so is a request offering only the exporter.
+    /// because the record cannot know which way it travelled: a response of 34 octets reads just
+    /// as well as a request offering 17 methods.
     /// </para>
     /// </remarks>
     public class SSHKeyBinding : NTSKE_Record
@@ -124,22 +126,22 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS.NTSKERecords
 
         #endregion
 
-        #region TryGetSelection(out Method, out NTSKESecret, out ErrorResponse)
+        #region TryGetSelection(out Method, out MethodData, out ErrorResponse)
 
         /// <summary>
-        /// Read the body as a response: the method the server selected, and for option B the
-        /// secret it sent.
+        /// Read the body as a response: the method the server selected, and the data it sent with
+        /// it.
         /// </summary>
         /// <param name="Method">The selected method.</param>
-        /// <param name="NTSKESecret">The secret of <see cref="SSHKeyBindingMethods.Transport"/>; empty for the exporter.</param>
+        /// <param name="MethodData">The nonce of <see cref="SSHKeyBindingMethods.Exporter"/>, or the secret of <see cref="SSHKeyBindingMethods.Transport"/>.</param>
         /// <param name="ErrorResponse">Why the body is not a selection this implementation can use.</param>
         public Boolean TryGetSelection(out                  SSHKeyBindingMethods  Method,
-                                       [NotNullWhen(true)]  out Byte[]?           NTSKESecret,
+                                       [NotNullWhen(true)]  out Byte[]?           MethodData,
                                        [NotNullWhen(false)] out String?           ErrorResponse)
         {
 
             Method         = default;
-            NTSKESecret    = null;
+            MethodData     = null;
             ErrorResponse  = null;
 
             if (Body.Length < 2)
@@ -155,14 +157,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS.NTSKERecords
 
                 case SSHKeyBindingMethods.Exporter:
 
-                    if (Body.Length != 2)
+                    if (Body.Length != 2 + NTSKE_ExportedKeys.ExporterNonceLength)
                     {
-                        ErrorResponse = $"The SSH Key Binding response selects the exporter, which carries no data, but has {Body.Length - 2} octets of it.";
+                        ErrorResponse = $"The SSH Key Binding response selects the exporter, whose nonce is {NTSKE_ExportedKeys.ExporterNonceLength} octets, but carries {Body.Length - 2}.";
                         return false;
                     }
 
                     Method       = SSHKeyBindingMethods.Exporter;
-                    NTSKESecret  = [];
+                    MethodData   = Body[2..];
                     return true;
 
                 case SSHKeyBindingMethods.Transport:
@@ -174,7 +176,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS.NTSKERecords
                     }
 
                     Method       = SSHKeyBindingMethods.Transport;
-                    NTSKESecret  = Body[2..];
+                    MethodData   = Body[2..];
                     return true;
 
                 default:

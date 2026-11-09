@@ -32,9 +32,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
     /// no TLS exporter.
     /// </para>
     /// <para>
-    /// This implementation offers option B only, the secret transported in that record. Option A,
-    /// the SSH exporter, needs the shared secret of the SSH key exchange, which the SSH stack does
-    /// not hand out yet.
+    /// Both options of the white paper are implemented: option A, the exporter of the SSH
+    /// connection, which Hermod derives from its key exchange, with a nonce the server sends in
+    /// that record for every key exchange, and option B, a secret transported in that record.
+    /// Option B is mandatory. Every key exchange gets keys of its own with either, so a client may
+    /// make as many on one connection as it likes.
     /// </para>
     /// </remarks>
     public static class NTSKE_SSH

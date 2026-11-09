@@ -942,9 +942,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// Whoever serves it decides who may open the subsystem; this only answers.
         /// </para>
         /// <para>
-        /// One exchange per channel, as RFC 8915 has one per TLS connection. Option B takes
-        /// nothing from the connection, so a client may open the subsystem again on the same
-        /// connection, and every exchange gets a secret of its own.
+        /// One exchange per channel, as RFC 8915 has one per TLS connection. A client may open the
+        /// subsystem again on the same connection, and every exchange gets keys of its own: with
+        /// option B from a secret of its own, with option A from the exporter of the connection
+        /// and a nonce of its own, both of which the server sends in the SSH Key Binding record.
         /// </para>
         /// </remarks>
         /// <param name="Context">The session and the channel of the subsystem.</param>
@@ -1043,7 +1044,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         /// <summary>
         /// The response to an NTS-KE request over SSH: the records of RFC 8915 as over TLS, plus
-        /// the SSH Key Binding record that carries the secret the keys are derived from.
+        /// the SSH Key Binding record that says where the keys come from: the exporter of the
+        /// connection, or the secret it carries.
         /// </summary>
         /// <param name="RequestBytes">The request, or null when none arrived complete.</param>
         /// <param name="ReadError">Why no request arrived complete.</param>
@@ -1084,23 +1086,55 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             if (!keyBindings[0].TryGetOfferedMethods(out var offeredMethods, out var methodError))
                 return Refuse(NTSKEErrorCodes.BadRequest, methodError);
 
-            // The first method of the client's list that this server supports — which is the
-            // transport, as long as no SSH stack hands out the exporter of option A. A client that
-            // does not offer it is not following the white paper, which makes the transport
-            // mandatory to implement.
-            if (!offeredMethods.Contains((UInt16) SSHKeyBindingMethods.Transport))
+            // The first method of the client's list that this server can use: the exporter of
+            // option A where the SSH stack hands it out, the transport of option B always, which is
+            // why every client offers it. Either way with data of its own for every exchange, so
+            // that every exchange on one connection gets keys of its own.
+            NTSKE_Exporter?  exporter      = null;
+            NTSKE_Record?    keyBinding    = null;
+
+            foreach (var method in offeredMethods)
+            {
+
+                if (method == (UInt16) SSHKeyBindingMethods.Exporter &&
+                    Session.Exporter is SshExporter sshExporter)
+                {
+
+                    // The keys come from the connection; the nonce, which need not be secret, only
+                    // keeps them apart from those of every other exchange on it.
+                    var exporterNonce = RandomNumberGenerator.GetBytes(NTSKE_ExportedKeys.ExporterNonceLength);
+
+                    exporter    = NTSKE_ExportedKeys.SSHExporter(sshExporter, exporterNonce);
+                    keyBinding  = NTSKE_Record.SSHKeyBindingResponse(SSHKeyBindingMethods.Exporter, exporterNonce);
+                    break;
+
+                }
+
+                if (method == (UInt16) SSHKeyBindingMethods.Transport)
+                {
+
+                    // A secret of its own for every exchange. It travels inside the SSH channel,
+                    // whose far end the client authenticated by its host key, and leaves this
+                    // method only there.
+                    var ntsKESecret = RandomNumberGenerator.GetBytes(NTSKE_ExportedKeys.TransportedSecretLength);
+
+                    exporter    = NTSKE_ExportedKeys.TransportedSecretExporter(ntsKESecret);
+                    keyBinding  = NTSKE_Record.SSHKeyBindingResponse(SSHKeyBindingMethods.Transport, ntsKESecret);
+                    break;
+
+                }
+
+            }
+
+            if (exporter is null || keyBinding is null)
                 return Refuse(NTSKEErrorCodes.BadRequest,
                               $"the SSH Key Binding record offers {String.Join(", ", offeredMethods.Select(method => $"0x{method:x4}"))}, " +
-                              $"but not the transport (0x{(UInt16) SSHKeyBindingMethods.Transport:x4}) this server supports");
+                              $"none of which this server can use");
 
             #endregion
 
-            // A secret of its own for every exchange. It travels inside the SSH channel, whose far
-            // end the client authenticated by its host key, and leaves this method only there.
-            var ntsKESecret       = RandomNumberGenerator.GetBytes(NTSKE_ExportedKeys.TransportedSecretLength);
-
             // Always § 5.1's context: see NegotiateNTSKE on why record 1024 means nothing here.
-            var (c2sKey, s2cKey)  = NTSKE_ExportedKeys.ExportAll(NTSKE_ExportedKeys.TransportedSecretExporter(ntsKESecret)).
+            var (c2sKey, s2cKey)  = NTSKE_ExportedKeys.ExportAll(exporter).
                                                        For(negotiation.AEADAlgorithm ?? NTSAEAD.Default,
                                                            CompliantExporterContext: true);
 
@@ -1109,10 +1143,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                        ntsKERequest,
                        c2sKey,
                        s2cKey,
-                       NTSKE_Record.SSHKeyBindingResponse(
-                           SSHKeyBindingMethods.Transport,
-                           ntsKESecret
-                       )
+                       keyBinding
                    );
 
         }

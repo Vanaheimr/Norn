@@ -23,6 +23,9 @@ using System.Text;
 
 using Org.BouncyCastle.Tls;
 
+using org.GraphDefined.Vanaheimr.Hermod.SSH;
+using org.GraphDefined.Vanaheimr.Hermod.SSH.Client;
+
 #endregion
 
 namespace org.GraphDefined.Vanaheimr.Norn.NTS
@@ -95,6 +98,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// HKDF-Expand needs as its pseudorandom key at the least.
         /// </summary>
         public const Int32  TransportedSecretLength = 32;
+
+        /// <summary>
+        /// The length of the nonce that option A of NTS-KE over SSH carries in the SSH Key Binding
+        /// record: thirty-two octets, chosen afresh by the server for every key exchange, so that
+        /// the exchanges on one SSH connection get keys of their own.
+        /// </summary>
+        public const Int32  ExporterNonceLength     = 32;
 
         /// <summary>
         /// Keyed by the algorithm the session will use <em>and</em> the algorithm id written into
@@ -196,33 +206,67 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #endregion
 
-        #region (static) SSHExporter(ExporterSecret, HashAlgorithm)
+        #region (static) SSHExporter(ExporterSecret, Nonce, HashAlgorithm)
 
         /// <summary>
         /// Option A of NTS-KE over SSH: the SSH exporter of the connection, section 4.3 of the
-        /// white paper "NTS Key Establishment over SSH".
+        /// white paper "NTS Key Establishment over SSH", method 0x0001 of the SSH Key Binding record.
         /// </summary>
         /// <remarks>
         /// <para>
-        /// SSH-Exporter(label, context, L) = HKDF-Expand(PRK = exporter_secret, info =
-        /// string(label) || string(context), L), with HMAC over the hash function of the key
-        /// exchange method. This is that second half.
+        /// PRK = HKDF-Extract(salt = exporter_nonce, IKM = exporter_secret), and
+        /// Exporter(label, context, L) = HKDF-Expand(PRK, info = string(label) || string(context), L),
+        /// with HMAC over the hash function of the key exchange method. The nonce is the one the
+        /// server sends in the SSH Key Binding record of this exchange.
         /// </para>
         /// <para>
-        /// The first half, exporter_secret = HASH(K || H || string("ssh-exporter@open.charging.cloud")
-        /// || session_id), needs the shared secret K of the key exchange, which only the SSH stack
-        /// ever holds — so it has to come from there, and no SSH stack hands it out yet.
+        /// exporter_secret = HASH(K || H || string("ssh-exporter@open.charging.cloud") || session_id)
+        /// needs the shared secret K of the key exchange, which only the SSH stack ever holds. A
+        /// connection of Hermod hands out the whole exporter instead, see
+        /// <see cref="SSHExporter(SshExporter, Byte[])"/>; this one takes the secret, for test vectors
+        /// and for a server that is given the secret along with the records.
         /// </para>
         /// </remarks>
         /// <param name="ExporterSecret">The exporter_secret of the SSH connection.</param>
+        /// <param name="Nonce">The exporter_nonce of this key exchange.</param>
         /// <param name="HashAlgorithm">The hash function of the key exchange method.</param>
         public static NTSKE_Exporter SSHExporter(Byte[]             ExporterSecret,
+                                                 Byte[]             Nonce,
                                                  HashAlgorithmName  HashAlgorithm)
+        {
 
-            => HKDFExpandExporter(
-                   ExporterSecret.ToArray(),
-                   HashAlgorithm
-               );
+            var secret  = ExporterSecret.ToArray();
+            var nonce   = Nonce.ToArray();
+
+            return (label, context, length) => SshExporter.Expand(HashAlgorithm, secret, nonce, label, context, length);
+
+        }
+
+        #endregion
+
+        #region (static) SSHExporter(Exporter, Nonce)
+
+        /// <summary>
+        /// Option A of NTS-KE over SSH: the exporter of an SSH connection of Hermod — on the client
+        /// <see cref="SshClient.Exporter"/>, on the server <see cref="SshSessionInfo.Exporter"/> —
+        /// with the nonce of one key exchange.
+        /// </summary>
+        /// <remarks>
+        /// The same keys on both ends of one connection for the same nonce, and on no other
+        /// connection. The server sends a nonce of its own with every key exchange, so every
+        /// exchange of a connection gets keys of its own.
+        /// </remarks>
+        /// <param name="Exporter">The exporter of the SSH connection.</param>
+        /// <param name="Nonce">The exporter_nonce of this key exchange.</param>
+        public static NTSKE_Exporter SSHExporter(SshExporter  Exporter,
+                                                 Byte[]       Nonce)
+        {
+
+            var nonce = Nonce.ToArray();
+
+            return (label, context, length) => Exporter.Export(nonce, label, context, length);
+
+        }
 
         #endregion
 
