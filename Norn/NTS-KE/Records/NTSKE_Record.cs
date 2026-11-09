@@ -463,7 +463,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                );
 
         /// <summary>
-        /// SSH Key Binding of a request: the methods the client offers, most preferred first.
+        /// SSH Key Binding of a request: the methods the client offers, most preferred first, each
+        /// as an entry of its id and the data length 0 - neither method takes data from the client.
         /// </summary>
         /// <remarks>
         /// Critical, unlike the vendor extensions above: a server that does not know it has no
@@ -474,7 +475,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             => new NTSKERecords.SSHKeyBinding(
                    true,
-                   ToNetworkByteOrder([.. Methods.Select(method => (UInt16) method)])
+                   [.. Methods.SelectMany(method => (Byte[]) [ (Byte) ((UInt16) method >> 8), (Byte) method, 0x00, 0x00 ])]
                );
 
         /// <summary>

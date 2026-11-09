@@ -266,8 +266,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
             var bytes = NTSKE_Record.SSHKeyBindingRequest(SSHKeyBindingMethods.Exporter,
                                                           SSHKeyBindingMethods.Transport).ToByteArray();
 
-            // Critical bit and type 16386, four octets of body, the two method ids.
-            Assert.That(bytes.ToHexString(), Is.EqualTo("c002" + "0004" + "0001" + "0002"));
+            // Critical bit and type 16386, eight octets of body: each method id with the data
+            // length 0 (Appendix A.2 of the white paper).
+            Assert.That(bytes.ToHexString(), Is.EqualTo("c002" + "0008" + "0001" + "0000" + "0002" + "0000"));
 
             Assert.That(NTSKE_Record.TryParse(bytes, out var records, out var errorResponse), Is.True, errorResponse);
 
@@ -305,19 +306,47 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         {
 
             // The server picks the first method it supports, so an unknown one before it is no
-            // reason to refuse the list.
-            var record = new SSHKeyBinding(true, [ 0x7f, 0xff, 0x00, 0x02 ]);
+            // reason to refuse the list - and its data, which the length says, is skipped, not read
+            // as method ids (Appendix A.2 of the white paper: c002 000a 8001 0002 abcd 0002 0000).
+            var record = new SSHKeyBinding(true, [ 0x80, 0x01, 0x00, 0x02, 0xab, 0xcd, 0x00, 0x02, 0x00, 0x00 ]);
 
             Assert.That(record.TryGetOfferedMethods(out var methods, out var methodError), Is.True, methodError);
-            Assert.That(methods, Is.EqualTo(new UInt16[] { 0x7fff, 0x0002 }));
+            Assert.That(methods, Is.EqualTo(new UInt16[] { 0x8001, 0x0002 }));
+
+            Assert.That(record.TryGetOffer(out var offer, out var offerError), Is.True, offerError);
+            Assert.That(offer![0].Data, Is.EqualTo(new Byte[] { 0xab, 0xcd }));
+            Assert.That(offer[1].Data,  Is.Empty);
 
         }
 
         [Test]
-        public void Request_WithoutAWholeListOfMethods_IsRefused()
+        public void Request_WithoutAWholeListOfEntries_IsRefused()
         {
-            Assert.That(new SSHKeyBinding(true, []).                 TryGetOfferedMethods(out _, out _), Is.False);
-            Assert.That(new SSHKeyBinding(true, [ 0x00, 0x02, 0x00 ]).TryGetOfferedMethods(out _, out _), Is.False);
+            Assert.Multiple(() => {
+
+                // No entry.
+                Assert.That(new SSHKeyBinding(true, []).                                          TryGetOfferedMethods(out _, out _), Is.False);
+
+                // An entry cut short: a method id without its data length.
+                Assert.That(new SSHKeyBinding(true, [ 0x00, 0x02 ]).                              TryGetOfferedMethods(out _, out _), Is.False);
+                Assert.That(new SSHKeyBinding(true, [ 0x00, 0x02, 0x00 ]).                        TryGetOfferedMethods(out _, out _), Is.False);
+
+                // Data cut short.
+                Assert.That(new SSHKeyBinding(true, [ 0x80, 0x01, 0x00, 0x05, 0xab ]).            TryGetOfferedMethods(out _, out _), Is.False);
+
+                // Octets after the last entry.
+                Assert.That(new SSHKeyBinding(true, [ 0x00, 0x02, 0x00, 0x00, 0x00 ]).            TryGetOfferedMethods(out _, out _), Is.False);
+
+            });
+        }
+
+        [Test]
+        public void Request_WithDataForTheExporterOrTheTransport_IsRefused()
+        {
+            Assert.Multiple(() => {
+                Assert.That(new SSHKeyBinding(true, [ 0x00, 0x01, 0x00, 0x01, 0xff, 0x00, 0x02, 0x00, 0x00 ]).TryGetOfferedMethods(out _, out _), Is.False);
+                Assert.That(new SSHKeyBinding(true, [ 0x00, 0x02, 0x00, 0x02, 0xaa, 0xbb ]).                  TryGetOfferedMethods(out _, out _), Is.False);
+            });
         }
 
         [Test]
@@ -667,7 +696,43 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
             var response = await ExchangeOverSSHAsync(
                                NTSKE_Record.NTSNextProtocolNegotiation,
                                NTSKE_Record.AEADAlgorithmNegotiation([ AEADAlgorithms.AES_SIV_CMAC_256 ]),
-                               new SSHKeyBinding(true, [ 0x00, 0x03, 0x7f, 0xff ]),
+                               new SSHKeyBinding(true, [ 0x00, 0x03, 0x00, 0x00, 0x7f, 0xff, 0x00, 0x01, 0x42 ]),
+                               NTSKE_Record.EndOfMessage
+                           );
+
+            Assert.That(ErrorCodeOf(response), Is.EqualTo(NTSKEErrorCodes.BadRequest));
+
+        }
+
+        [Test]
+        [Category("LocalIntegration")]
+        public async Task ARequestWithAnUnknownMethodAndItsData_GetsTheNextMethod()
+        {
+
+            // A later client's method with data of its own, before the transport: the data is
+            // skipped by its length, and the transport selected.
+            var response = await ExchangeOverSSHAsync(
+                               NTSKE_Record.NTSNextProtocolNegotiation,
+                               NTSKE_Record.AEADAlgorithmNegotiation([ AEADAlgorithms.AES_SIV_CMAC_256 ]),
+                               new SSHKeyBinding(true, [ 0x80, 0x01, 0x00, 0x02, 0x00, 0x01, 0x00, 0x02, 0x00, 0x00 ]),
+                               NTSKE_Record.EndOfMessage
+                           );
+
+            Assert.That(ErrorCodeOf(response), Is.Null);
+            Assert.That(response.OfType<SSHKeyBinding>().Single().TryGetSelection(out var method, out _, out var selectionError), Is.True, selectionError);
+            Assert.That(method, Is.EqualTo(SSHKeyBindingMethods.Transport));
+
+        }
+
+        [Test]
+        [Category("LocalIntegration")]
+        public async Task ARequestWithDataForTheTransport_IsABadRequest()
+        {
+
+            var response = await ExchangeOverSSHAsync(
+                               NTSKE_Record.NTSNextProtocolNegotiation,
+                               NTSKE_Record.AEADAlgorithmNegotiation([ AEADAlgorithms.AES_SIV_CMAC_256 ]),
+                               new SSHKeyBinding(true, [ 0x00, 0x02, 0x00, 0x02, 0xaa, 0xbb ]),
                                NTSKE_Record.EndOfMessage
                            );
 

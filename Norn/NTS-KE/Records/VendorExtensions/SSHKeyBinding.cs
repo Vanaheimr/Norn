@@ -55,15 +55,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS.NTSKERecords
     /// </summary>
     /// <remarks>
     /// <para>
-    /// In a request the body is a list of 16-bit method ids in order of preference. In a response
-    /// it is the one method the server selected, followed by the data of that method: the nonce for
+    /// In a request the body is one entry per method offered, in order of preference: a 16-bit
+    /// method id, a 16-bit data length and that many octets of data for the method. Neither
+    /// <see cref="SSHKeyBindingMethods.Exporter"/> nor <see cref="SSHKeyBindingMethods.Transport"/>
+    /// takes data from the client; the length is there so that a later method may, without an older
+    /// server reading its data as method ids. In a response the body is the one method the server
+    /// selected, followed by the data of that method: the nonce for
     /// <see cref="SSHKeyBindingMethods.Exporter"/>, the secret for
     /// <see cref="SSHKeyBindingMethods.Transport"/>.
     /// </para>
     /// <para>
     /// The two directions are read by two methods rather than told apart by the record itself,
-    /// because the record cannot know which way it travelled: a response of 34 octets reads just
-    /// as well as a request offering 17 methods.
+    /// because the record cannot know which way it travelled.
     /// </para>
     /// </remarks>
     public class SSHKeyBinding : NTSKE_Record
@@ -84,23 +87,31 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS.NTSKERecords
         { }
 
 
-        #region TryGetOfferedMethods(out Methods, out ErrorResponse)
+        #region TryGetOffer(out Offer, out ErrorResponse)
 
         /// <summary>
-        /// Read the body as a request: the methods the client offers, most preferred first.
+        /// Read the body as a request: the entries the client offers, most preferred first, each a
+        /// method id with the data the client gives for it.
         /// </summary>
         /// <remarks>
-        /// Method ids this implementation does not know are kept, not refused: the server selects
-        /// the first method of the list it supports, so a client may well offer one it has never
-        /// heard of before the one it has.
+        /// <para>
+        /// Methods this implementation does not know are kept, not refused, with their data: the
+        /// server selects the first method of the list it supports, so a client may well offer one
+        /// it has never heard of before the one it has.
+        /// </para>
+        /// <para>
+        /// Refused: a body without an entry, an entry or its data cut short, octets after the last
+        /// entry, and data for <see cref="SSHKeyBindingMethods.Exporter"/> or
+        /// <see cref="SSHKeyBindingMethods.Transport"/>, which take none from the client.
+        /// </para>
         /// </remarks>
-        /// <param name="Methods">The offered method ids, most preferred first.</param>
-        /// <param name="ErrorResponse">Why the body is not a list of methods.</param>
-        public Boolean TryGetOfferedMethods([NotNullWhen(true)]  out UInt16[]?  Methods,
-                                            [NotNullWhen(false)] out String?    ErrorResponse)
+        /// <param name="Offer">The offered methods with their data, most preferred first.</param>
+        /// <param name="ErrorResponse">Why the body is not a list of entries.</param>
+        public Boolean TryGetOffer([NotNullWhen(true)]  out IReadOnlyList<(UInt16 Method, Byte[] Data)>?  Offer,
+                                   [NotNullWhen(false)] out String?                                         ErrorResponse)
         {
 
-            Methods        = null;
+            Offer          = null;
             ErrorResponse  = null;
 
             if (Body.Length == 0)
@@ -109,17 +120,66 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS.NTSKERecords
                 return false;
             }
 
-            if (Body.Length % 2 != 0)
+            var entries  = new List<(UInt16, Byte[])>();
+            var offset   = 0;
+
+            while (offset < Body.Length)
             {
-                ErrorResponse = $"The SSH Key Binding body is {Body.Length} octets, which is not a whole number of 16-bit method ids.";
-                return false;
+
+                if (Body.Length - offset < 4)
+                {
+                    ErrorResponse = $"The SSH Key Binding body ends {Body.Length - offset} octet(s) into an entry, which takes four for its method id and data length.";
+                    return false;
+                }
+
+                var method  = (UInt16) ((Body[offset]     << 8) | Body[offset + 1]);
+                var length  =           (Body[offset + 2] << 8) | Body[offset + 3];
+
+                offset += 4;
+
+                if (Body.Length - offset < length)
+                {
+                    ErrorResponse = $"The SSH Key Binding entry of method 0x{method:x4} says {length} octet(s) of data, but the body has {Body.Length - offset} left.";
+                    return false;
+                }
+
+                if (length > 0 && method is (UInt16) SSHKeyBindingMethods.Exporter or (UInt16) SSHKeyBindingMethods.Transport)
+                {
+                    ErrorResponse = $"The SSH Key Binding entry of method 0x{method:x4} carries {length} octet(s) of data, but that method takes none from the client.";
+                    return false;
+                }
+
+                entries.Add((method, Body[offset..(offset + length)]));
+
+                offset += length;
+
             }
 
-            Methods = new UInt16[Body.Length / 2];
+            Offer = entries;
+            return true;
 
-            for (var i = 0; i < Methods.Length; i++)
-                Methods[i] = (UInt16) ((Body[i * 2] << 8) | Body[i * 2 + 1]);
+        }
 
+        #endregion
+
+        #region TryGetOfferedMethods(out Methods, out ErrorResponse)
+
+        /// <summary>
+        /// Read the body as a request: the methods the client offers, most preferred first, without
+        /// their data - see <see cref="TryGetOffer"/>.
+        /// </summary>
+        /// <param name="Methods">The offered method ids, most preferred first.</param>
+        /// <param name="ErrorResponse">Why the body is not a list of entries.</param>
+        public Boolean TryGetOfferedMethods([NotNullWhen(true)]  out UInt16[]?  Methods,
+                                            [NotNullWhen(false)] out String?    ErrorResponse)
+        {
+
+            Methods = null;
+
+            if (!TryGetOffer(out var offer, out ErrorResponse))
+                return false;
+
+            Methods = [.. offer.Select(entry => entry.Method)];
             return true;
 
         }
