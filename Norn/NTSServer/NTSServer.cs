@@ -331,6 +331,28 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             => GetCurrentMasterKey().Id;
 
         /// <summary>
+        /// The master keys this server keeps, oldest first: their ids and when they are valid,
+        /// never their values. The current one seals new cookies, the others still open the
+        /// cookies they sealed until their grace period is over.
+        /// </summary>
+        public IReadOnlyList<MasterKeyInfo>  MasterKeys
+        {
+            get
+            {
+
+                var current = GetCurrentMasterKey().Id;
+
+                return [.. masterKeys.Values.
+                               OrderBy(masterKey => masterKey.Id).
+                               Select (masterKey => new MasterKeyInfo(masterKey.Id,
+                                                                      masterKey.NotBefore,
+                                                                      masterKey.NotAfter,
+                                                                      masterKey.Id == current))];
+
+            }
+        }
+
+        /// <summary>
         /// A point-in-time snapshot of the NTS server counters.
         /// </summary>
         public NTSServerMetrics      Metrics
@@ -349,6 +371,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                    NTSKERequestsInvalid:      System.Threading.Interlocked.Read(ref ntskeRequestsInvalid),
                    NTSKEResponsesSent:        System.Threading.Interlocked.Read(ref ntskeResponsesSent)
                );
+
+        #endregion
+
+        #region Events
+
+        /// <summary>
+        /// A key exchange over SSH was answered - with cookies, or with an Error record - or failed.
+        /// Raised after the answer went out; a handler that throws does not touch the exchange.
+        /// </summary>
+        public event Action<NTSKEOverSSHExchange>?  OnSSHKeyExchange;
 
         #endregion
 
@@ -961,8 +993,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 System.Threading.Interlocked.Increment(ref ntskeConnectionsRejected);
                 DebugX.Log($"Closing NTS-KE over SSH from {Context.Session.Peer}: too many concurrent key exchanges.");
                 await SendExitStatusAsync(Context.Channel, 1, CancellationToken).ConfigureAwait(false);
+                ReportSSHKeyExchange(Context.Session, new SSHExchangeOutcome { Problem = "too many concurrent key exchanges" }, []);
                 return;     // and the SSH server closes the channel
             }
+
+            var outcome = new SSHExchangeOutcome();
 
             try
             {
@@ -982,8 +1017,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 var ntsKERecords = AnswerNTSKERequestOverSSH(
                                        requestBytes,
                                        errorMessage,
-                                       Context.Session
-                                   );
+                                       Context.Session,
+                                       outcome
+                                   ).ToArray();
 
                 await Context.Channel.SendDataAsync(ntsKERecords.ToByteArray(), requestCTS.Token).ConfigureAwait(false);
 
@@ -998,12 +1034,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                 System.Threading.Interlocked.Increment(ref ntskeResponsesSent);
 
+                ReportSSHKeyExchange(Context.Session, outcome, ntsKERecords);
+
             }
             catch (Exception e)
             {
                 System.Threading.Interlocked.Increment(ref ntskeHandshakeFailures);
                 DebugX.Log($"NTS-KE over SSH from {Context.Session.Peer} failed: {e.Message}");
                 await SendExitStatusAsync(Context.Channel, 1, CancellationToken.None).ConfigureAwait(false);
+                ReportSSHKeyExchange(Context.Session, new SSHExchangeOutcome { Problem = e.Message }, []);
             }
             finally
             {
@@ -1040,7 +1079,54 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #endregion
 
-        #region (private) AnswerNTSKERequestOverSSH(RequestBytes, ReadError, Session)
+        #region (private) SSHExchangeOutcome / ReportSSHKeyExchange(Session, Outcome, Response)
+
+        /// <summary>
+        /// What the answer to one key exchange over SSH made of it, for those who are told.
+        /// </summary>
+        private sealed class SSHExchangeOutcome
+        {
+            public SSHKeyBindingMethods?  Method;
+            public AEADAlgorithms?        AEADAlgorithm;
+            public NTSKEErrorCodes?       ErrorCode;
+            public String?                Problem;
+        }
+
+        private void ReportSSHKeyExchange(SshSessionInfo             Session,
+                                          SSHExchangeOutcome         Outcome,
+                                          IEnumerable<NTSKE_Record>  Response)
+        {
+
+            if (OnSSHKeyExchange is not Action<NTSKEOverSSHExchange> handlers)
+                return;
+
+            var exchange = new NTSKEOverSSHExchange(
+                               TimeProvider.GetUtcNow(),
+                               Session,
+                               Outcome.Method,
+                               Outcome.AEADAlgorithm,
+                               Response.Count(record => record.Type == NTSKE_RecordTypes.NewCookieForNTPv4),
+                               Outcome.ErrorCode,
+                               Outcome.Problem
+                           );
+
+            foreach (var handler in handlers.GetInvocationList().Cast<Action<NTSKEOverSSHExchange>>())
+            {
+                try
+                {
+                    handler(exchange);
+                }
+                catch (Exception e)
+                {
+                    DebugX.Log($"A handler of OnSSHKeyExchange failed: {e.Message}");
+                }
+            }
+
+        }
+
+        #endregion
+
+        #region (private) AnswerNTSKERequestOverSSH(RequestBytes, ReadError, Session, Outcome)
 
         /// <summary>
         /// The response to an NTS-KE request over SSH: the records of RFC 8915 as over TLS, plus
@@ -1050,15 +1136,19 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <param name="RequestBytes">The request, or null when none arrived complete.</param>
         /// <param name="ReadError">Why no request arrived complete.</param>
         /// <param name="Session">Who sent it.</param>
-        private IEnumerable<NTSKE_Record> AnswerNTSKERequestOverSSH(Byte[]?         RequestBytes,
-                                                                    String?         ReadError,
-                                                                    SshSessionInfo  Session)
+        /// <param name="Outcome">Filled with what the answer made of the request.</param>
+        private IEnumerable<NTSKE_Record> AnswerNTSKERequestOverSSH(Byte[]?             RequestBytes,
+                                                                    String?             ReadError,
+                                                                    SshSessionInfo      Session,
+                                                                    SSHExchangeOutcome  Outcome)
         {
 
             IEnumerable<NTSKE_Record> Refuse(NTSKEErrorCodes ErrorCode, String? Reason)
             {
                 System.Threading.Interlocked.Increment(ref ntskeRequestsInvalid);
                 DebugX.Log($"Refusing NTS-KE request over SSH from {Session.Username} ({Session.Peer}) with error {(UInt16) ErrorCode}: {Reason}");
+                Outcome.ErrorCode  = ErrorCode;
+                Outcome.Problem    = Reason ?? $"error {(UInt16) ErrorCode}";
                 return BuildNTSKEErrorRecords(ErrorCode);
             }
 
@@ -1104,8 +1194,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     // keeps them apart from those of every other exchange on it.
                     var exporterNonce = RandomNumberGenerator.GetBytes(NTSKE_ExportedKeys.ExporterNonceLength);
 
-                    exporter    = NTSKE_ExportedKeys.SSHExporter(sshExporter, exporterNonce);
-                    keyBinding  = NTSKE_Record.SSHKeyBindingResponse(SSHKeyBindingMethods.Exporter, exporterNonce);
+                    exporter        = NTSKE_ExportedKeys.SSHExporter(sshExporter, exporterNonce);
+                    keyBinding      = NTSKE_Record.SSHKeyBindingResponse(SSHKeyBindingMethods.Exporter, exporterNonce);
+                    Outcome.Method  = SSHKeyBindingMethods.Exporter;
                     break;
 
                 }
@@ -1118,8 +1209,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     // method only there.
                     var ntsKESecret = RandomNumberGenerator.GetBytes(NTSKE_ExportedKeys.TransportedSecretLength);
 
-                    exporter    = NTSKE_ExportedKeys.TransportedSecretExporter(ntsKESecret);
-                    keyBinding  = NTSKE_Record.SSHKeyBindingResponse(SSHKeyBindingMethods.Transport, ntsKESecret);
+                    exporter        = NTSKE_ExportedKeys.TransportedSecretExporter(ntsKESecret);
+                    keyBinding      = NTSKE_Record.SSHKeyBindingResponse(SSHKeyBindingMethods.Transport, ntsKESecret);
+                    Outcome.Method  = SSHKeyBindingMethods.Transport;
                     break;
 
                 }
@@ -1133,9 +1225,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             #endregion
 
+            Outcome.AEADAlgorithm = negotiation.AEADAlgorithm ?? NTSAEAD.Default;
+
             // Always § 5.1's context: see NegotiateNTSKE on why record 1024 means nothing here.
             var (c2sKey, s2cKey)  = NTSKE_ExportedKeys.ExportAll(exporter).
-                                                       For(negotiation.AEADAlgorithm ?? NTSAEAD.Default,
+                                                       For(Outcome.AEADAlgorithm.Value,
                                                            CompliantExporterContext: true);
 
             return BuildNTSKEResponseRecords(
@@ -1248,6 +1342,64 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             }
 
             return currentMasterKey.Value;
+
+        }
+
+        #endregion
+
+        #region RotateMasterKey(ForgetTheOthers = false)
+
+        /// <summary>
+        /// Make a new master key the current one now, rather than when the current one ends: the
+        /// "rotate the cookie master key" of section 8.2 of the white paper "NTS Key Establishment
+        /// over SSH".
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// New cookies are sealed with the new key from now on. The earlier keys still open the
+        /// cookies they sealed, each until its grace period after its end is over, so that clients
+        /// move to the new key with the cookies NTP hands them, without a key exchange of their own.
+        /// </para>
+        /// <para>
+        /// <paramref name="ForgetTheOthers"/> is for a key that may have been read by somebody: the
+        /// earlier keys are forgotten at once, here and in the key file, and every cookie they sealed
+        /// is refused from now on. Every client has to make a key exchange again.
+        /// </para>
+        /// </remarks>
+        /// <param name="ForgetTheOthers">Whether to forget every earlier key at once.</param>
+        /// <returns>The new key, without its value.</returns>
+        public MasterKeyInfo RotateMasterKey(Boolean ForgetTheOthers = false)
+        {
+
+            lock (currentMasterKeyLock)
+            {
+
+                var now = TimeProvider.GetUtcNow();
+
+                if (ForgetTheOthers)
+                    masterKeys.Clear();
+
+                // Above every id ever seen, not only above those still kept: see the constructor.
+                highestMasterKeyId = Math.Max(highestMasterKeyId,
+                                              masterKeys.IsEmpty
+                                                  ? 0UL
+                                                  : masterKeys.Keys.Max()) + 1;
+
+                var rotated        = new MasterKey(
+                                         Id:         highestMasterKeyId,
+                                         Value:      RandomNumberGenerator.GetBytes(32),
+                                         NotBefore:  now,
+                                         NotAfter:   now + MasterKeyLifetime
+                                     );
+
+                masterKeys.TryAdd(rotated.Id, rotated);
+                currentMasterKey   = rotated;
+
+                WriteMasterKeys();
+
+                return new MasterKeyInfo(rotated.Id, rotated.NotBefore, rotated.NotAfter, IsCurrent: true);
+
+            }
 
         }
 

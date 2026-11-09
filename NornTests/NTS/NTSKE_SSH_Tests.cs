@@ -547,6 +547,101 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
         #endregion
 
+        #region What the server tells
+
+        [Test]
+        [Category("LocalIntegration")]
+        public async Task EveryKeyExchangeOverSSH_IsReported()
+        {
+
+            // Section 8.2 of the white paper: an administrator asks which clients were served, how,
+            // and when last - and why one was not.
+            var reported               = new System.Collections.Concurrent.ConcurrentQueue<NTSKEOverSSHExchange>();
+            void Report(NTSKEOverSSHExchange Exchange) => reported.Enqueue(Exchange);
+
+            ntsServer!.OnSSHKeyExchange += Report;
+
+            try
+            {
+
+                await using var sshClient  = await ConnectAsync(clientKey);
+
+                var served                 = await NewNTSClient().GetNTSKERecordsOverSSH(sshClient);
+
+                Assert.That(served.Success, Is.True, served.ErrorMessage);
+
+                var refused                = await ExchangeOverSSHAsync(sshClient,
+                                                                        NTSKE_Record.NTSNextProtocolNegotiation,
+                                                                        NTSKE_Record.AEADAlgorithmNegotiation([ AEADAlgorithms.AES_SIV_CMAC_256 ]),
+                                                                        NTSKE_Record.EndOfMessage);
+
+                Assert.That(ErrorCodeOf(refused), Is.EqualTo(NTSKEErrorCodes.BadRequest));
+
+                // Told after the answer went out: give it the moment it may take.
+                for (var i = 0; i < 50 && reported.Count < 2; i++)
+                    await Task.Delay(20);
+
+                var exchanges              = reported.ToArray();
+
+                Assert.That(exchanges, Has.Length.EqualTo(2));
+
+                Assert.Multiple(() => {
+
+                    Assert.That(exchanges[0].Succeeded,         Is.True);
+                    Assert.That(exchanges[0].Session.Username,  Is.EqualTo("ntske"));
+                    Assert.That(exchanges[0].Session.PublicKeyBlob, Is.EqualTo(clientKey.PublicKeyBlob));
+                    Assert.That(exchanges[0].Method,            Is.EqualTo(SSHKeyBindingMethods.Exporter));
+                    Assert.That(exchanges[0].AEADAlgorithm,     Is.EqualTo(served.Response!.AEADAlgorithm));
+                    Assert.That(exchanges[0].Cookies,           Is.EqualTo(NTSServer.MaxCookiesPerResponse));
+                    Assert.That(exchanges[0].ErrorCode,         Is.Null);
+
+                    Assert.That(exchanges[1].Succeeded,         Is.False);
+                    Assert.That(exchanges[1].Method,            Is.Null);
+                    Assert.That(exchanges[1].Cookies,           Is.Zero);
+                    Assert.That(exchanges[1].ErrorCode,         Is.EqualTo(NTSKEErrorCodes.BadRequest));
+                    Assert.That(exchanges[1].Problem,           Does.Contain("SSH Key Binding"));
+
+                });
+
+            }
+            finally
+            {
+                ntsServer.OnSSHKeyExchange -= Report;
+            }
+
+        }
+
+        [Test]
+        [Category("LocalIntegration")]
+        public async Task AHandlerThatThrows_DoesNotTouchTheExchange()
+        {
+
+            static void Throw(NTSKEOverSSHExchange Exchange) => throw new InvalidOperationException("a broken handler");
+
+            ntsServer!.OnSSHKeyExchange += Throw;
+
+            try
+            {
+
+                await using var sshClient  = await ConnectAsync(clientKey);
+                var ntsClient              = NewNTSClient();
+
+                var first                  = await ntsClient.GetNTSKERecordsOverSSH(sshClient);
+                var second                 = await ntsClient.GetNTSKERecordsOverSSH(sshClient);
+
+                Assert.That(first. Success, Is.True, first. ErrorMessage);
+                Assert.That(second.Success, Is.True, second.ErrorMessage);
+
+            }
+            finally
+            {
+                ntsServer.OnSSHKeyExchange -= Throw;
+            }
+
+        }
+
+        #endregion
+
         #region What the server refuses
 
         [Test]

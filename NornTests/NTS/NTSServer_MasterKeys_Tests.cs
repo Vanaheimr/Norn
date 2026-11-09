@@ -214,6 +214,123 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
         #endregion
 
+        #region ARotation_MakesANewCurrentKey_AndKeepsTheOthers()
+
+        /// <summary>
+        /// An administrator rotates the master key: new cookies are sealed with a new key at once,
+        /// and the earlier keys are kept for the cookies they sealed - in memory and in the file.
+        /// </summary>
+        [Test]
+        public void ARotation_MakesANewCurrentKey_AndKeepsTheOthers()
+        {
+
+            var clock    = new SetClock(T);
+            var server   = ServerOn(KeyFile, clock);
+            var first    = server.CurrentMasterKeyId;
+
+            clock.Now    = T.AddHours(1);
+
+            var rotated  = server.RotateMasterKey();
+
+            Assert.Multiple(() => {
+
+                Assert.That(rotated.Id,                Is.EqualTo(first + 1));
+                Assert.That(rotated.IsCurrent,         Is.True);
+                Assert.That(rotated.NotBefore,         Is.EqualTo(T.AddHours(1)));
+                Assert.That(rotated.NotAfter,          Is.EqualTo(T.AddHours(1) + server.MasterKeyLifetime));
+                Assert.That(server.CurrentMasterKeyId, Is.EqualTo(rotated.Id));
+
+                Assert.That(server.MasterKeys.Select(key => (key.Id, key.IsCurrent)),
+                            Is.EqualTo(new[] { (first, false), (rotated.Id, true) }));
+
+                Assert.That(IdsIn(KeyFile),            Is.EqualTo(new[] { first, rotated.Id }));
+
+            });
+
+            // The next server on the file takes up the rotated key, not the earlier one.
+            Assert.That(ServerOn(KeyFile, clock).CurrentMasterKeyId, Is.EqualTo(rotated.Id));
+
+        }
+
+        #endregion
+
+        #region ARotation_ThatForgetsTheOthers_KeepsTheNewKeyAlone()
+
+        /// <summary>
+        /// A key that may have been read is forgotten at once, here and in the file, and the next
+        /// key is still numbered above it - a cookie says nothing of its key but the id.
+        /// </summary>
+        [Test]
+        public void ARotation_ThatForgetsTheOthers_KeepsTheNewKeyAlone()
+        {
+
+            var clock    = new SetClock(T);
+            var server   = ServerOn(KeyFile, clock);
+            var first    = server.CurrentMasterKeyId;
+            var second   = server.RotateMasterKey().Id;
+
+            var rotated  = server.RotateMasterKey(ForgetTheOthers: true);
+
+            Assert.Multiple(() => {
+                Assert.That(rotated.Id,                                  Is.EqualTo(second + 1));
+                Assert.That(server.MasterKeys.Select(key => key.Id),     Is.EqualTo(new[] { rotated.Id }));
+                Assert.That(IdsIn(KeyFile),                              Is.EqualTo(new[] { rotated.Id }));
+                Assert.That(first,                                       Is.LessThan(second));
+            });
+
+        }
+
+        #endregion
+
+        #region ARotatedKey_StillOpensItsCookies_AForgottenOneDoesNot()
+
+        /// <summary>
+        /// The cookies a client holds: still answered after a rotation, refused once the key that
+        /// sealed them is forgotten.
+        /// </summary>
+        [Test]
+        [Category("LocalIntegration")]
+        public async Task ARotatedKey_StillOpensItsCookies_AForgottenOneDoesNot()
+        {
+
+            var ntpPort  = FindFreeUDPPort();
+            var server   = new NTSServer(NTSKEPort:           FindFreeTCPPort(),
+                                         NTSPort:             ntpPort,
+                                         MasterKeysFilePath:  KeyFile);
+
+            await server.Start();
+
+            try
+            {
+
+                var ntsKEResult  = await ClientOf(server.TCPPort, ntpPort).GetNTSKERecords(RequestNTSPublicKeys: false);
+
+                Assert.That(ntsKEResult.Success, Is.True, ntsKEResult.ErrorMessage);
+
+                server.RotateMasterKey();
+
+                var answered     = await ClientOf(server.TCPPort, ntpPort).QueryTime(NTSKEResponse:  ntsKEResult.Response,
+                                                                                     Timeout:        TimeSpan.FromSeconds(10));
+
+                Assert.That(answered.Success, Is.True, answered.ErrorMessage);
+
+                server.RotateMasterKey(ForgetTheOthers: true);
+
+                var refused      = await ClientOf(server.TCPPort, ntpPort).QueryTime(NTSKEResponse:  ntsKEResult.Response,
+                                                                                     Timeout:        TimeSpan.FromSeconds(3));
+
+                Assert.That(refused.Success, Is.False, "a cookie of a forgotten key was answered");
+
+            }
+            finally
+            {
+                await server.ShutdownAsync();
+            }
+
+        }
+
+        #endregion
+
         #region TheKeyFileIsTheOwnersOnly()
 
         /// <summary>
