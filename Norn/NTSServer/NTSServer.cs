@@ -131,6 +131,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         private                  MasterKey?                               currentMasterKey;
         private readonly         String?                                  masterKeysFilePath;
 
+        /// <summary>
+        /// The highest master key id this server ever saw, in its key file or made itself: the
+        /// next key is numbered above it.
+        /// </summary>
+        private                  UInt64                                   highestMasterKeyId;
+
         private readonly         ConcurrentDictionary<UInt64, KeyPair>    keyPairs               = [];
         private                  KeyPair?                                 currentKeyPair;
         private                  PublicKey?                               currentPublicKey;
@@ -498,35 +504,57 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             }
 
+            // The master keys an earlier run of this server wrote are taken up again, so that the
+            // cookies its clients still hold stay good across a restart. A key is forgotten by the
+            // same rule GetCurrentMasterKey() forgets keys by: once it ended longer ago than the
+            // grace period. (This used to compare the end of a key against now *plus* the grace
+            // period, which - with a lifetime of one day and a grace period of seven - passed over
+            // every key that was ever written.)
+            //
+            // Every key of the file counts for the id of the next one, the forgotten ones as well:
+            // the id is all a cookie says of the key it was sealed under, so it is never given to a
+            // second key. Should an id stand in the file twice all the same - as in every file
+            // written while no key was taken up again, each run having begun anew with 1 - the
+            // later line, being the newer key, is the one kept.
             try
             {
 
-                var invalidAfter = this.TimeProvider.GetUtcNow() + this.MasterKeyRotationGracePeriod;
+                var forgetUpTo  = this.TimeProvider.GetUtcNow() - this.MasterKeyRotationGracePeriod;
+                var lineNumber  = 0;
 
                 foreach (var masterKeyText in MasterKeysFilePath.IsNotNullOrEmpty()
                                                   ? File.ReadAllLines(MasterKeysFilePath)
                                                   : [])
                 {
+
+                    lineNumber++;
+
+                    if (String.IsNullOrWhiteSpace(masterKeyText))
+                        continue;
+
                     if (MasterKey.TryParse(masterKeyText, out var masterKey, out var errorResponse))
                     {
 
-                        if (masterKey.NotAfter < invalidAfter)
+                        if (masterKey.Id > highestMasterKeyId)
+                            highestMasterKeyId = masterKey.Id;
+
+                        if (masterKey.NotAfter <= forgetUpTo)
                             continue;
 
-                        masterKeys.TryAdd(
-                            masterKey.Id,
-                            masterKey
-                        );
+                        masterKeys[masterKey.Id] = masterKey;
 
                     }
+
+                    // The line itself is not logged: it may well hold a key.
                     else
-                    {
-                        DebugX.Log($"Invalid master key: {masterKeyText}");
-                    }
+                        DebugX.Log($"Invalid master key in line {lineNumber} of '{MasterKeysFilePath}': {errorResponse}");
+
                 }
 
             }
             catch (FileNotFoundException)
+            { }
+            catch (DirectoryNotFoundException)
             { }
 
         }
@@ -1162,42 +1190,26 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     if (currentMasterKey is null)
                     {
 
-                        var newKeyId      = masterKeys.IsEmpty
-                                                ? 1UL
-                                                : masterKeys.Keys.Max() + 1;
+                        // Above every id ever seen, not only above those still kept: see the
+                        // constructor.
+                        highestMasterKeyId = Math.Max(highestMasterKeyId,
+                                                      masterKeys.IsEmpty
+                                                          ? 0UL
+                                                          : masterKeys.Keys.Max()) + 1;
 
-                        currentMasterKey  = new MasterKey(
-                                                 Id:         newKeyId,
-                                                 Value:      RandomNumberGenerator.GetBytes(32),
-                                                 NotBefore:  now,
-                                                 NotAfter:   now + MasterKeyLifetime
-                                             );
+                        currentMasterKey   = new MasterKey(
+                                                  Id:         highestMasterKeyId,
+                                                  Value:      RandomNumberGenerator.GetBytes(32),
+                                                  NotBefore:  now,
+                                                  NotAfter:   now + MasterKeyLifetime
+                                              );
 
                         masterKeys.TryAdd(
                             currentMasterKey.Value.Id,
                             currentMasterKey.Value
                         );
 
-                        try
-                        {
-                            if (masterKeysFilePath.IsNotNullOrEmpty())
-                            {
-
-                                var masterKeysDirectory = Path.GetDirectoryName(masterKeysFilePath);
-
-                                if (masterKeysDirectory.IsNotNullOrEmpty())
-                                    Directory.CreateDirectory(masterKeysDirectory);
-
-                                File.AppendAllText(
-                                    masterKeysFilePath,
-                                    currentMasterKey.Value.ToJSON().ToString(Newtonsoft.Json.Formatting.None) + Environment.NewLine
-                                );
-
-                            }
-                        }
-                        catch (Exception e) {
-                            DebugX.LogException(e, "Failed to write master key to file!");
-                        }
+                        WriteMasterKeys();
 
                     }
 
@@ -1205,6 +1217,77 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             }
 
             return currentMasterKey.Value;
+
+        }
+
+        #endregion
+
+        #region (private) WriteMasterKeys()
+
+        /// <summary>
+        /// Write the master keys this server keeps - and only those - into its key file.
+        ///
+        /// The file is written anew rather than appended to: a key this server forgot is gone from
+        /// the file as well, as RFC 8915 § 6 asks of keys that should now be expired. (That is no
+        /// secure erasure of the disk below it, which no file API can promise.) It is written next
+        /// to the file and moved over it, so that a crash leaves the old file or the new one, never
+        /// half of one; and it is the owner's alone before the first key is written into it, for
+        /// whoever reads the master keys can open every cookie and with it the keys its client
+        /// authenticates time with.
+        ///
+        /// Called within the master key lock. A file that cannot be written leaves the keys in
+        /// memory, which is what a server without a key file has as well.
+        /// </summary>
+        private void WriteMasterKeys()
+        {
+
+            if (masterKeysFilePath.IsNullOrEmpty())
+                return;
+
+            try
+            {
+
+                var masterKeysDirectory = Path.GetDirectoryName(masterKeysFilePath);
+
+                if (masterKeysDirectory.IsNotNullOrEmpty())
+                    Directory.CreateDirectory(masterKeysDirectory);
+
+                var next    = masterKeysFilePath + ".next";
+
+                // Made anew, so that it is made with the mode below: a file of that name left by
+                // a run that died before its move would keep whatever mode it had.
+                File.Delete(next);
+
+                var options = new FileStreamOptions {
+                                  Mode    = FileMode.CreateNew,
+                                  Access  = FileAccess.Write,
+                                  Share   = FileShare.None
+                              };
+
+                // Not even null on Windows, which refuses the property itself; there the access
+                // list is narrowed right after, while the file is still empty.
+                if (!OperatingSystem.IsWindows())
+                    options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+
+                using (new FileStream(next, options)) { }
+
+                if (OperatingSystem.IsWindows())
+                    SshPrivateKeyFile.RestrictToOwner(next);
+
+                File.WriteAllLines(
+                    next,
+                    masterKeys.Values.
+                               OrderBy(masterKey => masterKey.Id).
+                               Select (masterKey => masterKey.ToJSON().ToString(Newtonsoft.Json.Formatting.None))
+                );
+
+                File.Move(next, masterKeysFilePath, overwrite: true);
+
+            }
+            catch (Exception e)
+            {
+                DebugX.LogException(e, $"Failed to write the master keys to '{masterKeysFilePath}'!");
+            }
 
         }
 

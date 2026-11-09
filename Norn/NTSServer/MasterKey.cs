@@ -362,7 +362,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                 #region Value        [mandatory]
 
-                if (!JSON.ParseMandatoryText("value",
+                // "masterKey", as ToJSON() writes it. This used to read "value", which no master
+                // key was ever written with, so no key file could be read back at all.
+                if (!JSON.ParseMandatoryText("masterKey",
                                              "key value",
                                              out String? valueBase64,
                                              out ErrorResponse))
