@@ -391,6 +391,106 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.Monitoring
 
         #endregion
 
+        #region ANameTheNameServersDoNotAnswerForFailsAtTheNameAndNotAtTheKeyExchange()
+
+        /// <summary>
+        /// A server whose name the round's name servers do not answer for fails
+        /// at its name, says so, and is not asked for a key exchange over TLS,
+        /// which would have to resolve the same name with the same name servers.
+        /// </summary>
+        /// <remarks>
+        /// It used to be asked. With name servers given 3 s, the step of name
+        /// resolution took 6.3 s - the query and its retry - and found nothing,
+        /// and the key exchange then waited for the same name servers until its
+        /// own 10 s ran out: 16.4 s for one server, reported as "NTS-KE operation
+        /// timed out" with the category of the key exchange's protocol. The name
+        /// server is one from the documentation's range (RFC 5737), where nothing
+        /// answers.
+        /// </remarks>
+        [Test]
+        public async Task ANameTheNameServersDoNotAnswerForFailsAtTheNameAndNotAtTheKeyExchange()
+        {
+
+            var dns     = new DNSClient(
+                              IPv4Address.Parse("192.0.2.53"),
+                              IPPort.DNS,
+                              QueryTimeout: TimeSpan.FromSeconds(1)
+                          );
+
+            var result  = await Engine().MeasureSingleServer(
+                                    Endpoint(DomainName.Parse("nts-no-answer.example"), (sender, certificate, chain, client, errors) => TLSValidationResult.Success()),
+                                    Guid.NewGuid(),
+                                    dns
+                                );
+
+            Assert.Multiple(() => {
+                Assert.That(result.Success,                         Is.False);
+                Assert.That(result.ErrorCategory,                   Is.EqualTo(MonitoringErrorCategory.DNS));
+                Assert.That(result.ErrorMessage?.ToString(),        Does.Contain("'nts-no-answer.example' resolved to no address: A timed out, AAAA timed out."));
+                Assert.That(result.DNS?.Success,                    Is.False);
+                Assert.That(result.NTSKE,                           Is.Null, "a key exchange was made with a name that has no address");
+                Assert.That(result.TotalDuration,                   Is.LessThan(TimeSpan.FromSeconds(5)), "not the name servers' budget and the key exchange's on top");
+            });
+
+        }
+
+        #endregion
+
+        #region AKeyExchangeThatIsStillGoodNeedsNoName()
+
+        /// <summary>
+        /// A server whose key exchange is still good is measured with it, though
+        /// its name does not resolve now: the time is asked of the address the
+        /// key exchange left, and the name servers' silence is in the step of
+        /// name resolution, where it belongs.
+        /// </summary>
+        [Test]
+        public async Task AKeyExchangeThatIsStillGoodNeedsNoName()
+        {
+
+            var hostname  = DomainName.Parse("nts-cached.example");
+            var endpoint  = Endpoint(hostname, (sender, certificate, chain, client, errors) => TLSValidationResult.Success());
+            var engine    = Engine();
+
+            var known     = new DNSClient(
+                                IPv4Address.Localhost,
+                                IPPort.Parse(9),
+                                QueryTimeout: TimeSpan.FromSeconds(1)
+                            );
+
+            known.DNSCache.Add(
+                DNSServiceName.Parse(hostname.ToString()),
+                new A(hostname, DNSQueryClasses.IN, TimeSpan.FromHours(1), IPv4Address.Localhost)
+            );
+
+            known.DNSCache.AddNoData(
+                DNSServiceName.Parse(hostname.ToString()),
+                DNSResourceRecordTypes.AAAA,
+                TimeSpan.FromHours(1)
+            );
+
+            var first     = await engine.MeasureSingleServer(endpoint, Guid.NewGuid(), known);
+
+            Assert.That(first.Success, Is.True, first.ErrorMessage?.ToString());
+
+            var silent    = new DNSClient(
+                                IPv4Address.Parse("192.0.2.53"),
+                                IPPort.DNS,
+                                QueryTimeout: TimeSpan.FromSeconds(1)
+                            );
+
+            var second    = await engine.MeasureSingleServer(endpoint, Guid.NewGuid(), silent);
+
+            Assert.Multiple(() => {
+                Assert.That(second.Success,         Is.True,  second.ErrorMessage?.ToString());
+                Assert.That(second.NTSKEFromCache,  Is.True);
+                Assert.That(second.DNS?.Success,    Is.False);
+            });
+
+        }
+
+        #endregion
+
         #region TheKeyExchangeOffersWhatTheEndpointNames()
 
         /// <summary>

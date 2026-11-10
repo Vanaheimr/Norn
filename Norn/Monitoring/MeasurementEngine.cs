@@ -281,6 +281,34 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                 {
 
                     ntskeFromCache   = false;
+
+                    // A key exchange over TLS with the server itself would resolve
+                    // the very name step 1 found no address for, with the same name
+                    // servers. It used to: it waited for them again until its own
+                    // timeout ran out - 16 s for a server whose name servers were
+                    // given 3 s, more than 30 s with Hermod's 10 s - and then said
+                    // the key exchange had timed out, when it was the name that had
+                    // no address. A key exchange over SSH, or with a key exchange
+                    // server of the endpoint's own, connects to something else and
+                    // is still made; one whose cookies are still good needs no name.
+                    if (!dnsResult.Success          &&
+                        Server.ConnectOverSSH is null &&
+                        (Server.NTSKEHost is not DomainName keHost || keHost.Equals(Server.Hostname)))
+                    {
+
+                        totalStopwatch.Stop();
+
+                        return new NTSMeasurementResult(Server.Hostname, RoundId, Timestamp: timeProvider.GetUtcNow()) {
+                                   DNS             = dnsResult,
+                                   NTSKEFromCache  = false,
+                                   Success         = false,
+                                   ErrorMessage    = dnsResult.ErrorMessage ?? Error.Create($"'{Server.Hostname.Trimmed}' resolved to no address."),
+                                   ErrorCategory   = MonitoringErrorCategory.DNS,
+                                   TotalDuration   = totalStopwatch.Elapsed
+                               };
+
+                    }
+
                     ntskeMeasurement = await MeasureNTSKE(Server, DNSClient, CancellationToken);
 
                     if (!ntskeMeasurement.Success)
@@ -378,6 +406,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         /// records of "127.0.0.1" anyway, and where they did not answer, waited for
         /// them as long as they were given, retries included, before the key
         /// exchange began - more than 20 s for a server on the loopback interface.
+        ///
+        /// A name that resolves to no address says why, for each of A and AAAA:
+        /// timed out, a response code such as NXDomain, or no record. It used to
+        /// say nothing, and "no address" reads the same whether the name does
+        /// not exist or the name servers cannot be reached.
         /// </remarks>
         private async Task<DNSResolutionResult> MeasureDNS(DNSClient          DNSClient,
                                                            DomainName         Hostname,
@@ -405,15 +438,40 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
             try
             {
 
-                var addresses = (await DNSClient.Query_IPAddresses(Hostname, CancellationToken: CancellationToken)).ToArray();
+                // Both at once, as Query_IPAddresses asks them, but with what each
+                // query came back with, and not only its addresses.
+                var aLookup     = DNSClient.Query<A>   (Hostname, CancellationToken: CancellationToken);
+                var aaaaLookup  = DNSClient.Query<AAAA>(Hostname, CancellationToken: CancellationToken);
+
+                await Task.WhenAll(aLookup, aaaaLookup).ConfigureAwait(false);
+
+                var a           = await aLookup.   ConfigureAwait(false);
+                var aaaa        = await aaaaLookup.ConfigureAwait(false);
+
+                var ipv4        = a.   FilteredAnswers.Select(record => record.IPv4Address).Distinct().ToArray();
+                var ipv6        = aaaa.FilteredAnswers.Select(record => record.IPv6Address).Distinct().ToArray();
+
                 sw.Stop();
 
+                var resolved    = ipv4.Length + ipv6.Length > 0;
+
                 return new DNSResolutionResult(
-                           Success:        addresses.Length > 0,
+                           Success:        resolved,
                            Duration:       sw.Elapsed,
-                           IPv4Addresses:  addresses.Where(ipAddress => ipAddress is IPv4Address).Cast<IPv4Address>(),
-                           IPv6Addresses:  addresses.Where(ipAddress => ipAddress is IPv6Address).Cast<IPv6Address>()
+                           IPv4Addresses:  ipv4,
+                           IPv6Addresses:  ipv6,
+                           ErrorMessage:   resolved
+                                               ? null
+                                               : Error.Create($"'{Hostname.Trimmed}' resolved to no address: A {Said(a)}, AAAA {Said(aaaa)}.")
                        );
+
+                static String Said(DNSInfo Info)
+
+                    => Info.IsTimeout
+                           ? "timed out"
+                           : Info.ResponseCode == DNSResponseCodes.NoError
+                                 ? "has no record"
+                                 : Info.ResponseCode.ToString();
 
             }
             catch (Exception e)
