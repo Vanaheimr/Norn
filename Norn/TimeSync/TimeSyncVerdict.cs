@@ -158,6 +158,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.TimeSync
         /// did not authenticate is an answer from nobody in particular, and the
         /// whole point of NTS is that such an answer never reaches the clock -
         /// so it does not reach the median either, however plausible it looks.
+        ///
+        /// Nor does the answer of a server that says its own clock is not
+        /// synchronized - leap indicator 3, or a stratum of 0 or of 16 and
+        /// above - although nothing here asks: NTSResponseValidator turns it
+        /// into a failed query long before it is a measurement.
         /// </remarks>
         public static Boolean CanBeTrusted(NTSMeasurementResult Result)
 

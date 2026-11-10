@@ -170,6 +170,81 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
         #endregion
 
+        #region Validate_RejectsAnUnsynchronizedServer(LeapIndicator, Stratum, Why)
+
+        /// <summary>
+        /// A server that says its own clock is not synchronized - leap
+        /// indicator 3, or a stratum of 16 and above - gives no time to take,
+        /// however well its answer authenticates.
+        /// </summary>
+        /// <remarks>
+        /// RFC 5905 does not let a client synchronize to such a server, and it
+        /// is this check that keeps one out of the median of a round: the query
+        /// fails, and TimeSyncVerdict counts only the queries that did not.
+        /// </remarks>
+        [TestCase(3, 2,  "leap indicator")]
+        [TestCase(0, 16, "stratum 16")]
+        [TestCase(3, 16, "leap indicator")]
+        public void Validate_RejectsAnUnsynchronizedServer(Byte LeapIndicator, Byte Stratum, String Why)
+        {
+
+            var key       = Enumerable.Range(0, 32).Select(value => (Byte) value).ToArray();
+            var uniqueId  = Enumerable.Range(1, 32).Select(value => (Byte) value).ToArray();
+            var request   = CreateRequest(uniqueId);
+            var response  = CreateResponse(
+                                request,
+                                [
+                                    new UniqueIdentifierExtension(uniqueId, Authenticated: true),
+                                    new AuthenticatorAndEncryptedExtension(new Byte[16], new Byte[16]),
+                                    new NTSCookieExtension(new Byte[100], Authenticated: true, Encrypted: true)
+                                ],
+                                LeapIndicator:  LeapIndicator,
+                                Stratum:        Stratum
+                            );
+
+            var result = NTSResponseValidator.Validate(response, request, uniqueId, key);
+
+            Assert.That(result.IsValid,       Is.False,  "an unsynchronized server was believed");
+            Assert.That(result.ErrorCategory, Is.EqualTo(NTSQueryErrorCategory.Protocol));
+            Assert.That(result.Response,      Is.SameAs(response));
+            Assert.That(result.ErrorMessage,  Does.Contain(Why));
+
+        }
+
+        #endregion
+
+        #region Validate_AcceptsAnnouncedLeapSeconds(LeapIndicator)
+
+        /// <summary>
+        /// A leap second announced - leap indicator 1 or 2 - is a synchronized
+        /// server telling what comes at midnight, not a reason to turn it away.
+        /// </summary>
+        [TestCase(1)]
+        [TestCase(2)]
+        public void Validate_AcceptsAnnouncedLeapSeconds(Byte LeapIndicator)
+        {
+
+            var key       = Enumerable.Range(0, 32).Select(value => (Byte) value).ToArray();
+            var uniqueId  = Enumerable.Range(1, 32).Select(value => (Byte) value).ToArray();
+            var request   = CreateRequest(uniqueId);
+            var response  = CreateResponse(
+                                request,
+                                [
+                                    new UniqueIdentifierExtension(uniqueId, Authenticated: true),
+                                    new AuthenticatorAndEncryptedExtension(new Byte[16], new Byte[16]),
+                                    new NTSCookieExtension(new Byte[100], Authenticated: true, Encrypted: true)
+                                ],
+                                LeapIndicator: LeapIndicator
+                            );
+
+            var result = NTSResponseValidator.Validate(response, request, uniqueId, key);
+
+            Assert.That(result.IsValid,  Is.True,  result.ErrorMessage);
+
+        }
+
+        #endregion
+
         #region Validate_RejectsReplay()
 
         [Test]
@@ -243,6 +318,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         private static NTPResponse CreateResponse(NTPRequest                Request,
                                                   IEnumerable<NTPExtension> Extensions,
                                                   UInt64?                   OriginateTimestamp = null,
+                                                  Byte?                     LeapIndicator      = null,
                                                   Byte?                     Stratum            = null,
                                                   UInt32?                   RootDelay          = null,
                                                   UInt32?                   RootDispersion     = null)
@@ -251,6 +327,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
             var transmitTimestamp = NTPPacket.GetCurrentNTPTimestamp(new DateTime(2026, 01, 01, 00, 00, 02, DateTimeKind.Utc));
 
             return new NTPResponse(
+                       LI:                   LeapIndicator ?? 0,
                        Mode:                 4,
                        Stratum:              Stratum ?? 2,
                        RootDelay:            RootDelay      ?? 0,
