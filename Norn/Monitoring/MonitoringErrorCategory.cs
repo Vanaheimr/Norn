@@ -35,7 +35,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         Cache,
         Canceled,
         Exception,
-        Unknown
+        Unknown,
+        /// <summary>
+        /// The SSH connection of a key exchange over SSH: not had, a host key
+        /// not believed, the client not let in, or the subsystem refused.
+        /// </summary>
+        SSH
     }
 
 }

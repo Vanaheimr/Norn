@@ -138,6 +138,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         /// </summary>
         public TLSComplianceResult?     TLSCompliance             { get; init; }
 
+        /// <summary>
+        /// The SHA-256 fingerprint of the host key the server showed, as
+        /// "SHA256:...", where the key exchange went over SSH.
+        /// </summary>
+        public String?                  SSHHostKey                { get; init; }
+
 
         /// <summary>
         /// Error if NTS-KE failed.

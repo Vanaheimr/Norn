@@ -23,6 +23,7 @@ using Newtonsoft.Json;
 
 using org.GraphDefined.Vanaheimr.Hermod;
 using org.GraphDefined.Vanaheimr.Hermod.DNS;
+using org.GraphDefined.Vanaheimr.Hermod.SSH.Client;
 using org.GraphDefined.Vanaheimr.Norn.NTS;
 
 #endregion
@@ -180,6 +181,27 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         /// </remarks>
         [JsonIgnore]
         public RemoteTLSServerCertificateValidationHandler<NTSKE_TLSClient>?  RemoteCertificateValidator  { get; set; }
+
+        /// <summary>
+        /// How a key exchange with this server goes over SSH instead of TLS: an
+        /// SSH connection to it, its host key already checked and the client
+        /// signed in - or none for NTS-KE over TLS.
+        /// </summary>
+        /// <remarks>
+        /// The subsystem "ntske/1@open.charging.cloud" of the white paper "NTS
+        /// Key Establishment over SSH" is opened on it, the key exchange made,
+        /// and the connection closed again. NTP afterwards is the same as after
+        /// TLS. Who may connect, and what host key the server has to show, is
+        /// the business of whoever sets this: the engine takes the connection as
+        /// it is handed, and a connection that cannot be had is a key exchange
+        /// that failed. NTSKEPort, NTSKEHost and RemoteCertificateValidator do
+        /// not apply then, and a client never falls back to TLS by itself: the
+        /// cookies are renewed by the next key exchange over SSH.
+        ///
+        /// Never written into a configuration file: it is code, not a setting.
+        /// </remarks>
+        [JsonIgnore]
+        public Func<CancellationToken, ValueTask<SshClient>>?  ConnectOverSSH  { get; set; }
 
         public NTSServerEndpoint(DomainName                                                     Hostname,
                                  IPPort?                                                        NTSKEPort                    = null,

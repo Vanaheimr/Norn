@@ -38,6 +38,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         public Byte             RemainingCookies   { get; set; }
 
         /// <summary>
+        /// The SHA-256 fingerprint of the host key the server showed at the key
+        /// exchange over SSH, as "SHA256:..." - or null after one over TLS.
+        /// </summary>
+        public String?          SSHHostKey         { get; set; }
+
+        /// <summary>
         /// When the next key exchange is due, or none to age this entry by the
         /// MaxAge it is asked with.
         /// </summary>

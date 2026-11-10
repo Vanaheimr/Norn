@@ -26,6 +26,8 @@ using System.Security.Cryptography.X509Certificates;
 using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Hermod;
 using org.GraphDefined.Vanaheimr.Hermod.DNS;
+using org.GraphDefined.Vanaheimr.Hermod.SSH;
+using org.GraphDefined.Vanaheimr.Hermod.SSH.Client;
 
 using org.GraphDefined.Vanaheimr.Norn.NTP;
 using org.GraphDefined.Vanaheimr.Norn.NTS;
@@ -434,6 +436,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                                                                 CancellationToken  CancellationToken = default)
         {
 
+            if (Server.ConnectOverSSH is not null)
+                return await MeasureNTSKEOverSSH(Server, Server.ConnectOverSSH, DNSClient, CancellationToken).ConfigureAwait(false);
+
             // At the endpoint's own key exchange server, where it names one, asking it for the
             // endpoint's host name as the NTP server.
             var ntsClient = new NTSClient(
@@ -541,6 +546,143 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                        TLSVersion              = tlsInfo?.NegotiatedTLSVersion,
                        TLSApplicationProtocol  = tlsInfo?.NegotiatedApplicationProtocol,
                        TLSCompliance           = tlsCompliance
+                   };
+
+        }
+
+        #endregion
+
+        #region (private) MeasureNTSKEOverSSH(Server, Connect, DNSClient, CancellationToken)
+
+        /// <summary>
+        /// A key exchange over SSH - the subsystem "ntske/1@open.charging.cloud"
+        /// of the white paper "NTS Key Establishment over SSH" - on a connection
+        /// the endpoint makes, cached as one over TLS is.
+        /// </summary>
+        /// <remarks>
+        /// The client offers the exporter of the connection (option A) before
+        /// the transported secret (option B), and the server picks the first it
+        /// can use. It never renews its cookies over TLS by itself; the next key
+        /// exchange over SSH does. There is no certificate,
+        /// so nothing of TLS is judged or recorded; the host key the server
+        /// showed is.
+        /// </remarks>
+        private async Task<NTSKEMeasurementResult> MeasureNTSKEOverSSH(NTSServerEndpoint                                Server,
+                                                                       Func<CancellationToken, ValueTask<SshClient>>   Connect,
+                                                                       DNSClient                                        DNSClient,
+                                                                       CancellationToken                                CancellationToken)
+        {
+
+            var ntsClient = new NTSClient(
+                                Server.Hostname,
+                                NTP_Port:                    Server.NTPPort,
+                                OfferedAEADAlgorithms:       Server.OfferedAEADAlgorithms,
+                                Timeout:                     config.NTSKETimeout,
+                                DNSClient:                   DNSClient,
+                                TimeProvider:                timeProvider,
+                                CookiePoolPolicy:            new NTSCookiePoolPolicy { RenegotiateWhenExhausted = false }
+                            );
+
+            var       sw          = Stopwatch.StartNew();
+            String?   hostKey     = null;
+            NTSKEResult? result   = null;
+
+            try
+            {
+
+                await using var ssh = await Connect(CancellationToken).ConfigureAwait(false);
+
+                hostKey = SshFingerprint.Sha256(ssh.ServerHostKey);
+
+                result  = await ntsClient.GetNTSKERecordsOverSSH(
+                                    ssh,
+                                    RequestNTSPublicKeys:  Server.SignedResponses,
+                                    Timeout:               config.NTSKETimeout,
+                                    CancellationToken:     CancellationToken
+                                ).ConfigureAwait(false);
+
+            }
+            catch (OperationCanceledException) when (CancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception e)
+            {
+
+                sw.Stop();
+
+                return new NTSKEMeasurementResult {
+                           Success                 = false,
+                           TotalDuration           = sw.Elapsed,
+                           ErrorMessage            = Error.Create($"NTS-KE over SSH: {(hostKey is null ? "no SSH connection" : "the SSH connection failed")}: {e.Message}"),
+                           SSHHostKey              = hostKey,
+                           ErrorCategory           = MonitoringErrorCategory.SSH
+                       };
+
+            }
+
+            sw.Stop();
+
+            var ntskeResponse   = result?.Response;
+            var timingInfo      = result?.TimingInfo;
+            var totalDuration   = timingInfo?.TotalDuration          ?? sw.Elapsed;
+            var ntskeDuration   = timingInfo?.NTSKEProtocolDuration  ?? TimeSpan.Zero;
+
+            if (result is null         ||
+                !result.Success        ||
+                ntskeResponse is null  ||
+                ntskeResponse.ErrorMessage is not null)
+            {
+
+                var errorMessage  = result?.ErrorMessage ?? ntskeResponse?.ErrorMessage ?? "NTS-KE over SSH failed.";
+
+                return new NTSKEMeasurementResult {
+                           Success                 = false,
+                           TotalDuration           = totalDuration,
+                           NTSKEProtocolDuration   = ntskeDuration,
+                           ErrorMessage            = Error.Create(errorMessage),
+                           SSHHostKey              = hostKey,
+                           ErrorCategory           = result?.ErrorCategory == NTSKEErrorCategory.SSHSubsystem
+                                                         ? MonitoringErrorCategory.SSH
+                                                         : MapNTSKEErrorCategory(result?.ErrorCategory ?? NTSKEErrorCategory.Unknown)
+                       };
+
+            }
+
+            ntsClient.SeedCookies(ntskeResponse);
+            var cookiePoolDiagnostics = ntsClient.CookiePoolDiagnostics;
+
+            var refreshed = timeProvider.GetUtcNow();
+
+            ntskeCache[Server.Hostname] = new CachedNTSKEState {
+                                              NTSKEResponse     = ntskeResponse,
+                                              NTSClient         = ntsClient,
+                                              LastRefreshed     = refreshed,
+                                              RefreshAt         = refreshed + RefreshDelay(Server),
+                                              RemainingCookies  = ToByteCookieCount(cookiePoolDiagnostics.AvailableCookieCount),
+                                              SSHHostKey        = hostKey
+                                          };
+
+            return new NTSKEMeasurementResult {
+                       Success                 = true,
+                       TotalDuration           = totalDuration,
+                       NTSKEProtocolDuration   = ntskeDuration,
+                       NumberOfCookies         = (UInt16) ntskeResponse.Cookies.Count(),
+                       AEADAlgorithm           = ntskeResponse.AEADAlgorithm.ToString(),
+                       NTPServerNegotiated     = ntskeResponse.NTPv4Servers.FirstOrDefault(),
+                       NTPPortNegotiated       = ntskeResponse.NTPv4Ports.Any()
+                                                     ? ntskeResponse.NTPv4Ports.First()
+                                                     : null,
+                       CookiePoolSize          = cookiePoolDiagnostics.AvailableCookieCount,
+                       CookiePoolMaxSize       = cookiePoolDiagnostics.MaxCookiePoolSize,
+                       CookiePoolLowWatermark  = cookiePoolDiagnostics.LowWatermark,
+                       SeededCookieCount       = cookiePoolDiagnostics.SeededCookieCount,
+                       CookiesReceived         = cookiePoolDiagnostics.CookiesReceived,
+                       CookiesConsumed         = cookiePoolDiagnostics.CookiesConsumed,
+                       DroppedCookieCount      = cookiePoolDiagnostics.DroppedCookieCount,
+                       CookiePoolLow           = cookiePoolDiagnostics.IsLow,
+                       CookiePoolEmpty         = cookiePoolDiagnostics.IsEmpty,
+                       SSHHostKey              = hostKey
                    };
 
         }
@@ -1188,6 +1330,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                    NTSKEErrorCategory.TCPConnect             => MonitoringErrorCategory.TCPConnect,
                    NTSKEErrorCategory.TLSHandshake           => MonitoringErrorCategory.TLSHandshake,
                    NTSKEErrorCategory.TLSCertificate         => MonitoringErrorCategory.TLSCertificate,
+                   NTSKEErrorCategory.SSHSubsystem           => MonitoringErrorCategory.SSH,
                    NTSKEErrorCategory.Timeout                => MonitoringErrorCategory.NTSKEProtocol,
                    NTSKEErrorCategory.Protocol               => MonitoringErrorCategory.NTSKEProtocol,
                    NTSKEErrorCategory.UnknownCriticalRecord  => MonitoringErrorCategory.NTSKEProtocol,
