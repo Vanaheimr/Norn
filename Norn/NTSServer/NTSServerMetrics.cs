@@ -33,10 +33,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                   Int64 NTSKEConnectionsRejected,
                                   Int64 NTSKEHandshakeFailures,
                                   Int64 NTSKERequestsInvalid,
-                                  Int64 NTSKEResponsesSent)
+                                  Int64 NTSKEResponsesSent,
+                                  Int64 NTPRequestsDenied       = 0,
+                                  Int64 NTSKEConnectionsDenied  = 0)
     {
 
         public Int64 NTPRequestsReceived       { get; } = NTPRequestsReceived;
+        /// <summary>
+        /// How many requests were dropped because the access list of RFC 8633 § 5.1 does not
+        /// allow where they came from. Never answered, so never counted as rate-limited too.
+        /// </summary>
+        public Int64 NTPRequestsDenied         { get; } = NTPRequestsDenied;
+
         public Int64 NTPRequestsRejected       { get; } = NTPRequestsRejected;
 
         /// <summary>
@@ -56,6 +64,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public Int64 NTPSignedResponsesSent    { get; } = NTPSignedResponsesSent;
         public Int64 NTPRequestFailures        { get; } = NTPRequestFailures;
         public Int64 NTSKEConnectionsAccepted  { get; } = NTSKEConnectionsAccepted;
+        /// <summary>
+        /// How many NTS-KE connections, over TLS or over this server's own SSH listener, were
+        /// turned away by the access list of RFC 8633 § 5.1.
+        /// </summary>
+        public Int64 NTSKEConnectionsDenied    { get; } = NTSKEConnectionsDenied;
+
         public Int64 NTSKEConnectionsRejected  { get; } = NTSKEConnectionsRejected;
         public Int64 NTSKEHandshakeFailures    { get; } = NTSKEHandshakeFailures;
         public Int64 NTSKERequestsInvalid      { get; } = NTSKERequestsInvalid;
@@ -75,6 +89,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             var counters = new (String Name, Int64 Value)[] {
                                ("received",         NTPRequestsReceived),
+                               ("denied",           NTPRequestsDenied),
                                ("rejected",         NTPRequestsRejected),
                                ("rate-limited",     NTPRequestsRateLimited),
                                ("kisses",           NTPKissesOfDeathSent),
@@ -83,6 +98,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                ("signed",           NTPSignedResponsesSent),
                                ("failures",         NTPRequestFailures),
                                ("ke-accepted",      NTSKEConnectionsAccepted),
+                               ("ke-denied",        NTSKEConnectionsDenied),
                                ("ke-rejected",      NTSKEConnectionsRejected),
                                ("ke-handshakes",    NTSKEHandshakeFailures),
                                ("ke-invalid",       NTSKERequestsInvalid),

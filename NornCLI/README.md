@@ -153,6 +153,8 @@ norn serve --port 12123 --ke-port 14460
 | `--master-keys <file>` | Where to persist the cookie master keys |
 | `--rate-limit <s>` | Average seconds between answers per client address |
 | `--burst <n>` | Requests one address may fire back to back (default 8) |
+| `--deny <networks>` | Networks not to answer at all, separated by commas; `all` for every address |
+| `--allow <networks>` | Networks to answer inside the denied ones |
 | `--no-interleaved` | Refuse the RFC 9769 interleaved mode |
 | `--auth-interleaved` | Offer the interleaved mode only to authenticated clients |
 | `--stratum <n>` | Stratum to report (default 1) |
@@ -173,6 +175,19 @@ default for an afternoon and the wrong one for a service.
 with a `RATE` kiss-o'-death carrying the interval the server will serve, rather than being ignored.
 `--burst` is how much of a head start an address gets, so that a client's `iburst` is not the first
 thing refused.
+
+`--deny` and `--allow` are the access list of RFC 8633 § 5.1: who may query this server at all.
+Without them every address is answered. An address that is denied learns nothing, not even that a
+server is there: its NTP requests are dropped without a kiss, and its NTS-KE connections are closed
+before the TLS handshake. The most specific network decides, in whatever order they were given, so
+serving only your own networks reads
+
+```bash
+norn serve --deny all --allow 10.0.0.0/8,2001:db8::/32
+```
+
+A network has to change something: `--allow` without `--deny`, or `10.1.0.0/16` allowed inside an
+allowed `10.0.0.0/8`, is refused rather than left to look as if it restricted anything.
 
 ## Scripting it
 

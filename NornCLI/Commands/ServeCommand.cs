@@ -56,6 +56,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.CLI.Commands
               --rate-limit <s>    Average seconds between answers per client address. Without
                                   this the server answers everything it can.
               --burst <n>         Requests one address may fire back to back (default: 8).
+              --deny <networks>   Networks not to answer at all, separated by commas: an
+                                  address, a network such as 10.0.0.0/8, or 'all'.
+                                  Without --deny every address is answered.
+              --allow <networks>  Networks to answer inside the denied ones; the most
+                                  specific network decides. To serve only your own:
+                                  --deny all --allow 10.0.0.0/8,2001:db8::/32
               --no-interleaved    Refuse the RFC 9769 interleaved mode.
               --auth-interleaved  Offer the interleaved mode only to authenticated clients.
               --stratum <n>       Stratum to report (default: 1).
@@ -71,7 +77,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.CLI.Commands
 
         public static IEnumerable<String> ValuedOptions
             => [ "--port", "--ke-port", "--listen", "--cert", "--key", "--advertise",
-                 "--master-keys", "--rate-limit", "--burst", "--stratum", "--refid" ];
+                 "--master-keys", "--rate-limit", "--burst", "--allow", "--deny",
+                 "--stratum", "--refid" ];
 
 
         public static async Task<Int32> Run(CommandLine        Arguments,
@@ -93,6 +100,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.CLI.Commands
             var masterKeys       = Arguments.Value("--master-keys");
             var rateLimit        = Arguments.SecondsValue("--rate-limit");
             var burst            = Arguments.CountValue("--burst", 8);
+            var allow            = Arguments.Value("--allow");
+            var deny             = Arguments.Value("--deny");
             var stratum          = Arguments.CountValue("--stratum", 1);
             var refid            = Arguments.Value("--refid", "LOCL")!;
 
@@ -119,6 +128,24 @@ namespace org.GraphDefined.Vanaheimr.Norn.CLI.Commands
                 !IPAddress.TryParse(listen, out listenAddress))
             {
                 throw new UsageException($"--listen needs an IP address, but was '{listen}'.");
+            }
+
+            if (allow is not null && deny is null)
+                throw new UsageException($"--allow only matters inside networks that --deny denies, and every address is answered without one. " +
+                                         $"To serve only {allow}: --deny all --allow {allow}");
+
+            NTPAccessList accessList;
+
+            try
+            {
+                accessList = new NTPAccessList(
+                                 Allow:  allow is not null ? NTPAccessList.ParseNetworks(allow) : null,
+                                 Deny:   deny  is not null ? NTPAccessList.ParseNetworks(deny)  : null
+                             );
+            }
+            catch (Exception e) when (e is FormatException or ArgumentException)
+            {
+                throw new UsageException($"--allow/--deny: {e.Message}");
             }
 
             #endregion
@@ -182,7 +209,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.CLI.Commands
                                                              MinimumInterval:  rateLimit,
                                                              Burst:            burst
                                                          )
-                                                       : null
+                                                       : null,
+
+                             AccessList:           accessList
 
                          );
 
@@ -204,6 +233,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.CLI.Commands
             Output.Line($"Rate limiting: {(server.RateLimiter is not null
                                                ? $"one answer per {server.RateLimiter.MinimumInterval.TotalSeconds:0.###} s per address, burst {server.RateLimiter.Burst}"
                                                : "off")}");
+            Output.Line($"Access: {server.AccessList}");
             Output.Line();
             Output.Line("Ctrl-C to stop.");
             Output.Line();

@@ -151,6 +151,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         private                  SshServer?                               sshServer;
 
         private                  Int64                                    ntpRequestsReceived;
+        private                  Int64                                    ntpRequestsDenied;
         private                  Int64                                    ntpRequestsRejected;
         private                  Int64                                    ntpRequestsRateLimited;
         private                  Int64                                    ntpKissesOfDeathSent;
@@ -159,6 +160,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         private                  Int64                                    ntpSignedResponsesSent;
         private                  Int64                                    ntpRequestFailures;
         private                  Int64                                    ntskeConnectionsAccepted;
+        private                  Int64                                    ntskeConnectionsDenied;
         private                  Int64                                    ntskeConnectionsRejected;
         private                  Int64                                    ntskeHandshakeFailures;
         private                  Int64                                    ntskeRequestsInvalid;
@@ -299,6 +301,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public NTPRateLimiter?        RateLimiter                  { get; }
 
         /// <summary>
+        /// Who may query this server at all, the access list of RFC 8633 § 5.1: over NTP, over
+        /// NTS-KE and over this server's own SSH listener.
+        /// </summary>
+        /// <remarks>
+        /// Everyone unless an operator says otherwise. A key exchange in the NTS-KE subsystem of an
+        /// SSH listener that is not this server's - <see cref="ServeSSHSubsystemAsync"/> serving a
+        /// shared one - is let in by whoever serves that listener, and this list is not asked.
+        /// </remarks>
+        public NTPAccessList          AccessList                   { get; }
+
+        /// <summary>
         /// When this server's clock was last set or corrected — the Reference Timestamp of
         /// § 7.3, which tells a client how stale the synchronization is.
         ///
@@ -369,7 +382,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                    NTSKEConnectionsRejected:  System.Threading.Interlocked.Read(ref ntskeConnectionsRejected),
                    NTSKEHandshakeFailures:    System.Threading.Interlocked.Read(ref ntskeHandshakeFailures),
                    NTSKERequestsInvalid:      System.Threading.Interlocked.Read(ref ntskeRequestsInvalid),
-                   NTSKEResponsesSent:        System.Threading.Interlocked.Read(ref ntskeResponsesSent)
+                   NTSKEResponsesSent:        System.Threading.Interlocked.Read(ref ntskeResponsesSent),
+                   NTPRequestsDenied:         System.Threading.Interlocked.Read(ref ntpRequestsDenied),
+                   NTSKEConnectionsDenied:    System.Threading.Interlocked.Read(ref ntskeConnectionsDenied)
                );
 
         #endregion
@@ -404,6 +419,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <param name="SSHPort">The optional TCP port of an SSH listener for NTS-KE over SSH (default: none).</param>
         /// <param name="SSHHostKeys">The host keys of that listener (default: a fresh Ed25519 key, which no client can have pinned yet).</param>
         /// <param name="SSHAuthenticator">Who may log in to that listener; required with <paramref name="SSHPort"/>.</param>
+        /// <param name="AccessList">Who may query this server at all, RFC 8633 § 5.1 (default: everyone).</param>
         public NTSServer(I18NString?        Description    = null,
                          IPPort?            NTSKEPort      = null,
                          IPPort?            NTSPort        = null,
@@ -435,7 +451,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                          TimeProvider?      TimeProvider                  = null,
                          IPPort?            SSHPort                       = null,
                          IEnumerable<ISshHostKey>? SSHHostKeys            = null,
-                         ISshUserAuthenticator?    SSHAuthenticator       = null)
+                         ISshUserAuthenticator?    SSHAuthenticator       = null,
+                         NTPAccessList?            AccessList             = null)
         {
 
             // An SSH listener hands out cookies to whoever logs in, so who that may be is never a
@@ -513,6 +530,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                     : null;
 
             this.RateLimiter                  = RateLimiter;
+            this.AccessList                   = AccessList                   ?? NTPAccessList.Everyone;
 
             // What this server will agree to. Defaults to NTSAEAD.Supported, which is narrower
             // than what is implemented — see there. Anything named that cannot be performed is
@@ -1607,7 +1625,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                         var udpPacketLocal  = udpPacket;
 
 
-                        // RFC 8633 § 5.4, and deliberately the very first thing done with the
+                        // RFC 8633 § 5.1: an address that may not query this server learns
+                        // nothing from it, not even that it is there - so no kiss, only silence.
+                        // Before the rate limiter, which would otherwise keep state for it.
+                        if (!AccessList.IsEveryone &&
+                            !AccessList.Allows((udpPacketLocal.RemoteEndPoint as IPEndPoint)?.Address))
+                        {
+                            System.Threading.Interlocked.Increment(ref ntpRequestsDenied);
+                            continue;
+                        }
+
+
+                        // RFC 8633 § 5.4, and deliberately the first thing done with an allowed
                         // datagram: the point of a rate limit is to not spend work on the traffic
                         // it refuses, and the expensive work here — unsealing a cookie, verifying
                         // an authenticator — is all downstream of the parse below.
@@ -1804,6 +1833,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                         System.Threading.Interlocked.Increment(ref ntskeConnectionsAccepted);
 
+                        // RFC 8633 § 5.1, before the TLS handshake: an address that may not query
+                        // this server is not shown its certificate either.
+                        if (!AccessList.IsEveryone &&
+                            !AccessList.Allows((clientSocket.RemoteEndPoint as IPEndPoint)?.Address))
+                        {
+                            System.Threading.Interlocked.Increment(ref ntskeConnectionsDenied);
+                            clientSocket.Close();
+                            continue;
+                        }
+
                         if (!await ntskeConnectionSemaphore.WaitAsync(0, cts.Token).ConfigureAwait(false))
                         {
                             System.Threading.Interlocked.Increment(ref ntskeConnectionsRejected);
@@ -1962,13 +2001,28 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                 sshServer = new SshServer(
                                 new SshServerOptions {
-                                    HostKeys       = SSHHostKeys,
-                                    Authenticator  = sshAuthenticator!,
-                                    Subsystems     = (session, name, ct) => ValueTask.FromResult<SshSubsystemHandler?>(
-                                                                                name == NTSKE_SSH.SubsystemName
-                                                                                    ? ServeSSHSubsystemAsync
-                                                                                    : null
-                                                                            )
+                                    HostKeys          = SSHHostKeys,
+                                    Authenticator     = sshAuthenticator!,
+
+                                    // RFC 8633 § 5.1. Hermod asks once a client has signed in, which
+                                    // is as early as its SSH server lets an address be turned away;
+                                    // the client is told no more than "not permitted".
+                                    AuthorizeSession  = (session, ct) => {
+
+                                                            if (AccessList.Allows(session.Peer?.IPAddress.ToDotNet()))
+                                                                return ValueTask.FromResult<String?>(null);
+
+                                                            System.Threading.Interlocked.Increment(ref ntskeConnectionsDenied);
+
+                                                            return ValueTask.FromResult<String?>($"{session.Peer?.IPAddress.ToString() ?? "an unknown address"} is not on the access list");
+
+                                                        },
+
+                                    Subsystems        = (session, name, ct) => ValueTask.FromResult<SshSubsystemHandler?>(
+                                                                                   name == NTSKE_SSH.SubsystemName
+                                                                                       ? ServeSSHSubsystemAsync
+                                                                                       : null
+                                                                               )
                                 }
                             );
 
