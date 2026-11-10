@@ -570,6 +570,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
                 Assert.That(served.Success, Is.True, served.ErrorMessage);
 
+                // Told after the answer went out, so the first may still be on its way when the
+                // second is refused: wait for it, and the two come in the order they were made.
+                for (var i = 0; i < 50 && reported.IsEmpty; i++)
+                    await Task.Delay(20);
+
+                Assert.That(reported, Has.Count.EqualTo(1), "the key exchange that was served was not told");
+
                 var refused                = await ExchangeOverSSHAsync(sshClient,
                                                                         NTSKE_Record.NTSNextProtocolNegotiation,
                                                                         NTSKE_Record.AEADAlgorithmNegotiation([ AEADAlgorithms.AES_SIV_CMAC_256 ]),
