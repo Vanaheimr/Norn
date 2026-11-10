@@ -267,7 +267,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                 // ──── Step 1: DNS Resolution ────
                 var dnsResult = await MeasureDNS(
                                           DNSClient,
-                                          Server.Hostname
+                                          Server.Hostname,
+                                          CancellationToken
                                       );
 
                 // ──── Step 2: NTS-KE (cached or fresh) ────
@@ -365,21 +366,46 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         #endregion
 
 
-        #region (private) MeasureDNS   (DNSClient, Hostname)
+        #region (private) MeasureDNS   (DNSClient, Hostname, CancellationToken)
 
         /// <summary>
         /// Measure DNS resolution time and get both IPv4 and IPv6 addresses.
         /// </summary>
-        private async Task<DNSResolutionResult> MeasureDNS(DNSClient   DNSClient,
-                                                           DomainName  Hostname)
+        /// <remarks>
+        /// A server addressed by its address - or as "localhost" - is that address,
+        /// as the key exchange takes it (NameResolution.ResolveAsync): there is
+        /// nobody to ask. This step used to ask the name servers for the A and AAAA
+        /// records of "127.0.0.1" anyway, and where they did not answer, waited for
+        /// them as long as they were given, retries included, before the key
+        /// exchange began - more than 20 s for a server on the loopback interface.
+        /// </remarks>
+        private async Task<DNSResolutionResult> MeasureDNS(DNSClient          DNSClient,
+                                                           DomainName         Hostname,
+                                                           CancellationToken  CancellationToken)
         {
 
             var sw = Stopwatch.StartNew();
 
+            if (NameResolution.TryLiteral(Hostname.Trimmed, out var literal))
+            {
+
+                sw.Stop();
+
+                var itself = literal.Select(IPAddress.FromDotNet).ToArray();
+
+                return new DNSResolutionResult(
+                           Success:        true,
+                           Duration:       sw.Elapsed,
+                           IPv4Addresses:  itself.OfType<IPv4Address>(),
+                           IPv6Addresses:  itself.OfType<IPv6Address>()
+                       );
+
+            }
+
             try
             {
 
-                var addresses = (await DNSClient.Query_IPAddresses(Hostname)).ToArray();
+                var addresses = (await DNSClient.Query_IPAddresses(Hostname, CancellationToken: CancellationToken)).ToArray();
                 sw.Stop();
 
                 return new DNSResolutionResult(

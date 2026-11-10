@@ -344,6 +344,53 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.Monitoring
 
         #endregion
 
+        #region AServerAddressedByItsAddressIsNoQuestionForTheNameServers()
+
+        /// <summary>
+        /// A server addressed by its address is that address: the round's step of
+        /// name resolution names it without asking anybody, and the round does not
+        /// wait for name servers that do not answer.
+        /// </summary>
+        /// <remarks>
+        /// The step used to ask the name servers for the A and AAAA records of
+        /// "127.0.0.1" - and waited, where they did not answer, for as long as
+        /// they were given, server after server, and only then went on to the key
+        /// exchange, which needed no name server at all. A node whose name servers
+        /// were out of reach took more than 20 s for a round of one server on its
+        /// own loopback interface. The name server here is one from the
+        /// documentation's range (RFC 5737), where nothing answers: a port nothing
+        /// listens on on the loopback interface is refused at once, and would not
+        /// show the waiting.
+        /// </remarks>
+        [Test]
+        public async Task AServerAddressedByItsAddressIsNoQuestionForTheNameServers()
+        {
+
+            var dns     = new DNSClient(
+                              IPv4Address.Parse("192.0.2.53"),
+                              IPPort.DNS,
+                              QueryTimeout: TimeSpan.FromSeconds(3)
+                          );
+
+            var result  = await Engine().MeasureSingleServer(
+                                    Endpoint(loopback, (sender, certificate, chain, client, errors) => TLSValidationResult.Success()),
+                                    Guid.NewGuid(),
+                                    dns
+                                );
+
+            Assert.Multiple(() => {
+                Assert.That(result.Success,              Is.True,  result.ErrorMessage?.ToString());
+                Assert.That(result.DNS?.Success,         Is.True,  result.DNS?.ErrorMessage?.ToString());
+                Assert.That(result.DNS?.IPv4Addresses,   Is.EqualTo(new[] { IPv4Address.Localhost }));
+                Assert.That(result.DNS?.IPv6Addresses,   Is.Empty);
+                Assert.That(result.DNS?.Duration,        Is.LessThan(TimeSpan.FromSeconds(1)), "the name servers were asked");
+                Assert.That(result.TotalDuration,        Is.LessThan(TimeSpan.FromSeconds(3)), "not the budget of the name servers");
+            });
+
+        }
+
+        #endregion
+
         #region TheKeyExchangeOffersWhatTheEndpointNames()
 
         /// <summary>
