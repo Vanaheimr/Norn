@@ -257,24 +257,35 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
         [Test]
         [Category("LocalIntegration")]
-        public async Task ADeniedAddress_IsTurnedAwayByTheSSHListener()
+        public async Task ADeniedAddress_IsClosedBeforeTheSSHVersionExchange()
         {
 
-            var (server, _, ntpPort, sshPort) = await StartServerAsync(new NTPAccessList(Deny: Networks("127.0.0.0/8")),
-                                                                       WithSSH: true);
+            var (server, _, _, sshPort) = await StartServerAsync(new NTPAccessList(Deny: Networks("127.0.0.0/8")),
+                                                                 WithSSH: true);
 
             try
             {
 
-                Assert.That(async () => {
-                                await using var sshClient = await ConnectAsync(server, sshPort);
-                                var result = await NewNTSClient(ntpPort).GetNTSKERecordsOverSSH(sshClient, Timeout: TimeSpan.FromSeconds(5));
-                                if (!result.Success)
-                                    throw new Exception(result.ErrorMessage);
-                            },
-                            Throws.Exception);
+                // An SSH server speaks first: an allowed client that sends nothing still reads the
+                // server's version string. A denied one reads nothing, so it never learns the version
+                // or the host key either.
+                using var tcpClient  = new TcpClient();
+                await tcpClient.ConnectAsync(IPAddress.Loopback, sshPort.ToUInt16());
+
+                var buffer           = new Byte[8];
+                var read             = -1;
+
+                try
+                {
+                    read = await tcpClient.GetStream().ReadAsync(buffer).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+                }
+                catch (IOException)
+                {
+                    read = 0;    // closed with a reset rather than a FIN
+                }
 
                 Assert.Multiple(() => {
+                    Assert.That(read,                                   Is.Zero,  $"the server said '{System.Text.Encoding.ASCII.GetString(buffer, 0, Math.Max(read, 0))}'");
                     Assert.That(server.Metrics.NTSKEConnectionsDenied,  Is.EqualTo(1),  server.Metrics.ToString());
                     Assert.That(server.Metrics.NTSKEResponsesSent,      Is.Zero);
                 });

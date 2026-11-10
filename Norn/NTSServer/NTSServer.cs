@@ -2001,28 +2001,29 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                 sshServer = new SshServer(
                                 new SshServerOptions {
-                                    HostKeys          = SSHHostKeys,
-                                    Authenticator     = sshAuthenticator!,
+                                    HostKeys             = SSHHostKeys,
+                                    Authenticator        = sshAuthenticator!,
 
-                                    // RFC 8633 § 5.1. Hermod asks once a client has signed in, which
-                                    // is as early as its SSH server lets an address be turned away;
-                                    // the client is told no more than "not permitted".
-                                    AuthorizeSession  = (session, ct) => {
+                                    // RFC 8633 § 5.1, as soon as the connection is accepted: a denied
+                                    // address is closed before the version exchange, so it learns as
+                                    // little of this server as it does over UDP and TLS - neither its
+                                    // version nor its host key.
+                                    AuthorizeConnection  = (peer, local) => {
 
-                                                            if (AccessList.Allows(session.Peer?.IPAddress.ToDotNet()))
-                                                                return ValueTask.FromResult<String?>(null);
+                                                               if (AccessList.Allows(peer?.IPAddress.ToDotNet()))
+                                                                   return null;
 
-                                                            System.Threading.Interlocked.Increment(ref ntskeConnectionsDenied);
+                                                               System.Threading.Interlocked.Increment(ref ntskeConnectionsDenied);
 
-                                                            return ValueTask.FromResult<String?>($"{session.Peer?.IPAddress.ToString() ?? "an unknown address"} is not on the access list");
+                                                               return $"{peer?.IPAddress.ToString() ?? "an unknown address"} is not on the access list";
 
-                                                        },
+                                                           },
 
-                                    Subsystems        = (session, name, ct) => ValueTask.FromResult<SshSubsystemHandler?>(
-                                                                                   name == NTSKE_SSH.SubsystemName
-                                                                                       ? ServeSSHSubsystemAsync
-                                                                                       : null
-                                                                               )
+                                    Subsystems           = (session, name, ct) => ValueTask.FromResult<SshSubsystemHandler?>(
+                                                                                      name == NTSKE_SSH.SubsystemName
+                                                                                          ? ServeSSHSubsystemAsync
+                                                                                          : null
+                                                                                  )
                                 }
                             );
 

@@ -36,7 +36,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
     /// Lists" to limit who learns them. An address this list does not allow is not answered at
     /// all: its NTP requests are dropped without a word - not even a kiss, which would tell it
     /// that a server is there - its NTS-KE connections are closed before the TLS handshake, and
-    /// its SSH sessions are turned away once they have signed in.
+    /// its connections to the server's SSH listener are closed before the SSH version exchange.
     /// </para>
     /// <para>
     /// Everyone may by default. A list consists of networks that are allowed and networks that
