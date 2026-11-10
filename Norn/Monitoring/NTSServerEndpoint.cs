@@ -203,6 +203,19 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         [JsonIgnore]
         public Func<CancellationToken, ValueTask<SshClient>>?  ConnectOverSSH  { get; set; }
 
+        /// <summary>
+        /// Whether the connection <see cref="ConnectOverSSH"/> hands out is
+        /// somebody else's, to open the key exchange on as one more channel:
+        /// the SSH connection of OCPP, section 8.3 of the white paper "NTS Key
+        /// Establishment over SSH". The engine closes its channel then, and
+        /// leaves the connection as it was; otherwise it closes the connection.
+        /// </summary>
+        /// <remarks>
+        /// Never written into a configuration file, as ConnectOverSSH is not.
+        /// </remarks>
+        [JsonIgnore]
+        public Boolean                                          SSHConnectionIsShared  { get; set; }
+
         public NTSServerEndpoint(DomainName                                                     Hostname,
                                  IPPort?                                                        NTSKEPort                    = null,
                                  IPPort?                                                        NTPPort                      = null,

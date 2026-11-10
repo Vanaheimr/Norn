@@ -557,7 +557,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         /// <summary>
         /// A key exchange over SSH - the subsystem "ntske/1@open.charging.cloud"
         /// of the white paper "NTS Key Establishment over SSH" - on a connection
-        /// the endpoint makes, cached as one over TLS is.
+        /// the endpoint makes, or one it shares, cached as one over TLS is.
         /// </summary>
         /// <remarks>
         /// The client offers the exporter of the connection (option A) before
@@ -590,16 +590,28 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
             try
             {
 
-                await using var ssh = await Connect(CancellationToken).ConfigureAwait(false);
+                var ssh = await Connect(CancellationToken).ConfigureAwait(false);
 
-                hostKey = SshFingerprint.Sha256(ssh.ServerHostKey);
+                try
+                {
 
-                result  = await ntsClient.GetNTSKERecordsOverSSH(
-                                    ssh,
-                                    RequestNTSPublicKeys:  Server.SignedResponses,
-                                    Timeout:               config.NTSKETimeout,
-                                    CancellationToken:     CancellationToken
-                                ).ConfigureAwait(false);
+                    hostKey = SshFingerprint.Sha256(ssh.ServerHostKey);
+
+                    result  = await ntsClient.GetNTSKERecordsOverSSH(
+                                        ssh,
+                                        RequestNTSPublicKeys:  Server.SignedResponses,
+                                        Timeout:               config.NTSKETimeout,
+                                        CancellationToken:     CancellationToken
+                                    ).ConfigureAwait(false);
+
+                }
+                finally
+                {
+                    // A connection of another protocol's - OCPP's - goes on without the
+                    // channel of the key exchange, which the client closed.
+                    if (!Server.SSHConnectionIsShared)
+                        await ssh.DisposeAsync().ConfigureAwait(false);
+                }
 
             }
             catch (OperationCanceledException) when (CancellationToken.IsCancellationRequested)

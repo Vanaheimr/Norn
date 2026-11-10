@@ -179,6 +179,68 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.Monitoring
 
         #endregion
 
+        #region AConnectionThatIsSharedStaysOpen()
+
+        /// <summary>
+        /// A connection the endpoint shares - the SSH connection of OCPP,
+        /// section 8.3 of the white paper - carries the key exchange as one more
+        /// channel and is left open after it: the next key exchange goes over
+        /// the same connection. One of the endpoint's own is closed after its
+        /// key exchange.
+        /// </summary>
+        [Test]
+        public async Task AConnectionThatIsSharedStaysOpen()
+        {
+
+            var hostKey         = ntsServer!.SSHHostKeys[0].PublicKeyBlob;
+
+            await using var shared = await SshClient.ConnectAsync(
+                                               "127.0.0.1",
+                                               sshPort.ToUInt16(),
+                                               new SshClientOptions {
+                                                   Username       = "ntske",
+                                                   Credentials    = [ clientKey ],
+                                                   VerifyHostKey  = blob => blob.AsSpan().SequenceEqual(hostKey)
+                                               }
+                                           );
+
+            var connections = 0;
+
+            var engine          = Engine();
+            var endpoint        = new NTSServerEndpoint(loopback, nobodysPort, ntpPort) {
+                                      ConnectOverSSH         = cancellationToken => { connections++; return ValueTask.FromResult(shared); },
+                                      SSHConnectionIsShared  = true
+                                  };
+
+            var first           = await engine.MeasureSingleServer(endpoint, Guid.NewGuid(), NoNameServers());
+            engine.ForgetKeyExchange(loopback);
+            var second          = await engine.MeasureSingleServer(endpoint, Guid.NewGuid(), NoNameServers());
+
+            SshClient? own      = null;
+            var ownEndpoint     = Endpoint(clientKey);
+            var connect         = ownEndpoint.ConnectOverSSH!;
+            ownEndpoint.ConnectOverSSH = async cancellationToken => own = await connect(cancellationToken);
+
+            var third           = await Engine().MeasureSingleServer(ownEndpoint, Guid.NewGuid(), NoNameServers());
+
+            Assert.Multiple(() => {
+
+                Assert.That(first.NTSKE?.Success,           Is.True,  first. NTSKE?.ErrorMessage?.ToString());
+                Assert.That(second.NTSKE?.Success,          Is.True,  second.NTSKE?.ErrorMessage?.ToString());
+                Assert.That(second.NTSKEFromCache,          Is.False, "the second key exchange was not made");
+                Assert.That(connections,                    Is.EqualTo(2));
+                Assert.That(shared.Closed.IsCompleted,      Is.False, "the shared connection was closed");
+
+                Assert.That(third.NTSKE?.Success,           Is.True,  third. NTSKE?.ErrorMessage?.ToString());
+                Assert.That(own,                            Is.Not.Null);
+                Assert.That(own!.Closed.IsCompleted,        Is.True,  "the endpoint's own connection was left open");
+
+            });
+
+        }
+
+        #endregion
+
         #region AHostKeyThatIsNotBelievedIsNoKeyExchange()
 
         /// <summary>
