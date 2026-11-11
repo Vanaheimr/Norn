@@ -178,26 +178,48 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                               PublicKey  PublicKey)
         {
 
-            var data            = new NTPPacket(
-                                      NTPResponse,
-                                      NTPResponse.Extensions.Where(e => e is not NTSCookieExtension && e is not NTSSignedResponseExtension)
-                                  ).ToByteArray();
+            // The signature names the key it was made with. Checked against any other,
+            // it could only ever fail, and saying so is clearer than letting it.
+            if (KeyId != PublicKey.Id)
+                return false;
 
-            var ellipticCurve   = SecNamedCurves.GetByName(PublicKey.EllipticCurve);
+            try
+            {
 
-            var domainParams    = new ECDomainParameters(
-                                        ellipticCurve.Curve,
-                                        ellipticCurve.G,
-                                        ellipticCurve.N,
-                                        ellipticCurve.H
-                                    );
+                var data            = new NTPPacket(
+                                          NTPResponse,
+                                          NTPResponse.Extensions.Where(e => e is not NTSCookieExtension && e is not NTSSignedResponseExtension)
+                                      ).ToByteArray();
 
-            var publicKey       = KeyPair.ParsePublicKey(domainParams, PublicKey.Value);
+                var ellipticCurve   = SecNamedCurves.GetByName(PublicKey.EllipticCurve);
 
-            var verifier = SignerUtilities.GetSigner(PublicKey.SignatureAlgorithm);
-            verifier.Init(false, publicKey);
-            verifier.BlockUpdate(data);
-            return verifier.VerifySignature(Signature);
+                if (ellipticCurve is null)
+                    return false;
+
+                var domainParams    = new ECDomainParameters(
+                                          ellipticCurve.Curve,
+                                          ellipticCurve.G,
+                                          ellipticCurve.N,
+                                          ellipticCurve.H
+                                      );
+
+                var publicKey       = KeyPair.ParsePublicKey(domainParams, PublicKey.Value);
+
+                var verifier        = SignerUtilities.GetSigner(PublicKey.SignatureAlgorithm);
+                verifier.Init(false, publicKey);
+                verifier.BlockUpdate(data);
+
+                return verifier.VerifySignature(Signature);
+
+            }
+            catch (Exception)
+            {
+                // The key and the signature both come from the server: a point that is not
+                // on the curve, a signature that is not one, an algorithm nobody knows.
+                // Whatever is wrong with them, the answer to "is this signed?" is no,
+                // and not an exception in the caller.
+                return false;
+            }
 
         }
 

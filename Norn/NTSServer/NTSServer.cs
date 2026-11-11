@@ -1825,7 +1825,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                     // second, signed datagram: honouring the extension outside
                                     // of it would let anyone double the traffic sent to an
                                     // address of their choosing.
-                                    var toBeSigned       = requestPacket.NTSRequestSignedResponse()?.Authenticated == true;
+                                    //
+                                    // And only a server that has a key to sign with says yes.
+                                    // The announcement goes into the first response; made
+                                    // without a key, it had the client wait out its timeout
+                                    // for a second response that was never sent.
+                                    var signingKeyPair   = currentKeyPair;
+
+                                    var toBeSigned       = signingKeyPair is not null &&
+                                                           requestPacket.NTSRequestSignedResponse()?.Authenticated == true;
 
                                     // RFC 9769 § 2 decides here which of this server's earlier
                                     // timestamps the answer carries, before anything is built:
@@ -1873,13 +1881,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                                     System.Threading.Interlocked.Increment(ref ntpResponsesSent);
 
-                                    if (toBeSigned && currentKeyPair is not null)
+                                    if (toBeSigned && signingKeyPair is not null)
                                     {
 
                                         // The unsigned response is intentionally sent first so clients can
                                         // measure RTT with minimal signing latency. The signed response follows
                                         // as a scheduled security confirmation once the digital signature is ready.
-                                        var responsePacket2 = SignResponse(responsePacket1, currentKeyPair);
+                                        var responsePacket2 = SignResponse(responsePacket1, signingKeyPair);
 
                                         await udpSocket.SendToAsync(
                                                   new ArraySegment<Byte>(responsePacket2.ToByteArray()),

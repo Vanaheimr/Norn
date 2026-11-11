@@ -195,10 +195,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             unchecked
             {
 
-                hashCode = this.Id.       GetHashCode() * 7 ^
-                           this.Value.    GetHashCode() * 5 ^
-                           this.NotBefore.GetHashCode() * 3 ^
-                           this.NotAfter. GetHashCode();
+                // From what Equals compares, and as it compares it: the octets of the key,
+                // not the array they happen to be in. Two equal keys had different hash
+                // codes before, and so were two keys to every dictionary and set.
+                var hash = new HashCode();
+
+                hash.Add     (this.Id);
+                hash.AddBytes(this.Value);
+                hash.Add     (this.NotBefore.ToISO8601());
+                hash.Add     (this.NotAfter. ToISO8601());
+
+                hashCode = hash.ToHashCode();
 
             }
 
@@ -675,7 +682,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </summary>
         public override String ToString()
 
-            => $"{Id}: {Value.ToBase64()}, not before: {NotBefore}, not after: {NotAfter}";
+            // Without the key. ToString() is what ends up in a log line, an exception
+            // message or a debugger window, and this value unseals every cookie.
+            => $"{Id}, not before: {NotBefore}, not after: {NotAfter}";
 
         #endregion
 

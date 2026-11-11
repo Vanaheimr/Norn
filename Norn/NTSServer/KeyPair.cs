@@ -131,14 +131,19 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             unchecked
             {
 
-                hashCode = this.Id.                GetHashCode()       * 23 ^
-                           this.PrivateKey.        GetHashCode()       * 17 ^
-                           this.PublicKey.         GetHashCode()       * 13 ^
-                          (this.Description?.      GetHashCode() ?? 0) * 11 ^
-                           this.EllipticCurve.     GetHashCode()       *  7 ^
-                           this.SignatureAlgorithm.GetHashCode()       *  5 ^
-                          (this.NotBefore?.        GetHashCode() ?? 0) *  3 ^
-                           this.NotAfter?.         GetHashCode() ?? 0;
+                // From what Equals compares, and as it compares it: the octets of the public
+                // key, not the array they happen to be in, and not the private key, which
+                // Equals does not look at. Two equal key pairs had different hash codes before.
+                var hash = new HashCode();
+
+                hash.Add     (this.Id);
+                hash.AddBytes(this.PublicKey);
+                hash.Add     (this.EllipticCurve);
+                hash.Add     (this.SignatureAlgorithm);
+                hash.Add     (this.NotBefore);
+                hash.Add     (this.NotAfter);
+
+                hashCode = hash.ToHashCode();
 
             }
 

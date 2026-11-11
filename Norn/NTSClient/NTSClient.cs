@@ -1812,14 +1812,69 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                             #region A 2nd signed response was announced
 
-                            if (ntpResponse1.NTSSignedResponseAnnouncement()?.IsScheduled == true)
+                            // Only an announcement the authenticator covers. One appended behind
+                            // it could come from anyone, and would have this client wait for a
+                            // second response that the server never meant to send.
+                            if (ntpResponse1.NTSSignedResponseAnnouncement() is { IsScheduled: true, Authenticated: true })
                             {
 
-                                var receiveResult2WithTimeout = await ReceiveUdpResponseAsync(
-                                                                          udpClient,
-                                                                          timeout,
-                                                                          CancellationToken
-                                                                      ).ConfigureAwait(false);
+                                // What was said of the first response holds for the second: it
+                                // comes from the server that was asked, and it begins with the
+                                // first one, or it is passed over. And the wait for it comes
+                                // out of the same timeout, which is not granted a second time.
+                                (UdpReceiveResult? Result, Boolean TimedOut) receiveResult2WithTimeout;
+
+                                var passedOverNoPrefix = false;
+
+                                while (true)
+                                {
+
+                                    var remainingTime2 = timeout - Stopwatch.GetElapsedTime(sendStopwatchTimestamp);
+
+                                    receiveResult2WithTimeout = remainingTime2 > TimeSpan.Zero
+                                                                    ? await ReceiveUdpResponseAsync(
+                                                                                udpClient,
+                                                                                remainingTime2,
+                                                                                CancellationToken
+                                                                            ).ConfigureAwait(false)
+                                                                    : (Result: (UdpReceiveResult?) null, TimedOut: true);
+
+                                    if (receiveResult2WithTimeout.Result is not UdpReceiveResult candidate2)
+                                        break;
+
+                                    if (remoteEndPoint is not null &&
+                                        !candidate2.RemoteEndPoint.Equals(remoteEndPoint))
+                                    {
+                                        continue;
+                                    }
+
+                                    if (!receiveResult1.Buffer.IsPrefixOf(candidate2.Buffer))
+                                    {
+                                        passedOverNoPrefix = true;
+                                        continue;
+                                    }
+
+                                    break;
+
+                                }
+
+                                if (receiveResult2WithTimeout.Result is null && passedOverNoPrefix)
+                                {
+
+                                    return NTSQueryResult.FailedWithPacket(
+                                               "1st NTP response is not a prefix of the 2nd NTP response!",
+                                               NTSQueryErrorCategory.Protocol,
+                                               remoteEndPoint,
+                                               remoteDescription,
+                                               cookie,
+                                               AvailableCookieCount,
+                                               SendStopwatchTimestamp:     sendStopwatchTimestamp,
+                                               ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp1,
+                                               DestinationTimestamp:       destinationTimestamp1,
+                                               CookiePoolDiagnostics:      CookiePoolDiagnostics
+                                           );
+
+                                }
 
                                 if (receiveResult2WithTimeout.TimedOut ||
                                     receiveResult2WithTimeout.Result is null)
@@ -1843,23 +1898,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                 var receiveResult2              = receiveResult2WithTimeout.Result.Value;
                                 var destinationTimestamp2       = NTPPacket.GetCurrentNTPTimestamp(TimeProvider);
                                 var receiveStopwatchTimestamp2  = Stopwatch.GetTimestamp();
-
-                                if (!receiveResult1.Buffer.IsPrefixOf(receiveResult2.Buffer))
-                                {
-
-                                    return NTSQueryResult.FailedWithPacket(
-                                               "1st NTP response is not a prefix of the 2nd NTP response!",
-                                               NTSQueryErrorCategory.Protocol,
-                                               remoteEndPoint,
-                                               remoteDescription,
-                                               cookie,
-                                               AvailableCookieCount,
-                                               SendStopwatchTimestamp:     sendStopwatchTimestamp,
-                                               ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp2,
-                                               DestinationTimestamp:       destinationTimestamp2,
-                                               CookiePoolDiagnostics:      CookiePoolDiagnostics
-                                           );
-                                }
 
                                 if (NTPResponse.TryParse(receiveResult2.Buffer,
                                                          out var ntpResponse2,
