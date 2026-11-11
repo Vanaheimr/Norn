@@ -57,6 +57,40 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
 
     /// <summary>
+    /// How far a kiss code can be believed, which decides how far it is obeyed.
+    /// </summary>
+    /// <remarks>
+    /// The origin timestamp, which <see cref="NTPKissOfDeath.TryRead"/> checks, shows that the
+    /// sender saw the request. On a plain NTP association that is all there is, and RFC 5905
+    /// § 7.4 is followed on the strength of it. An NTS association can ask for more, and has
+    /// to: its requests cross the network in the clear, so anyone on the path sees the
+    /// timestamp and can write a kiss that passes that check. What such a sender cannot do
+    /// is seal it with the S2C key.
+    /// </remarks>
+    public enum NTPKissTrust
+    {
+
+        /// <summary>
+        /// A plain NTP association: nothing is authenticated, the kiss is as good as any answer.
+        /// </summary>
+        Unprotected,
+
+        /// <summary>
+        /// An NTS association, and the kiss carried an authenticator that verified:
+        /// it is the server speaking.
+        /// </summary>
+        Authenticated,
+
+        /// <summary>
+        /// An NTS association, and the kiss carried no authenticator that verified:
+        /// it may be the server speaking, or anyone who saw the request.
+        /// </summary>
+        Unauthenticated
+
+    }
+
+
+    /// <summary>
     /// A Kiss-o'-Death packet a server sent, once it has been established that this client should
     /// believe it.
     /// </summary>

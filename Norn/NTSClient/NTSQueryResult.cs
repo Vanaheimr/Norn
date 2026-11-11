@@ -109,6 +109,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             }
         }
 
+        /// <summary>
+        /// Whether the response carried an NTS authenticator that verified under the S2C key.
+        /// </summary>
+        /// <remarks>
+        /// Asked of a Kiss-o'-Death, this tells the server's own word from that of anyone who
+        /// saw the request; see <see cref="NTPKissTrust"/>. NTPResponse.TryParse yields the
+        /// typed extension only for an authenticator that verified.
+        /// </remarks>
+        public Boolean                      ResponseIsAuthenticated
+
+            => Response?.Extensions.Any(extension => extension is AuthenticatorAndEncryptedExtension) == true;
+
         public NTSQueryDiagnostics          Diagnostics             { get; }
 
         #endregion

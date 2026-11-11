@@ -37,9 +37,21 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
     /// interval values may create a vector for a denial-of-service attack that causes the client
     /// to stop querying its server." So a RATE kiss is read as two separate things — a fact, that
     /// this client is being limited and must slow down, and a suggestion, the poll value, which is
-    /// taken only as far as <see cref="MaximumPollExponent"/> allows. One forged packet can
-    /// therefore cost this client a factor of two in polling rate, and never more, however large
-    /// the number in it.
+    /// not taken at all: each RATE kiss slows this client by one step, a factor of two, and
+    /// never past <see cref="MaximumPollExponent"/>. One forged packet can therefore cost this
+    /// client a factor of two in polling rate, and never more, however large the number in it.
+    /// A server that means it says so again, and is obeyed again.
+    /// </para>
+    /// <para>
+    /// The slower rate holds for as long as it is not earned back: every query is followed by
+    /// a wait of one poll interval, and every answer that is not a kiss takes one step back
+    /// towards the rate this client started from.
+    /// </para>
+    /// <para>
+    /// "DENY" and "RSTR" end the association for good, as § 7.4 a says, unless the association
+    /// is an NTS one and the kiss was not authenticated (<see cref="NTPKissTrust"/>). Then it
+    /// costs this client one pause of the longest poll interval and no more. Anyone on the
+    /// path can write such a kiss; one datagram must not be the end of a time source.
     /// </para>
     /// <para>
     /// Deliberately free of any clock: the current time is passed in. A monitoring client's notion
@@ -81,9 +93,21 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public Byte             MaximumPollExponent  { get; }
 
         /// <summary>
+        /// The poll exponent this client started from, and returns to as it is answered.
+        /// </summary>
+        public Byte             InitialPollExponent  { get; }
+
+        /// <summary>
         /// The current poll exponent: the interval between queries is 2^this seconds.
         /// </summary>
         public Byte             PollExponent         { get; private set; }
+
+        /// <summary>
+        /// Whether a RATE kiss has slowed this client down, and it has not yet earned
+        /// its starting rate back.
+        /// </summary>
+        public Boolean          IsRateLimited
+            => PollExponent > InitialPollExponent;
 
         /// <summary>
         /// The interval the current poll exponent stands for.
@@ -130,9 +154,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             this.MaximumPollExponent  = Math.Max(this.MinimumPollExponent,
                                                  MaximumPollExponent ?? DefaultMaximumPollExponent);
 
-            this.PollExponent         = (Byte) Math.Clamp(InitialPollExponent ?? this.MinimumPollExponent,
+            this.InitialPollExponent  = (Byte) Math.Clamp(InitialPollExponent ?? this.MinimumPollExponent,
                                                           this.MinimumPollExponent,
                                                           this.MaximumPollExponent);
+
+            this.PollExponent         = this.InitialPollExponent;
 
         }
 
@@ -162,7 +188,53 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #endregion
 
-        #region Apply(Kiss, Now)
+        #region RecordQuery(Now)
+
+        /// <summary>
+        /// A request is being sent to this server.
+        /// </summary>
+        /// <remarks>
+        /// What makes a RATE kiss last: RFC 5905 § 7.4 b asks for a reduced polling interval,
+        /// not for one pause after which everything is as before. While this client is rate
+        /// limited, each query is followed by a wait of one poll interval.
+        /// </remarks>
+        /// <param name="Now">The current time.</param>
+        public void RecordQuery(DateTimeOffset Now)
+        {
+
+            lock (padlock)
+            {
+                if (IsRateLimited)
+                    NextQueryNotBefore = Now + PollInterval;
+            }
+
+        }
+
+        #endregion
+
+        #region RecordAnswer()
+
+        /// <summary>
+        /// This server answered a request with something other than a kiss.
+        /// </summary>
+        /// <remarks>
+        /// One step back towards the starting rate per answer, the way it was lost one step
+        /// per kiss. A server that is still limiting this client says so with the next RATE.
+        /// </remarks>
+        public void RecordAnswer()
+        {
+
+            lock (padlock)
+            {
+                if (IsRateLimited)
+                    PollExponent--;
+            }
+
+        }
+
+        #endregion
+
+        #region Apply(Kiss, Now, Trust)
 
         /// <summary>
         /// Act on a kiss code, and report what was done about it.
@@ -174,8 +246,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </remarks>
         /// <param name="Kiss">The kiss code, already established as answering a real request.</param>
         /// <param name="Now">The current time, from which the next permitted query is measured.</param>
+        /// <param name="Trust">How far the kiss can be believed.</param>
         public NTPKissAction Apply(NTPKissOfDeath  Kiss,
-                                   DateTimeOffset  Now)
+                                   DateTimeOffset  Now,
+                                   NTPKissTrust    Trust   = NTPKissTrust.Unprotected)
         {
 
             lock (padlock)
@@ -187,22 +261,37 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 {
 
                     case NTPKissAction.Demobilize:
+
+                        if (Trust == NTPKissTrust.Unauthenticated)
+                        {
+
+                            // An NTS server that wants this client gone can seal that under
+                            // the S2C key. A kiss without it may come from anyone who saw
+                            // the request, and "stop for good" is too much to take from
+                            // them: it costs the longest pause there is, once, and leaves
+                            // the polling rate as it was.
+                            NextQueryNotBefore  = Now + TimeSpan.FromSeconds(Math.Pow(2, MaximumPollExponent));
+
+                            break;
+
+                        }
+
                         Demobilized         = true;
                         NextQueryNotBefore  = null;
                         break;
 
                     case NTPKissAction.ReducePollingRate:
 
-                        // At least one step slower, whatever the server asked for. § 7.4 b wants
-                        // the rate reduced on *each* RATE kiss, so a server repeating a value
-                        // this client has already reached still has to move it — otherwise a
-                        // client limited at its current rate would sit there being limited.
+                        // One step slower, whatever the server asked for. § 7.4 b wants the
+                        // rate reduced on *each* RATE kiss, so a server repeating itself moves
+                        // this client again — otherwise a client limited at its current rate
+                        // would sit there being limited.
                         //
-                        // And no further than the ceiling, however large the number in the
-                        // packet: that is RFC 8633 § 5.4's "MUST NOT simply accept any value",
-                        // and the reason an unauthenticated kiss cannot silence this client.
-                        var target          = Math.Max(PollExponent + 1,
-                                                       Math.Min(Kiss.PollExponent, MaximumPollExponent));
+                        // And one step only, however large the number in the packet: that is
+                        // RFC 8633 § 5.4's "MUST NOT simply accept any value". Taking the
+                        // server's number, even capped, let a single forged kiss with a poll
+                        // value of 255 send this client from sixteen seconds to two hours.
+                        var target          = PollExponent + 1;
 
                         PollExponent        = (Byte) Math.Clamp(target,
                                                                 MinimumPollExponent,
@@ -230,8 +319,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         #region Reset()
 
         /// <summary>
-        /// Forget everything this server has said: poll from the minimum again, and query it
-        /// again if it had demobilized the association.
+        /// Forget everything this server has said: poll at the starting rate again, and query
+        /// it again if it had demobilized the association.
         /// </summary>
         public void Reset()
         {
@@ -239,7 +328,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             lock (padlock)
             {
 
-                PollExponent        = MinimumPollExponent;
+                PollExponent        = InitialPollExponent;
                 Demobilized         = false;
                 NextQueryNotBefore  = null;
                 LastKiss            = null;

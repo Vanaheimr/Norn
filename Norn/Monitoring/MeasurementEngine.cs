@@ -111,7 +111,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
         public NTPServerAccessState AccessStateFor(DomainName Hostname)
 
-            => accessStates.GetOrAdd(Hostname, _ => new NTPServerAccessState());
+            // Started at the rate this engine measures at, so that the first step a RATE
+            // kiss takes is a step down from that rate, and not from sixteen seconds,
+            // which a round every minute would not even notice.
+            => accessStates.GetOrAdd(Hostname, _ => new NTPServerAccessState(
+                                                        InitialPollExponent: (Byte) Math.Clamp(
+                                                                                        Math.Ceiling(Math.Log2(Math.Max(1.0, config.MeasurementInterval.TotalSeconds))),
+                                                                                        NTPServerAccessState.DefaultMinimumPollExponent,
+                                                                                        NTPServerAccessState.DefaultMaximumPollExponent
+                                                                                    )
+                                                    ));
 
         #endregion
 
@@ -256,7 +265,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                                ErrorMessage   = Error.Create(
                                                     access.Demobilized
                                                         ? $"Not querying {Server.Hostname}: it answered '{access.LastKiss?.Code}' and the association is demobilized."
-                                                        : $"Not querying {Server.Hostname} yet: it answered '{access.LastKiss?.Code}' and asked for a poll interval of {access.PollInterval.TotalSeconds:0} seconds."
+                                                        : access.LastKiss?.Action == NTPKissAction.Demobilize
+                                                              ? $"Not querying {Server.Hostname} before {access.NextQueryNotBefore:u}: it answered '{access.LastKiss?.Code}' without NTS authentication."
+                                                              : $"Not querying {Server.Hostname} before {access.NextQueryNotBefore:u}: it answered '{access.LastKiss?.Code}' and is polled every {access.PollInterval.TotalSeconds:0} seconds."
                                                 ),
                                ErrorCategory  = MonitoringErrorCategory.KissOfDeath,
                                TotalDuration  = totalStopwatch.Elapsed
@@ -944,6 +955,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                                RemotePort              = remoteInfo.Port
                            };
 
+                if (config.RespectKissOfDeath)
+                    AccessStateFor(Server.Hostname).RecordQuery(timeProvider.GetUtcNow());
+
                 var ntsQueryResult = await ntsClient.QueryTime(
                                                  Timeout:            config.NTPTimeout,
                                                  NTSKEResponse:      CachedState.NTSKEResponse,
@@ -1023,8 +1037,19 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                     // "DENY", whether it measures at all.
                     var kiss         = ntsQueryResult.KissOfDeath;
 
+                    // And how far it is believed: on an NTS association the origin timestamp
+                    // is not enough, as anyone on the path has seen it. Only a kiss sealed
+                    // under the S2C key is the server's own word; see NTPKissTrust.
                     if (kiss is not null && config.RespectKissOfDeath)
-                        AccessStateFor(Server.Hostname).Apply(kiss.Value, timeProvider.GetUtcNow());
+                        AccessStateFor(Server.Hostname).Apply(
+                            kiss.Value,
+                            timeProvider.GetUtcNow(),
+                            CachedState.NTSKEResponse is null
+                                ? NTPKissTrust.Unprotected
+                                : ntsQueryResult.ResponseIsAuthenticated
+                                      ? NTPKissTrust.Authenticated
+                                      : NTPKissTrust.Unauthenticated
+                        );
 
                     return new NTPMeasurementResult {
                                 Success          = false,
@@ -1052,6 +1077,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
                 }
 
+
+                // An answer, and not a kiss: one step back towards the usual rate,
+                // if a RATE kiss had slowed the polling of this server down.
+                if (config.RespectKissOfDeath)
+                    AccessStateFor(Server.Hostname).RecordAnswer();
 
                 // ──── Extract NTP timestamps ────
                 //
