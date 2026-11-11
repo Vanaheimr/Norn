@@ -161,6 +161,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         private readonly         SemaphoreSlim                            ntpRequestSemaphore;
         private readonly         SemaphoreSlim                            ntskeConnectionSemaphore;
+        private readonly         ConcurrentDictionary<System.Net.IPAddress, Int32>  ntskeConnectionsPerClient = [];
         private readonly         Boolean                                  advertiseExternalURLs;
         private readonly         X509Certificate?                         tlsCertificate;
         private readonly         ECPrivateKeyParameters?                  tlsPrivateKey;
@@ -356,6 +357,24 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public Int32                 MaxConcurrentNTSKEConnections { get; }
 
         /// <summary>
+        /// How many NTS-KE connections one client may have open at the same time. A client
+        /// is an IPv4 address or an IPv6 /64, as for the rate limiter.
+        /// </summary>
+        /// <remarks>
+        /// Without it, whoever opens <see cref="MaxConcurrentNTSKEConnections"/> connections
+        /// and then says nothing holds every slot for as long as the timeouts allow, and
+        /// can do so again the moment they expire. A TCP connection cannot be opened under a
+        /// forged address, so this limit is one an attacker has to pay for in real addresses.
+        /// </remarks>
+        public Int32                 MaxNTSKEConnectionsPerClient  { get; }
+
+        /// <summary>
+        /// The default of <see cref="MaxNTSKEConnectionsPerClient"/>. A key exchange is rare
+        /// and short, so this leaves ample room for several clients behind one address.
+        /// </summary>
+        public const Int32           DefaultMaxNTSKEConnectionsPerClient = 8;
+
+        /// <summary>
         /// The key id currently used for newly generated NTS cookies.
         /// </summary>
         public UInt64                CurrentMasterKeyId
@@ -470,7 +489,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                          IPPort?            SSHPort                       = null,
                          IEnumerable<ISshHostKey>? SSHHostKeys            = null,
                          ISshUserAuthenticator?    SSHAuthenticator       = null,
-                         NTPAccessList?            AccessList             = null)
+                         NTPAccessList?            AccessList             = null,
+                         Int32?                    MaxNTSKEConnectionsPerClient = null)
         {
 
             // An SSH listener hands out cookies to whoever logs in, so who that may be is never a
@@ -507,6 +527,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             this.MaxNTSKERequestSize          = MaxNTSKERequestSize          ?? 64 * 1024;
             this.MaxConcurrentNTPRequests     = MaxConcurrentNTPRequests     ?? 1024;
             this.MaxConcurrentNTSKEConnections= MaxConcurrentNTSKEConnections?? 64;
+            this.MaxNTSKEConnectionsPerClient = Math.Max(1, MaxNTSKEConnectionsPerClient ?? DefaultMaxNTSKEConnectionsPerClient);
             this.advertiseExternalURLs        = ExternalURLs is not null;
             this.ntpRequestSemaphore          = new SemaphoreSlim(this.MaxConcurrentNTPRequests);
             this.ntskeConnectionSemaphore     = new SemaphoreSlim(this.MaxConcurrentNTSKEConnections);
@@ -1305,6 +1326,36 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         #endregion
 
 
+        #region (private) ReleaseNTSKEClient(Client)
+
+        /// <summary>
+        /// One NTS-KE connection of this client has ended.
+        /// </summary>
+        private void ReleaseNTSKEClient(System.Net.IPAddress? Client)
+        {
+
+            if (Client is null)
+                return;
+
+            // The entry is removed when its last connection ends, and only if it still says
+            // so: comparing the pair makes the removal lose against a connection that was
+            // counted in between, instead of deleting that connection's count.
+            while (ntskeConnectionsPerClient.TryGetValue(Client, out var open))
+            {
+
+                if (open <= 1
+                        ? ntskeConnectionsPerClient.TryRemove(new KeyValuePair<System.Net.IPAddress, Int32>(Client, open))
+                        : ntskeConnectionsPerClient.TryUpdate(Client, open - 1, open))
+                {
+                    return;
+                }
+
+            }
+
+        }
+
+        #endregion
+
         #region (private) GetCurrentMasterKey()
 
         private MasterKey GetCurrentMasterKey()
@@ -1934,8 +1985,25 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                             continue;
                         }
 
+                        // Before the shared limit, so that one client at its own limit
+                        // does not take a slot from everybody else on top of it.
+                        var ntskeClient = (clientSocket.RemoteEndPoint as IPEndPoint)?.Address is System.Net.IPAddress remoteAddress
+                                              ? NTPRateLimiter.ClientOf(remoteAddress, NTPRateLimiter.DefaultIPv6PrefixLength)
+                                              : null;
+
+                        if (ntskeClient is not null &&
+                            ntskeConnectionsPerClient.AddOrUpdate(ntskeClient, 1, (_, open) => open + 1) > MaxNTSKEConnectionsPerClient)
+                        {
+                            ReleaseNTSKEClient(ntskeClient);
+                            System.Threading.Interlocked.Increment(ref ntskeConnectionsRejected);
+                            DebugX.Log($"Closing NTS-KE connection from {clientSocket.RemoteEndPoint}: too many concurrent connections from this client.");
+                            clientSocket.Close();
+                            continue;
+                        }
+
                         if (!await ntskeConnectionSemaphore.WaitAsync(0, cts.Token).ConfigureAwait(false))
                         {
+                            ReleaseNTSKEClient(ntskeClient);
                             System.Threading.Interlocked.Increment(ref ntskeConnectionsRejected);
                             DebugX.Log($"Closing NTS-KE connection from {clientSocket.RemoteEndPoint}: too many concurrent connections.");
                             clientSocket.Close();
@@ -1958,9 +2026,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                                TimeProvider
                                                            );
 
-                                await Task.Run(
+                                // The handshake of this TLS library blocks its thread until the
+                                // client has said everything it has to say. On a thread of its
+                                // own, then, and not on one borrowed from the pool: the pool is
+                                // what answers NTP requests, and it grows by a thread or two a
+                                // second, so a few dozen clients stalling here would otherwise
+                                // delay every NTP answer, and with it the timestamps in them.
+                                await Task.Factory.StartNew(
                                           () => tlsServerProtocol.Accept(tlsServer),
-                                          requestCTS.Token
+                                          requestCTS.Token,
+                                          TaskCreationOptions.LongRunning,
+                                          TaskScheduler.Default
                                       ).WaitAsync(NTSKEHandshakeTimeout, requestCTS.Token).
                                         ConfigureAwait(false);
 
@@ -2059,6 +2135,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                 try { clientSocket.Shutdown(SocketShutdown.Both); } catch { }
                                 clientSocket.Close();
                                 ntskeConnectionSemaphore.Release();
+                                ReleaseNTSKEClient(ntskeClient);
                             }
 
                         });
@@ -2518,8 +2595,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             // Unsealing authenticates the cookie under this server's master key and checks
             // it against that key's validity window, so a forged or expired cookie fails here.
-            if (!NTSCookie.TryParse(n1.Value, masterKeys, out var ntsCookie, out var errorResponse))
+            // NTPRequest.TryParse has done that already, to find the key the authenticator
+            // was made with, and left the result on the extension. Unsealing it a second
+            // time was the most expensive thing done per request, done twice. Only a cookie
+            // that did not unseal there is looked at again, for the reason to put in the log.
+            var ntsCookie = n1.Cookie;
+
+            if (ntsCookie is null &&
+                !NTSCookie.TryParse(n1.Value, masterKeys, out ntsCookie, out var errorResponse))
+            {
                 return BuildNTSNAK(RequestPacket, Exchange, "Invalid NTS cookie: " + errorResponse);
+            }
 
             // RFC 8915 §5.7: a request carries exactly one cookie in the clear. With two, the
             // one the authenticator was checked under and the one answered here could differ.

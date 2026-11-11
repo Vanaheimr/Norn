@@ -53,7 +53,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.CLI
         public void Line(String Text = "")
         {
             if (!IsJson)
-                Console.Out.WriteLine(Text);
+                Console.Out.WriteLine(Printable(Text));
         }
 
 
@@ -63,7 +63,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.CLI
         public void Field(String Label, String? Value)
         {
             if (!IsJson && Value is not null)
-                Console.Out.WriteLine($"  {Label,-22}{Value}");
+                Console.Out.WriteLine($"  {Label,-22}{Printable(Value)}");
         }
 
 
@@ -71,14 +71,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.CLI
         /// Something the user should see whichever mode they asked for.
         /// </summary>
         public void Note(String Text)
-            => Console.Error.WriteLine(Text);
+            => Console.Error.WriteLine(Printable(Text));
 
 
         /// <summary>
         /// Something that went wrong.
         /// </summary>
         public void Error(String Text)
-            => Console.Error.WriteLine($"norn: {Text}");
+            => Console.Error.WriteLine($"norn: {Printable(Text)}");
 
 
         /// <summary>
@@ -88,6 +88,39 @@ namespace org.GraphDefined.Vanaheimr.Norn.CLI
         {
             if (IsJson)
                 Console.Out.WriteLine(Document.ToString(Newtonsoft.Json.Formatting.Indented));
+        }
+
+
+        /// <summary>
+        /// The text with every control character made visible.
+        /// </summary>
+        /// <remarks>
+        /// Much of what is printed was written by the server that was asked: its certificate's
+        /// subject, the names it sends the client to, its warnings, the text of an error.
+        /// Written to a terminal as it came, an escape sequence in any of them would be
+        /// carried out: it could repaint what was printed before, or set the window title.
+        /// So a control character is shown as what it is, and none of them reaches the
+        /// terminal. No text printed here has a line break of its own, and the JSON output
+        /// needs none of this, as JSON escapes them itself.
+        /// </remarks>
+        public static String Printable(String Text)
+        {
+
+            if (!Text.Any(Char.IsControl))
+                return Text;
+
+            var printable = new System.Text.StringBuilder(Text.Length + 8);
+
+            foreach (var character in Text)
+            {
+                if (Char.IsControl(character))
+                    printable.Append($@"\x{(Int32) character:x2}");
+                else
+                    printable.Append(character);
+            }
+
+            return printable.ToString();
+
         }
 
 

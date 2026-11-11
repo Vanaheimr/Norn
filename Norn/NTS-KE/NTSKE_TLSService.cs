@@ -153,6 +153,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         protected override IList<ProtocolName> GetProtocolNames()
             => [ ProtocolName.Ntske_1 ];
 
+
+        /// <summary>
+        /// TLS 1.3 and nothing below it.
+        /// </summary>
+        /// <remarks>
+        /// RFC 8915 § 3: "Implementations MUST NOT negotiate TLS versions earlier than 1.3."
+        /// Said here, so that an older client is turned away with protocol_version at the
+        /// start of the handshake, and not because something further along happens to fail.
+        /// </remarks>
+        protected override ProtocolVersion[] GetSupportedVersions()
+            => ProtocolVersion.TLSv13.Only();
+
         #endregion
 
         #region (public    override) ProcessClientExtensions(ClientExtensions)

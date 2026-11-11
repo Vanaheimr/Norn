@@ -147,21 +147,61 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         }
 
 
-        private readonly Dictionary<IPAddress, ClientState>  clients   = [];
+        /// <summary>
+        /// The clients of one kind, and the order they were last heard from in.
+        /// </summary>
+        private sealed class ClientTable
+        {
+
+            public Dictionary<IPAddress, ClientState>  Clients   { get; } = [];
+
+            /// <summary>
+            /// The client addresses in order of use, least recent first.
+            /// </summary>
+            /// <remarks>
+            /// A list rather than a timestamp to sort by, because sorting would be work an attacker
+            /// controls the amount of. This table is keyed by source address on a UDP service, so
+            /// addresses can be forged freely and every forged one is a new client: with a scan to
+            /// find the least recently used, each spoofed packet would cost a pass over the whole
+            /// table once it filled. The memory stayed bounded and the CPU did not.
+            /// </remarks>
+            public LinkedList<IPAddress>               Recency   { get; } = new ();
+
+            public Lock                                Padlock   { get; } = new ();
+
+        }
 
         /// <summary>
-        /// The client addresses in order of use, least recent first.
+        /// What is remembered for requests that carried a verified NTS authenticator, and
+        /// apart from it what is remembered for all the others.
         /// </summary>
         /// <remarks>
-        /// A list rather than a timestamp to sort by, because sorting would be work an attacker
-        /// controls the amount of. This table is keyed by source address on a UDP service, so
-        /// addresses can be forged freely and every forged one is a new client: with a scan to
-        /// find the least recently used, each spoofed packet would cost a pass over the whole
-        /// table once it filled. The memory stayed bounded and the CPU did not.
+        /// One table for both would let anyone take the interleaved mode away from an NTS
+        /// client: a source address costs nothing to forge, so a handful of plain datagrams
+        /// under the client's address pushed its saved exchanges out, and a few thousand under
+        /// any addresses emptied the whole table. Kept apart, a forged datagram only ever
+        /// displaces other unauthenticated state. Reaching the authenticated table takes a
+        /// cookie this server issued and the key that goes with it.
         /// </remarks>
-        private readonly LinkedList<IPAddress>               recency   = new();
+        private readonly ClientTable[]                       authenticatedClients;
+        private readonly ClientTable[]                       unauthenticatedClients;
+        private readonly Int32                               maxClientsPerTable;
 
-        private readonly Lock                                padlock   = new();
+        /// <summary>
+        /// How many parts each of the two is cut into at most, and how many clients a part
+        /// has to be able to hold before it is cut at all.
+        /// </summary>
+        /// <remarks>
+        /// One lock over one table made every packet wait for every other, however many
+        /// cores were there to answer them. The table is cut into parts by a hash of the
+        /// address, each with a lock of its own, so that two packets get in each other's way
+        /// only when their addresses fall into the same part. Each part evicts for itself:
+        /// what is bounded is the size of every part, and so of the whole. A table too
+        /// small to be worth cutting stays in one piece and behaves exactly as before.
+        /// </remarks>
+        internal const   Int32                               MaxShards            = 16;
+        internal const   Int32                               MinClientsPerShard   = 256;
+
 
         #endregion
 
@@ -178,7 +218,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public Int32  MaxExchangesPerClient    { get; }
 
         /// <summary>
-        /// How many client addresses are remembered at once.
+        /// How many client addresses are remembered at once, for authenticated
+        /// and for unauthenticated requests each.
         /// </summary>
         public Int32  MaxClients               { get; }
 
@@ -189,8 +230,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         {
             get
             {
-                lock (padlock)
-                    return clients.Count;
+                var tracked = 0;
+
+                foreach (var table in authenticatedClients.Concat(unauthenticatedClients))
+                {
+                    lock (table.Padlock)
+                        tracked += table.Clients.Count;
+                }
+
+                return tracked;
             }
         }
 
@@ -212,6 +260,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             this.Policy                 = Policy ?? InterleavedModePolicy.Everyone;
             this.MaxExchangesPerClient  = Math.Max(1, MaxExchangesPerClient ?? DefaultMaxExchangesPerClient);
             this.MaxClients             = Math.Max(1, MaxClients            ?? DefaultMaxClients);
+
+            var shardCount              = Math.Clamp(this.MaxClients / MinClientsPerShard, 1, MaxShards);
+
+            this.authenticatedClients   = [.. Enumerable.Range(0, shardCount).Select(_ => new ClientTable())];
+            this.unauthenticatedClients = [.. Enumerable.Range(0, shardCount).Select(_ => new ClientTable())];
+            this.maxClientsPerTable     = Math.Max(1, this.MaxClients / shardCount);
 
         }
 
@@ -262,10 +316,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             var requestReceive   = RequestPacket.ReceiveTimestamp;
             var requestTransmit  = RequestPacket.TransmitTimestamp ?? 0UL;
 
-            lock (padlock)
+            var table = TableOf(
+                            Authenticated
+                                ? authenticatedClients
+                                : unauthenticatedClients,
+                            RemoteAddress
+                        );
+
+            lock (table.Padlock)
             {
 
-                var client = GetOrAddClient(RemoteAddress);
+                var client = GetOrAddClient(table, RemoteAddress);
 
                 // Condition 1, and the shortcut of § 2's closing paragraph: a zero origin
                 // timestamp is the first request of an association and can match nothing.
@@ -319,7 +380,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                            TransmitTimestamp:  transmitTimestamp,
                            IsInterleaved:      previousTransmit is not null,
                            OnTransmitted:      actualTransmitTimestamp => {
-                                                   lock (padlock)
+                                                   lock (table.Padlock)
                                                        exchange.TransmitTimestamp = MakeUnique(client, actualTransmitTimestamp);
                                                }
                        );
@@ -337,15 +398,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </summary>
         public void Forget(IPAddress RemoteAddress)
         {
-            lock (padlock)
+            foreach (var table in new[] { TableOf(authenticatedClients,   RemoteAddress),
+                                          TableOf(unauthenticatedClients, RemoteAddress) })
             {
-
-                if (clients.Remove(RemoteAddress, out var removed) &&
-                    removed.Recency is not null)
+                lock (table.Padlock)
                 {
-                    recency.Remove(removed.Recency);
+                    if (table.Clients.Remove(RemoteAddress, out var removed) &&
+                        removed.Recency is not null)
+                    {
+                        table.Recency.Remove(removed.Recency);
+                    }
                 }
-
             }
         }
 
@@ -358,30 +421,45 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </summary>
         public void Clear()
         {
-            lock (padlock)
+            foreach (var table in authenticatedClients.Concat(unauthenticatedClients))
             {
-                clients.Clear();
-                recency.Clear();
+                lock (table.Padlock)
+                {
+                    table.Clients.Clear();
+                    table.Recency.Clear();
+                }
             }
         }
 
         #endregion
 
 
-        #region (private) GetOrAddClient(RemoteAddress)
+        #region (private) TableOf(Tables, RemoteAddress)
 
-        private ClientState GetOrAddClient(IPAddress RemoteAddress)
+        private static ClientTable TableOf(ClientTable[]  Tables,
+                                           IPAddress      RemoteAddress)
+
+            => Tables.Length == 1
+                   ? Tables[0]
+                   : Tables[(RemoteAddress.GetHashCode() & Int32.MaxValue) % Tables.Length];
+
+        #endregion
+
+        #region (private) GetOrAddClient(Table, RemoteAddress)
+
+        private ClientState GetOrAddClient(ClientTable  Table,
+                                           IPAddress    RemoteAddress)
         {
 
-            if (clients.TryGetValue(RemoteAddress, out var existing))
+            if (Table.Clients.TryGetValue(RemoteAddress, out var existing))
             {
 
                 // Move to the most-recent end. Removing a known node and appending it are both
                 // O(1) on a linked list, which is the point of holding the node here.
                 if (existing.Recency is not null)
                 {
-                    recency.Remove(existing.Recency);
-                    recency.AddLast(existing.Recency);
+                    Table.Recency.Remove (existing.Recency);
+                    Table.Recency.AddLast(existing.Recency);
                 }
 
                 return existing;
@@ -389,24 +467,24 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             }
 
             // Evicting the address used longest ago, rather than refusing the new one, so that
-            // a flood of one-off addresses degrades the interleaved mode for everybody instead
-            // of letting whoever arrived first keep it to themselves.
-            if (clients.Count >= MaxClients &&
-                recency.First is not null)
+            // a flood of one-off addresses degrades the interleaved mode for everybody in this
+            // table instead of letting whoever arrived first keep it to themselves.
+            if (Table.Clients.Count >= maxClientsPerTable &&
+                Table.Recency.First is not null)
             {
 
-                var leastRecentlyUsed = recency.First;
+                var leastRecentlyUsed = Table.Recency.First;
 
-                recency.Remove(leastRecentlyUsed);
-                clients.Remove(leastRecentlyUsed.Value);
+                Table.Recency.Remove(leastRecentlyUsed);
+                Table.Clients.Remove(leastRecentlyUsed.Value);
 
             }
 
             var created = new ClientState {
-                              Recency = recency.AddLast(RemoteAddress)
+                              Recency = Table.Recency.AddLast(RemoteAddress)
                           };
 
-            clients.Add(RemoteAddress, created);
+            Table.Clients.Add(RemoteAddress, created);
 
             return created;
 

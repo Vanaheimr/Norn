@@ -139,6 +139,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public const           Int32    DefaultMaxClients         = 8192;
 
         /// <summary>
+        /// The default number of leading bits of an IPv6 address that make up one client.
+        /// </summary>
+        /// <remarks>
+        /// A /64 is what one subscriber or one link is given, and a host on it has all
+        /// 2^64 addresses within to choose from. Counted by full address, such a host would
+        /// get a fresh budget with every address it makes up, and no limit at all.
+        /// </remarks>
+        public const           Int32    DefaultIPv6PrefixLength   = 64;
+
+        /// <summary>
         /// The largest poll exponent this server will ask a client to move to.
         /// </summary>
         /// <remarks>
@@ -176,9 +186,42 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         }
 
 
-        private readonly Dictionary<IPAddress, ClientState>  clients      = [];
-        private readonly LinkedList<IPAddress>               recency      = new ();
-        private readonly Lock                                padlock      = new ();
+        /// <summary>
+        /// One part of the table of clients.
+        /// </summary>
+        private sealed class Shard
+        {
+            public Dictionary<IPAddress, ClientState>  Clients   { get; } = [];
+            public LinkedList<IPAddress>               Recency   { get; } = new ();
+            public Lock                                Padlock   { get; } = new ();
+        }
+
+        /// <summary>
+        /// The clients, in parts.
+        /// </summary>
+        /// <remarks>
+        /// One lock over one table made every packet wait for every other, however many
+        /// cores were there to answer them. The table is cut into parts by a hash of the
+        /// address, each with a lock of its own, so that two packets get in each other's way
+        /// only when their addresses fall into the same part. Each part evicts for itself:
+        /// what is bounded is the size of every part, and so of the whole. A table too
+        /// small to be worth cutting stays in one piece and behaves exactly as before.
+        /// </remarks>
+        private readonly Shard[]                             shards;
+        private readonly Int32                               maxClientsPerShard;
+
+        /// <summary>
+        /// How many parts the table is cut into at most, and how many clients a part
+        /// has to be able to hold before the table is cut at all.
+        /// </summary>
+        internal const   Int32                               MaxShards              = 16;
+        internal const   Int32                               MinClientsPerShard     = 256;
+
+        /// <summary>
+        /// Guards the one budget all parts share: the kisses per second.
+        /// Only ever taken inside a part's lock, never the other way round.
+        /// </summary>
+        private readonly Lock                                kissLock     = new ();
 
         private          Double                              kissTokens;
         private          Int64                               kissRefill;
@@ -218,14 +261,28 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public Int32         MaxClients          { get; }
 
         /// <summary>
+        /// How many leading bits of an IPv6 address make up one client. All addresses that
+        /// share them draw on one budget. 128 counts every IPv6 address on its own, which
+        /// suits a server whose clients share a link with it and with each other.
+        /// </summary>
+        public Int32         IPv6PrefixLength    { get; }
+
+        /// <summary>
         /// How many client addresses are currently tracked.
         /// </summary>
         public Int32         TrackedClients
         {
             get
             {
-                lock (padlock)
-                    return clients.Count;
+                var tracked = 0;
+
+                foreach (var shard in shards)
+                {
+                    lock (shard.Padlock)
+                        tracked += shard.Clients.Count;
+                }
+
+                return tracked;
             }
         }
 
@@ -254,13 +311,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <param name="MaxKissesPerSecond">The ceiling on RATE kisses per second across all addresses together.</param>
         /// <param name="MaxClients">How many client addresses to track at once.</param>
         /// <param name="TimeProvider">The clock to measure elapsed time on.</param>
+        /// <param name="IPv6PrefixLength">How many leading bits of an IPv6 address make up one client.</param>
         public NTPRateLimiter(TimeSpan?      MinimumInterval      = null,
                               Int32?         Burst                = null,
                               TimeSpan?      KissInterval         = null,
                               Double?        MaxKissesPerSecond   = null,
                               Int32?         MaxClients           = null,
-                              TimeProvider?  TimeProvider         = null)
+                              TimeProvider?  TimeProvider         = null,
+                              Int32?         IPv6PrefixLength     = null)
         {
+
+            this.IPv6PrefixLength    = Math.Clamp(IPv6PrefixLength ?? DefaultIPv6PrefixLength, 1, 128);
 
             this.TimeProvider        = TimeProvider ?? System.TimeProvider.System;
             this.MinimumInterval     = MinimumInterval is not null && MinimumInterval.Value > TimeSpan.Zero
@@ -274,6 +335,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             var exponent             = Math.Ceiling(Math.Log2(Math.Max(1.0, this.MinimumInterval.TotalSeconds)));
 
             this.KissPollExponent    = (Byte) Math.Clamp(exponent, 4, MaxPollExponent);
+
+            var shardCount           = Math.Clamp(this.MaxClients / MinClientsPerShard, 1, MaxShards);
+
+            this.shards              = [.. Enumerable.Range(0, shardCount).Select(_ => new Shard())];
+            this.maxClientsPerShard  = Math.Max(1, this.MaxClients / shardCount);
 
             this.kissRefill          = this.TimeProvider.GetTimestamp();
             this.kissTokens          = 1;
@@ -299,12 +365,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public RateLimitDecision Check(IPAddress RemoteAddress)
         {
 
+            RemoteAddress = ClientOf(RemoteAddress, IPv6PrefixLength);
+
             var now = TimeProvider.GetTimestamp();
 
-            lock (padlock)
+            var shard = ShardOf(RemoteAddress);
+
+            lock (shard.Padlock)
             {
 
-                var client   = GetOrAddClient(RemoteAddress, now);
+                var client   = GetOrAddClient(shard, RemoteAddress, now);
 
                 var elapsed  = TimeProvider.GetElapsedTime(client.LastRefill, now);
 
@@ -349,13 +419,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </summary>
         public void Forget(IPAddress RemoteAddress)
         {
-            lock (padlock)
+
+            RemoteAddress = ClientOf(RemoteAddress, IPv6PrefixLength);
+            var shard = ShardOf(RemoteAddress);
+
+            lock (shard.Padlock)
             {
 
-                if (clients.Remove(RemoteAddress, out var removed) &&
+                if (shard.Clients.Remove(RemoteAddress, out var removed) &&
                     removed.Recency is not null)
                 {
-                    recency.Remove(removed.Recency);
+                    shard.Recency.Remove(removed.Recency);
                 }
 
             }
@@ -370,15 +444,62 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </summary>
         public void Clear()
         {
-            lock (padlock)
+            foreach (var shard in shards)
             {
-                clients.Clear();
-                recency.Clear();
+                lock (shard.Padlock)
+                {
+                    shard.Clients.Clear();
+                    shard.Recency.Clear();
+                }
             }
         }
 
         #endregion
 
+
+        #region (static) ClientOf(RemoteAddress, IPv6PrefixLength)
+
+        /// <summary>
+        /// The address a budget is kept under for the given source address.
+        /// </summary>
+        /// <remarks>
+        /// An IPv4 client reaching a dual-stack socket arrives as ::ffff:a.b.c.d. It is turned
+        /// back into its IPv4 address first: all of IPv4 lies within a single /64 of that
+        /// form, and masking it would put every IPv4 client there is on one budget.
+        /// </remarks>
+        /// <param name="RemoteAddress">The address the datagram claims to come from.</param>
+        /// <param name="IPv6PrefixLength">How many leading bits of an IPv6 address make up one client.</param>
+        public static IPAddress ClientOf(IPAddress  RemoteAddress,
+                                         Int32      IPv6PrefixLength)
+        {
+
+            if (RemoteAddress.IsIPv4MappedToIPv6)
+                return RemoteAddress.MapToIPv4();
+
+            if (RemoteAddress.AddressFamily != System.Net.Sockets.AddressFamily.InterNetworkV6)
+                return RemoteAddress;
+
+            Span<Byte> bytes = stackalloc Byte[16];
+
+            if (!RemoteAddress.TryWriteBytes(bytes, out var written) || written != 16)
+                return RemoteAddress;
+
+            var wholeBytes = IPv6PrefixLength / 8;
+            var spareBits  = IPv6PrefixLength % 8;
+
+            if (wholeBytes < 16 && spareBits != 0)
+                bytes[wholeBytes++] &= (Byte) (0xFF << (8 - spareBits));
+
+            if (wholeBytes < 16)
+                bytes[wholeBytes..].Clear();
+
+            // Built from the bytes alone, so a zone index does not make
+            // two clients of one link-local address either.
+            return new IPAddress(bytes);
+
+        }
+
+        #endregion
 
         #region (private) TrySpendKissToken(Now)
 
@@ -397,36 +518,58 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             if (MaxKissesPerSecond <= 0)
                 return false;
 
-            kissTokens  = Math.Min(
-                              MaxKissesPerSecond,
-                              kissTokens + TimeProvider.GetElapsedTime(kissRefill, Now).TotalSeconds * MaxKissesPerSecond
-                          );
-            kissRefill  = Now;
+            lock (kissLock)
+            {
 
-            if (kissTokens < 1.0)
-                return false;
+                // Two parts may get here with clock readings taken in either order.
+                // Time does not run backwards for the budget because of that.
+                var elapsed = Math.Max(0, TimeProvider.GetElapsedTime(kissRefill, Now).TotalSeconds);
 
-            kissTokens -= 1.0;
+                kissTokens  = Math.Min(
+                                  MaxKissesPerSecond,
+                                  kissTokens + elapsed * MaxKissesPerSecond
+                              );
 
-            return true;
+                if (elapsed > 0)
+                    kissRefill = Now;
+
+                if (kissTokens < 1.0)
+                    return false;
+
+                kissTokens -= 1.0;
+
+                return true;
+
+            }
 
         }
 
         #endregion
 
-        #region (private) GetOrAddClient(RemoteAddress, Now)
+        #region (private) ShardOf(RemoteAddress)
 
-        private ClientState GetOrAddClient(IPAddress  RemoteAddress,
+        private Shard ShardOf(IPAddress RemoteAddress)
+
+            => shards.Length == 1
+                   ? shards[0]
+                   : shards[(RemoteAddress.GetHashCode() & Int32.MaxValue) % shards.Length];
+
+        #endregion
+
+        #region (private) GetOrAddClient(Shard, RemoteAddress, Now)
+
+        private ClientState GetOrAddClient(Shard      Shard,
+                                           IPAddress  RemoteAddress,
                                            Int64      Now)
         {
 
-            if (clients.TryGetValue(RemoteAddress, out var existing))
+            if (Shard.Clients.TryGetValue(RemoteAddress, out var existing))
             {
 
                 if (existing.Recency is not null)
                 {
-                    recency.Remove(existing.Recency);
-                    recency.AddLast(existing.Recency);
+                    Shard.Recency.Remove(existing.Recency);
+                    Shard.Recency.AddLast(existing.Recency);
                 }
 
                 return existing;
@@ -437,14 +580,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             // Refusing would mean an untracked address is an unlimited one, so a flood large
             // enough to fill the table would switch the limiter off for its own later packets —
             // which is the opposite of what it is for.
-            if (clients.Count >= MaxClients &&
-                recency.First is not null)
+            if (Shard.Clients.Count >= maxClientsPerShard &&
+                Shard.Recency.First is not null)
             {
 
-                var leastRecentlyUsed = recency.First;
+                var leastRecentlyUsed = Shard.Recency.First;
 
-                recency.Remove(leastRecentlyUsed);
-                clients.Remove(leastRecentlyUsed.Value);
+                Shard.Recency.Remove(leastRecentlyUsed);
+                Shard.Clients.Remove(leastRecentlyUsed.Value);
 
             }
 
@@ -454,10 +597,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             var created = new ClientState {
                               Tokens      = Burst,
                               LastRefill  = Now,
-                              Recency     = recency.AddLast(RemoteAddress)
+                              Recency     = Shard.Recency.AddLast(RemoteAddress)
                           };
 
-            clients.Add(RemoteAddress, created);
+            Shard.Clients.Add(RemoteAddress, created);
 
             return created;
 

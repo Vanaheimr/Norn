@@ -56,6 +56,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.CLI
         /// </summary>
         public const Int32 ExitUsage    = 2;
 
+        /// <summary>
+        /// The command was interrupted before it had a result: 128 + SIGINT, which is what
+        /// a shell reports for a process that Ctrl-C ended.
+        /// </summary>
+        public const Int32 ExitInterrupted  = 130;
+
 
         private const String TopLevelUsage = """
             norn -- NTP and Network Time Security, from the command line.
@@ -166,8 +172,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.CLI
 
             catch (OperationCanceledException)
             {
-                // Interrupted on purpose. Nothing to report, and nothing went wrong.
-                return 0;
+                // Interrupted on purpose, but before there was an answer. A server that is
+                // told to stop returns from its command and never gets here; what does is
+                // a query or a key exchange that was cut short. Nothing was printed, and a
+                // script reading 0 would take that for a result.
+                return ExitInterrupted;
             }
 
             catch (Exception e)

@@ -1091,6 +1091,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                 // δ = (T4 - T1) - (T3 - T2)
                 var delay   = ntpResponse.RoundTripDelay ?? ((t4 - t1) - (t3 - t2));
 
+                // A server cannot have held the request for longer than the whole exchange
+                // took. A negative delay is two clocks disagreeing over a very short path, or
+                // a server misreporting its timestamps, and RFC 5905 § 8 does not let it
+                // through either: "delta = max(delta, rho)". Left negative, it would stay the
+                // shortest delay of this server for the next rounds and bend the correction
+                // made from it.
+                if (delay < TimeSpan.Zero)
+                    delay = TimeSpan.Zero;
+
                 // ──── Correct it for what is known about the path ────
                 var correction = OffsetCorrection(Server.DelayAsymmetry,
                                                   Server.DelayVarAsymmetry,

@@ -137,36 +137,46 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                                 CancellationToken  CancellationToken)
         {
 
-            // Polled in slices rather than one long wait so cancellation stays responsive.
-            var slice = TimeSpan.FromMilliseconds(250);
+            var remaining = Deadline - DateTime.UtcNow;
 
-            while (DateTime.UtcNow < Deadline)
+            if (remaining <= TimeSpan.Zero ||
+                CancellationToken.IsCancellationRequested)
             {
-
-                if (CancellationToken.IsCancellationRequested)
-                    return false;
-
-                try
-                {
-                    // Poll reports readable both when data has arrived and when the peer has
-                    // closed; the caller's zero-bytes-read branch handles the latter.
-                    if (Socket.Poll(slice, SelectMode.SelectRead))
-                        return true;
-                }
-                catch (ObjectDisposedException)
-                {
-                    return false;
-                }
-                catch (SocketException)
-                {
-                    return false;
-                }
-
-                await Task.Yield();
-
+                return false;
             }
 
-            return false;
+            using var deadlineCTS = CancellationTokenSource.CreateLinkedTokenSource(CancellationToken);
+            deadlineCTS.CancelAfter(remaining);
+
+            try
+            {
+
+                // A receive of zero bytes completes when there is something to read, or when
+                // the peer has closed, and takes nothing off the socket; the caller's
+                // zero-bytes-read branch handles the latter. Unlike Socket.Poll it holds no
+                // thread while it waits: with Poll, every client that connected and then
+                // said nothing kept a thread of the pool busy for the length of the timeout.
+                await Socket.ReceiveAsync(
+                          Memory<Byte>.Empty,
+                          SocketFlags.None,
+                          deadlineCTS.Token
+                      ).ConfigureAwait(false);
+
+                return true;
+
+            }
+            catch (OperationCanceledException)
+            {
+                return false;
+            }
+            catch (ObjectDisposedException)
+            {
+                return false;
+            }
+            catch (SocketException)
+            {
+                return false;
+            }
 
         }
 

@@ -267,7 +267,13 @@ $ echo $?
 ```
 
 Ctrl-C is a cancellation rather than a kill: a server closes its sockets and a query in flight
-stops waiting, and the exit code is 0 because nothing went wrong.
+stops waiting. A server that was told to stop exits 0, because nothing went wrong. A query or a
+key exchange that was interrupted before it had an answer exits 130, as it printed no result and
+0 would say it had.
+
+Text that came from the server — a certificate's subject, a server name, a warning — is printed
+with its control characters made visible (`\x1b`), so that it cannot send escape sequences to
+the terminal.
 
 ## Where the behaviour is pinned
 

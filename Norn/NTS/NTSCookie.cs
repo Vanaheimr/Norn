@@ -47,11 +47,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         private const Byte    NonceLength         = 32;
 
-        // Layout of the decrypted cookie body (see ToByteArray()).
+        // Layout of the decrypted cookie body (see ToByteArray()):
+        //
+        //     Timestamp (8) | AlgorithmId (2) | C2SKey | S2CKey
+        //
+        // The master key id and the nonce are not repeated in here. Both stand in front of
+        // the sealed body, where the AEAD covers them just the same: the id as associated
+        // data, the nonce as the nonce. A second copy inside bought nothing, and cost 40
+        // octets in every cookie of every request and response.
         private const UInt16  OffsetTimestamp     =                     0;
-        private const UInt16  OffsetMasterKeyId   = OffsetTimestamp   + 8;
-        private const UInt16  OffsetNonce         = OffsetMasterKeyId + 8;
-        private const UInt16  OffsetAlgorithmId   = OffsetNonce       + NonceLength;
+        private const UInt16  OffsetAlgorithmId   = OffsetTimestamp   + 8;
         private const UInt16  OffsetC2SKey        = OffsetAlgorithmId + 2;
         // OffsetS2CKey variable!
 
@@ -380,9 +385,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// which first verifies the AEAD. There is deliberately no public keyless parse.
         /// </summary>
         /// <param name="Bytes">The decrypted cookie body.</param>
+        /// <param name="MasterKeyId">The master key id from in front of the sealed body, which the AEAD has verified.</param>
+        /// <param name="Nonce">The nonce from in front of the sealed body, which the AEAD has verified.</param>
         /// <param name="NTSCookie">The parsed NTS cookie.</param>
         /// <param name="ErrorResponse">An optional error response.</param>
         private static Boolean TryParseBody(Byte[]                               Bytes,
+                                            UInt64                               MasterKeyId,
+                                            Byte[]                               Nonce,
                                             [NotNullWhen(true)]  out NTSCookie?  NTSCookie,
                                             [NotNullWhen(false)] out String?     ErrorResponse)
         {
@@ -408,16 +417,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     ErrorResponse = "The timestamp within the given binary representation of a NTS cookie is too large!";
                     return false;
                 }
-
-                UInt64 masterKeyIdUInt64 = 0;
-                for (var j = 0; j < 8; j++)
-                    masterKeyIdUInt64 |= (UInt64) Bytes[OffsetMasterKeyId + j] << (56 - 8 * j);
-
-
-                // The following should be **encrypted**!!!
-
-                var nonce = new Byte[32];
-                Array.Copy(Bytes, OffsetNonce, nonce, 0, nonce.Length);
 
                 // AlgorithmId (Big-Endian)
                 UInt16 algorithmIdUInt16 = 0;
@@ -454,12 +453,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
 
                 NTSCookie = new NTSCookie(
-                                masterKeyIdUInt64,
+                                MasterKeyId,
                                 c2sKey,
                                 s2cKey,
                                 DateTimeOffsetExtensions.FromUnixTimestamp((Int64) timestampUInt64),
                                 algorithmId,
-                                nonce
+                                Nonce
                             );
 
                 return true;
@@ -543,15 +542,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             // Timestamp (Big-Endian)
             for (var i = 0; i < 8; i++)
                 cookie[OffsetTimestamp + i] = (Byte) (unixTimestamp >> (56 - 8 * i));
-
-            // MasterKeyId (Big-Endian)
-            //if (MasterKeyId.HasValue)
-                for (var i = 0; i < 8; i++)
-                    cookie[OffsetMasterKeyId + i] = (Byte) (MasterKeyId >> (56 - 8 * i));
-
-
-            // Nonce (32 bytes)
-            Buffer.BlockCopy(Nonce, 0, cookie, OffsetNonce, Nonce.Length);
 
             // AlgorithmId (Big-Endian)
             var algorithmBytes = AEADAlgorithm.GetBytes();
@@ -741,7 +731,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                           aeadOutput
                                       );
 
-                return TryParseBody(body, out NTSCookie, out ErrorResponse);
+                return TryParseBody(body, masterKeyId, nonce, out NTSCookie, out ErrorResponse);
 
             }
             catch (Exception e)
