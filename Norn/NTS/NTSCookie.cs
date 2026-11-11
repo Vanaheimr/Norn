@@ -550,9 +550,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     cookie[OffsetMasterKeyId + i] = (Byte) (MasterKeyId >> (56 - 8 * i));
 
 
-            // The following should be **encrypted**!!!
-            // ToDo: AEAD-Encrypt `cookie` with master key
-
             // Nonce (32 bytes)
             Buffer.BlockCopy(Nonce, 0, cookie, OffsetNonce, Nonce.Length);
 
