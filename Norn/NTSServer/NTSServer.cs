@@ -2023,7 +2023,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                             {
                                 System.Threading.Interlocked.Increment(ref ntskeHandshakeFailures);
                                 DebugX.Log($"TLS handshake/IO failed: {ex.Message}");
-                                Console.Error.WriteLine($"### NTSKE FAIL: {ex}");
                             }
                             finally
                             {
