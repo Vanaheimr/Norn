@@ -77,7 +77,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </summary>
         public static TimeSpan  RevocationWait  { get; } = TimeSpan.FromSeconds(3);
 
-        public TlsContext?  NTSKEContext    { get; private set; }
+        public Org.BouncyCastle.Tls.TlsContext?  NTSKEContext    { get; private set; }
 
         public DomainName?  ExpectedHostname { get; } = ExpectedHostname;
 
