@@ -127,8 +127,26 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         private                  Task?                                    udpLoopTask;
 
         private readonly         ConcurrentDictionary<UInt64, MasterKey>  masterKeys             = [];
-        private static readonly  Lock                                     currentMasterKeyLock   = new();
-        private                  MasterKey?                               currentMasterKey;
+        private        readonly  Lock                                     currentMasterKeyLock   = new();
+
+        /// <summary>
+        /// The master key new cookies are sealed under. MasterKey is a struct of several
+        /// words, and a Nullable of it cannot be read while another thread writes it without
+        /// the risk of seeing half of each. So the key is published as a reference to an
+        /// immutable box: every packet reads one reference, without taking the lock.
+        /// </summary>
+        private volatile         CurrentMasterKey?                        currentMasterKey;
+
+        private sealed class CurrentMasterKey(MasterKey Key)
+        {
+
+            public MasterKey Key { get; } = Key;
+
+            public Boolean IsValidAt(DateTimeOffset Timestamp)
+                => Key.NotBefore <= Timestamp &&
+                   Key.NotAfter  >  Timestamp;
+
+        }
         private readonly         String?                                  masterKeysFilePath;
 
         /// <summary>
@@ -1304,70 +1322,82 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             // seamlessly transition from one generation to the next without having to perform a new
             // NTS-KE handshake.
 
-            var now = TimeProvider.GetUtcNow();
+            var now     = TimeProvider.GetUtcNow();
 
-            if (currentMasterKey is null ||
-                currentMasterKey.Value.NotBefore > now ||
-                currentMasterKey.Value.NotAfter  <= now)
+            // Read once, and only this copy is looked at: the field may be replaced by
+            // another thread at any moment, the box it pointed to never changes.
+            var current = currentMasterKey;
+
+            if (current?.IsValidAt(now) == true)
+                return current.Key;
+
+            lock (currentMasterKeyLock)
             {
-                lock (currentMasterKeyLock)
+
+                now = TimeProvider.GetUtcNow();
+
+                foreach (var masterKey in masterKeys.Values)
+                {
+                    if (masterKey.NotAfter <= now - MasterKeyRotationGracePeriod)
+                        masterKeys.TryRemove(masterKey.Id, out _);
+                }
+
+                // Another thread may have replaced the key while this one waited for the lock.
+                current = currentMasterKey;
+
+                if (current?.IsValidAt(now) == true)
+                    return current.Key;
+
+                current = null;
+
+                foreach (var masterKey in masterKeys.Values.OrderByDescending(masterKey => masterKey.NotAfter))
+                {
+                    if (masterKey.NotBefore <= now &&
+                        masterKey.NotAfter  >  now)
+                    {
+                        current = new CurrentMasterKey(masterKey);
+                        break;
+                    }
+                }
+
+                if (current is null)
                 {
 
-                    now = TimeProvider.GetUtcNow();
+                    // Above every id ever seen, not only above those still kept: see the
+                    // constructor.
+                    highestMasterKeyId = Math.Max(highestMasterKeyId,
+                                                  masterKeys.IsEmpty
+                                                      ? 0UL
+                                                      : masterKeys.Keys.Max()) + 1;
 
-                    foreach (var masterKey in masterKeys.Values)
-                    {
-                        if (masterKey.NotAfter <= now - MasterKeyRotationGracePeriod)
-                            masterKeys.TryRemove(masterKey.Id, out _);
-                    }
+                    current            = new CurrentMasterKey(
+                                             new MasterKey(
+                                                 Id:         highestMasterKeyId,
+                                                 Value:      RandomNumberGenerator.GetBytes(32),
+                                                 NotBefore:  now,
+                                                 NotAfter:   now + MasterKeyLifetime
+                                             )
+                                         );
 
-                    if (currentMasterKey is null ||
-                        currentMasterKey.Value.NotBefore > now ||
-                        currentMasterKey.Value.NotAfter  <= now)
-                    {
-                        currentMasterKey = null;
+                    masterKeys.TryAdd(
+                        current.Key.Id,
+                        current.Key
+                    );
 
-                        foreach (var masterKey in masterKeys.Values.OrderByDescending(masterKey => masterKey.NotAfter))
-                        {
-                            if (masterKey.NotBefore <= now &&
-                                masterKey.NotAfter  >  now)
-                            {
-                                currentMasterKey = masterKey;
-                                break;
-                            }
-                        }
-                    }
+                    // Published before it is written, and never as null in between: the
+                    // field goes from one valid key straight to the next.
+                    currentMasterKey   = current;
 
-                    if (currentMasterKey is null)
-                    {
-
-                        // Above every id ever seen, not only above those still kept: see the
-                        // constructor.
-                        highestMasterKeyId = Math.Max(highestMasterKeyId,
-                                                      masterKeys.IsEmpty
-                                                          ? 0UL
-                                                          : masterKeys.Keys.Max()) + 1;
-
-                        currentMasterKey   = new MasterKey(
-                                                  Id:         highestMasterKeyId,
-                                                  Value:      RandomNumberGenerator.GetBytes(32),
-                                                  NotBefore:  now,
-                                                  NotAfter:   now + MasterKeyLifetime
-                                              );
-
-                        masterKeys.TryAdd(
-                            currentMasterKey.Value.Id,
-                            currentMasterKey.Value
-                        );
-
-                        WriteMasterKeys();
-
-                    }
+                    WriteMasterKeys();
 
                 }
-            }
 
-            return currentMasterKey.Value;
+                else
+                    currentMasterKey   = current;
+
+                return current.Key;
+
+            }
 
         }
 
@@ -1419,7 +1449,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                      );
 
                 masterKeys.TryAdd(rotated.Id, rotated);
-                currentMasterKey   = rotated;
+                currentMasterKey   = new CurrentMasterKey(rotated);
 
                 WriteMasterKeys();
 

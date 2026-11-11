@@ -1653,154 +1653,305 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     // one the measurement completed by the next response will use.
                     var actualRequestTransmit       = NTPPacket.GetCurrentNTPTimestamp(TimeProvider);
 
-                    var receiveResult1WithTimeout   = await ReceiveUdpResponseAsync(
-                                                                udpClient,
-                                                                timeout,
-                                                                CancellationToken
-                                                            ).ConfigureAwait(false);
+                    // The first datagram that could not be accepted, and what to report
+                    // for it. Both stay unused when a valid response arrives in time.
+                    Func<NTSQueryResult>?  rejectedResult    = null;
+                    NTPPacket?             rejectedResponse  = null;
 
-                    if (interleaved is not null &&
-                        (receiveResult1WithTimeout.TimedOut || receiveResult1WithTimeout.Result is null))
-                    {
-                        // § 2: "The protocol recovers from packet loss. When a client request or
-                        // server response is lost, the client will use the same origin timestamp
-                        // in the next request." So the association is kept — but not forever;
-                        // past the limit the held timestamps are too old for the server to still
-                        // have the matching pair, and the next request starts over.
-                        interleaved.RecordUnansweredRequest();
-                    }
-
-                    if (receiveResult1WithTimeout.TimedOut ||
-                        receiveResult1WithTimeout.Result is null)
+                    while (true)
                     {
 
-                        return NTSQueryResult.FailedWithPacket(
-                                   $"No 1st NTP response from {remoteDescription} within {Math.Round(timeout.TotalSeconds, 2)} seconds timeout!",
-                                   NTSQueryErrorCategory.NTPTimeout,
-                                   remoteEndPoint,
-                                   remoteDescription,
-                                   cookie,
-                                   AvailableCookieCount,
-                                   SendStopwatchTimestamp: sendStopwatchTimestamp,
-                                   CookiePoolDiagnostics:  CookiePoolDiagnostics
-                               );
+                        // Never longer than the one timeout the caller gave, however many
+                        // datagrams have to be passed over on the way to the answer.
+                        var remainingTime               = timeout - Stopwatch.GetElapsedTime(sendStopwatchTimestamp);
 
-                    }
+                        (UdpReceiveResult? Result, Boolean TimedOut) receiveResult1WithTimeout = remainingTime > TimeSpan.Zero
+                                                              ? await ReceiveUdpResponseAsync(
+                                                                          udpClient,
+                                                                          remainingTime,
+                                                                          CancellationToken
+                                                                      ).ConfigureAwait(false)
+                                                              : (Result: (UdpReceiveResult?) null, TimedOut: true);
 
-                    var receiveResult1              = receiveResult1WithTimeout.Result.Value;
-                    // T4: this client's clock, the same one T1 came from — an offset computed
-                    // from two different clocks would be meaningless. The Stopwatch reading
-                    // beside it measures the network, not the clock; see the TimeProvider
-                    // property for why that one stays where it is.
-                    var destinationTimestamp1       = NTPPacket.GetCurrentNTPTimestamp(TimeProvider);
-                    var receiveStopwatchTimestamp1  = Stopwatch.GetTimestamp();
+                        if (interleaved is not null &&
+                            (receiveResult1WithTimeout.TimedOut || receiveResult1WithTimeout.Result is null))
+                        {
+                            // § 2: "The protocol recovers from packet loss. When a client request or
+                            // server response is lost, the client will use the same origin timestamp
+                            // in the next request." So the association is kept — but not forever;
+                            // past the limit the held timestamps are too old for the server to still
+                            // have the matching pair, and the next request starts over.
+                            interleaved.RecordUnansweredRequest();
+                        }
 
-                    if (NTPResponse.TryParse(receiveResult1.Buffer,
-                                             out var ntpResponse1,
-                                             out var errorResponse1,
-                                             Request:                    requestPacket,
-                                             NTSKey:                     NTSKEResponse?.S2CKey,
-                                             ExpectedUniqueId:           requestPacket.UniqueIdentifier(),
-                                             DestinationTimestamp:       destinationTimestamp1,
-                                             SendStopwatchTimestamp:     sendStopwatchTimestamp,
-                                             ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp1,
-                                             // Sealed under whatever the key exchange agreed on,
-                                             // so it can only be opened under the same.
-                                             // T1 as this client recorded it. In the interleaved mode the
-                                             // origin field is a nonce and no offset can be computed from
-                                             // it — see NTPPacket.RequestTransmitTimestamp. Null for a
-                                             // plain client, where the echo is the very same reading.
-                                             AEADAlgorithm:              NTSKEResponse?.AEADAlgorithm ?? NTSAEAD.Default,
-                                             RequestTransmitTimestamp:   interleaved is not null ? actualRequestTransmit : null))
-                    {
-
-                        // RFC 9769 § 2: which of the request's two timestamps came back as the
-                        // origin says which mode the response is in, and that decides how the
-                        // rest of it must be read. Decided before validation, because two of
-                        // the validator's checks depend on the answer.
-                        var responseMode = interleaved is null
-                                               ? InterleavedResponseMode.Basic
-                                               : InterleavedAssociation.Classify(
-                                                     ntpResponse1,
-                                                     requestPacket.ReceiveTimestamp,
-                                                     requestPacket.TransmitTimestamp ?? 0
-                                                 );
-
-                        var validation1 = NTSResponseValidator.Validate(
-                                              ntpResponse1,
-                                              requestPacket,
-                                              requestPacket.UniqueIdentifier(),
-                                              NTSKEResponse?.S2CKey,
-                                              RequireNTS:   NTSKEResponse is not null,
-                                              Interleaved:  responseMode == InterleavedResponseMode.Interleaved
-                                          );
-
-                        if (!validation1.IsValid)
+                        if (receiveResult1WithTimeout.TimedOut ||
+                            receiveResult1WithTimeout.Result is null)
                         {
 
-                            // Before the result is built, so that the cookies it
-                            // reports as remaining are the ones that remain.
-                            RetireOnNTSNAK(ntpResponse1, requestPacket);
+                            // Nothing better came. Only now does a datagram that was passed
+                            // over take effect: RFC 8915 § 5.7 has the client act on an NTS NAK
+                            // when no valid response followed it, not on its arrival.
+                            if (rejectedResult is not null)
+                            {
 
-                            return NTSQueryResult.Failed(
-                                       validation1.ErrorMessage ?? "NTP/NTS response validation failed.",
-                                       validation1.ErrorCategory,
+                                // Before the result is built, so that the cookies it
+                                // reports as remaining are the ones that remain.
+                                RetireOnNTSNAK(rejectedResponse, requestPacket);
+
+                                return rejectedResult();
+
+                            }
+
+                            return NTSQueryResult.FailedWithPacket(
+                                       $"No 1st NTP response from {remoteDescription} within {Math.Round(timeout.TotalSeconds, 2)} seconds timeout!",
+                                       NTSQueryErrorCategory.NTPTimeout,
                                        remoteEndPoint,
                                        remoteDescription,
                                        cookie,
                                        AvailableCookieCount,
-                                       SendStopwatchTimestamp:     sendStopwatchTimestamp,
-                                       ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp1,
-                                       DestinationTimestamp:       destinationTimestamp1,
-                                       Response:                   ntpResponse1,
-                                       CookiePoolDiagnostics:      CookiePoolDiagnostics,
-                                       ResponseValidation:         validation1
+                                       SendStopwatchTimestamp: sendStopwatchTimestamp,
+                                       CookiePoolDiagnostics:  CookiePoolDiagnostics
                                    );
 
                         }
 
-                        NTSResponseValidationResult? replayValidation1 = null;
+                        var receiveResult1              = receiveResult1WithTimeout.Result.Value;
 
-                        #region A 2nd signed response was announced
+                        // The socket is not connected, so anyone can send to it.
+                        // Only the server that was asked can have the answer.
+                        if (remoteEndPoint is not null &&
+                            !receiveResult1.RemoteEndPoint.Equals(remoteEndPoint))
+                        {
+                            continue;
+                        }
 
-                        if (ntpResponse1.NTSSignedResponseAnnouncement()?.IsScheduled == true)
+                        // T4: this client's clock, the same one T1 came from — an offset computed
+                        // from two different clocks would be meaningless. The Stopwatch reading
+                        // beside it measures the network, not the clock; see the TimeProvider
+                        // property for why that one stays where it is.
+                        var destinationTimestamp1       = NTPPacket.GetCurrentNTPTimestamp(TimeProvider);
+                        var receiveStopwatchTimestamp1  = Stopwatch.GetTimestamp();
+
+                        if (NTPResponse.TryParse(receiveResult1.Buffer,
+                                                 out var ntpResponse1,
+                                                 out var errorResponse1,
+                                                 Request:                    requestPacket,
+                                                 NTSKey:                     NTSKEResponse?.S2CKey,
+                                                 ExpectedUniqueId:           requestPacket.UniqueIdentifier(),
+                                                 DestinationTimestamp:       destinationTimestamp1,
+                                                 SendStopwatchTimestamp:     sendStopwatchTimestamp,
+                                                 ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp1,
+                                                 // Sealed under whatever the key exchange agreed on,
+                                                 // so it can only be opened under the same.
+                                                 // T1 as this client recorded it. In the interleaved mode the
+                                                 // origin field is a nonce and no offset can be computed from
+                                                 // it — see NTPPacket.RequestTransmitTimestamp. Null for a
+                                                 // plain client, where the echo is the very same reading.
+                                                 AEADAlgorithm:              NTSKEResponse?.AEADAlgorithm ?? NTSAEAD.Default,
+                                                 RequestTransmitTimestamp:   interleaved is not null ? actualRequestTransmit : null))
                         {
 
-                            var receiveResult2WithTimeout = await ReceiveUdpResponseAsync(
-                                                                      udpClient,
-                                                                      timeout,
-                                                                      CancellationToken
-                                                                  ).ConfigureAwait(false);
+                            // RFC 9769 § 2: which of the request's two timestamps came back as the
+                            // origin says which mode the response is in, and that decides how the
+                            // rest of it must be read. Decided before validation, because two of
+                            // the validator's checks depend on the answer.
+                            var responseMode = interleaved is null
+                                                   ? InterleavedResponseMode.Basic
+                                                   : InterleavedAssociation.Classify(
+                                                         ntpResponse1,
+                                                         requestPacket.ReceiveTimestamp,
+                                                         requestPacket.TransmitTimestamp ?? 0
+                                                     );
 
-                            if (receiveResult2WithTimeout.TimedOut ||
-                                receiveResult2WithTimeout.Result is null)
+                            var validation1 = NTSResponseValidator.Validate(
+                                                  ntpResponse1,
+                                                  requestPacket,
+                                                  requestPacket.UniqueIdentifier(),
+                                                  NTSKEResponse?.S2CKey,
+                                                  RequireNTS:   NTSKEResponse is not null,
+                                                  Interleaved:  responseMode == InterleavedResponseMode.Interleaved
+                                              );
+
+                            if (!validation1.IsValid)
                             {
 
-                                return NTSQueryResult.FailedWithPacket(
-                                           $"No 2nd NTP response from {remoteDescription} within {Math.Round(timeout.TotalSeconds, 2)} seconds timeout!",
-                                           NTSQueryErrorCategory.NTPTimeout,
-                                           remoteEndPoint,
-                                           remoteDescription,
-                                           cookie,
-                                           AvailableCookieCount,
-                                           SendStopwatchTimestamp:     sendStopwatchTimestamp,
-                                           ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp1,
-                                           DestinationTimestamp:       destinationTimestamp1,
-                                           CookiePoolDiagnostics:      CookiePoolDiagnostics
-                                       );
+                                // RFC 8915 § 5.7: a response that does not validate is
+                                // discarded, and the client goes on waiting for one that
+                                // does. Returning here would let anyone who can reach this
+                                // socket end the query with a single forged datagram, and
+                                // with a forged NTS NAK throw the cookies away as well.
+                                // The first such datagram is kept, to be reported should
+                                // the valid answer never come.
+                                if (rejectedResult is null)
+                                {
+
+                                    rejectedResponse = ntpResponse1;
+
+                                    rejectedResult   = () => NTSQueryResult.Failed(
+                                                                 validation1.ErrorMessage ?? "NTP/NTS response validation failed.",
+                                                                 validation1.ErrorCategory,
+                                                                 remoteEndPoint,
+                                                                 remoteDescription,
+                                                                 cookie,
+                                                                 AvailableCookieCount,
+                                                                 SendStopwatchTimestamp:     sendStopwatchTimestamp,
+                                                                 ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp1,
+                                                                 DestinationTimestamp:       destinationTimestamp1,
+                                                                 Response:                   ntpResponse1,
+                                                                 CookiePoolDiagnostics:      CookiePoolDiagnostics,
+                                                                 ResponseValidation:         validation1
+                                                             );
+
+                                }
+
+                                continue;
 
                             }
 
-                            var receiveResult2              = receiveResult2WithTimeout.Result.Value;
-                            var destinationTimestamp2       = NTPPacket.GetCurrentNTPTimestamp(TimeProvider);
-                            var receiveStopwatchTimestamp2  = Stopwatch.GetTimestamp();
+                            NTSResponseValidationResult? replayValidation1 = null;
 
-                            if (!receiveResult1.Buffer.IsPrefixOf(receiveResult2.Buffer))
+                            #region A 2nd signed response was announced
+
+                            if (ntpResponse1.NTSSignedResponseAnnouncement()?.IsScheduled == true)
                             {
 
-                                return NTSQueryResult.FailedWithPacket(
-                                           "1st NTP response is not a prefix of the 2nd NTP response!",
-                                           NTSQueryErrorCategory.Protocol,
+                                var receiveResult2WithTimeout = await ReceiveUdpResponseAsync(
+                                                                          udpClient,
+                                                                          timeout,
+                                                                          CancellationToken
+                                                                      ).ConfigureAwait(false);
+
+                                if (receiveResult2WithTimeout.TimedOut ||
+                                    receiveResult2WithTimeout.Result is null)
+                                {
+
+                                    return NTSQueryResult.FailedWithPacket(
+                                               $"No 2nd NTP response from {remoteDescription} within {Math.Round(timeout.TotalSeconds, 2)} seconds timeout!",
+                                               NTSQueryErrorCategory.NTPTimeout,
+                                               remoteEndPoint,
+                                               remoteDescription,
+                                               cookie,
+                                               AvailableCookieCount,
+                                               SendStopwatchTimestamp:     sendStopwatchTimestamp,
+                                               ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp1,
+                                               DestinationTimestamp:       destinationTimestamp1,
+                                               CookiePoolDiagnostics:      CookiePoolDiagnostics
+                                           );
+
+                                }
+
+                                var receiveResult2              = receiveResult2WithTimeout.Result.Value;
+                                var destinationTimestamp2       = NTPPacket.GetCurrentNTPTimestamp(TimeProvider);
+                                var receiveStopwatchTimestamp2  = Stopwatch.GetTimestamp();
+
+                                if (!receiveResult1.Buffer.IsPrefixOf(receiveResult2.Buffer))
+                                {
+
+                                    return NTSQueryResult.FailedWithPacket(
+                                               "1st NTP response is not a prefix of the 2nd NTP response!",
+                                               NTSQueryErrorCategory.Protocol,
+                                               remoteEndPoint,
+                                               remoteDescription,
+                                               cookie,
+                                               AvailableCookieCount,
+                                               SendStopwatchTimestamp:     sendStopwatchTimestamp,
+                                               ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp2,
+                                               DestinationTimestamp:       destinationTimestamp2,
+                                               CookiePoolDiagnostics:      CookiePoolDiagnostics
+                                           );
+                                }
+
+                                if (NTPResponse.TryParse(receiveResult2.Buffer,
+                                                         out var ntpResponse2,
+                                                         out var errorResponse2,
+                                                         Request:                    requestPacket,
+                                                         NTSKey:                     NTSKEResponse?.S2CKey,
+                                                         ExpectedUniqueId:           requestPacket.UniqueIdentifier(),
+                                                         DestinationTimestamp:       destinationTimestamp2,
+                                                         SendStopwatchTimestamp:     sendStopwatchTimestamp,
+                                                         ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp2,
+                                                         AEADAlgorithm:              NTSKEResponse?.AEADAlgorithm ?? NTSAEAD.Default,
+                                                         RequestTransmitTimestamp:   interleaved is not null ? actualRequestTransmit : null))
+                                {
+
+                                    var validation2 = NTSResponseValidator.Validate(
+                                                          ntpResponse2,
+                                                          requestPacket,
+                                                          requestPacket.UniqueIdentifier(),
+                                                          NTSKEResponse?.S2CKey,
+                                                          RequireNTS: NTSKEResponse is not null
+                                                      );
+
+                                    if (!validation2.IsValid)
+                                    {
+
+                                        RetireOnNTSNAK(ntpResponse2, requestPacket);
+
+                                        return NTSQueryResult.Failed(
+                                                   validation2.ErrorMessage ?? "NTP/NTS 2nd response validation failed.",
+                                                   validation2.ErrorCategory,
+                                                   remoteEndPoint,
+                                                   remoteDescription,
+                                                   cookie,
+                                                   AvailableCookieCount,
+                                                   SendStopwatchTimestamp:     sendStopwatchTimestamp,
+                                                   ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp2,
+                                                   DestinationTimestamp:       destinationTimestamp2,
+                                                   Response:                   ntpResponse2,
+                                                   CookiePoolDiagnostics:      CookiePoolDiagnostics,
+                                                   ResponseValidation:         validation2
+                                               );
+
+                                    }
+
+                                    if (!TryRememberAcceptedResponse(ntpResponse2, remoteDescription))
+                                    {
+
+                                        var replayValidation2 = NTSResponseValidator.Validate(
+                                                                    ntpResponse2,
+                                                                    requestPacket,
+                                                                    requestPacket.UniqueIdentifier(),
+                                                                    NTSKEResponse?.S2CKey,
+                                                                    RequireNTS:  NTSKEResponse is not null,
+                                                                    IsReplay:    true
+                                                                );
+
+                                        return NTSQueryResult.Failed(
+                                                   replayValidation2.ErrorMessage ?? "NTP/NTS 2nd response duplicate/replay detected.",
+                                                   replayValidation2.ErrorCategory,
+                                                   remoteEndPoint,
+                                                   remoteDescription,
+                                                   cookie,
+                                                   AvailableCookieCount,
+                                                   SendStopwatchTimestamp:     sendStopwatchTimestamp,
+                                                   ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp2,
+                                                   DestinationTimestamp:       destinationTimestamp2,
+                                                   Response:                   ntpResponse2,
+                                                   CookiePoolDiagnostics:      CookiePoolDiagnostics,
+                                                   ResponseValidation:         replayValidation2
+                                               );
+
+                                    }
+
+                                    AddCookies(ntpResponse2);
+
+                                    return NTSQueryResult.SuccessResult(
+                                               ntpResponse2,
+                                               remoteEndPoint,
+                                               remoteDescription,
+                                               cookie,
+                                               AvailableCookieCount,
+                                               1,
+                                               ntpResponse2.Extensions.Any(extension => extension is NTSCookieExtension { Encrypted: true }),
+                                               CookiePoolDiagnostics,
+                                               validation2
+                                           );
+                                }
+
+                                RetireOnNTSNAK(ntpResponse2, requestPacket);
+
+                                return NTSQueryResult.FailedWithClassifiedPacket(
+                                           "NTP 2nd response error: " + errorResponse2,
                                            remoteEndPoint,
                                            remoteDescription,
                                            cookie,
@@ -1810,189 +1961,97 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                            DestinationTimestamp:       destinationTimestamp2,
                                            CookiePoolDiagnostics:      CookiePoolDiagnostics
                                        );
+
                             }
 
-                            if (NTPResponse.TryParse(receiveResult2.Buffer,
-                                                     out var ntpResponse2,
-                                                     out var errorResponse2,
-                                                     Request:                    requestPacket,
-                                                     NTSKey:                     NTSKEResponse?.S2CKey,
-                                                     ExpectedUniqueId:           requestPacket.UniqueIdentifier(),
-                                                     DestinationTimestamp:       destinationTimestamp2,
-                                                     SendStopwatchTimestamp:     sendStopwatchTimestamp,
-                                                     ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp2,
-                                                     AEADAlgorithm:              NTSKEResponse?.AEADAlgorithm ?? NTSAEAD.Default,
-                                                     RequestTransmitTimestamp:   interleaved is not null ? actualRequestTransmit : null))
+                            #endregion
+
+                            if (!TryRememberAcceptedResponse(ntpResponse1, remoteDescription))
                             {
 
-                                var validation2 = NTSResponseValidator.Validate(
-                                                      ntpResponse2,
-                                                      requestPacket,
-                                                      requestPacket.UniqueIdentifier(),
-                                                      NTSKEResponse?.S2CKey,
-                                                      RequireNTS: NTSKEResponse is not null
-                                                  );
+                                replayValidation1 = NTSResponseValidator.Validate(
+                                                        ntpResponse1,
+                                                        requestPacket,
+                                                        requestPacket.UniqueIdentifier(),
+                                                        NTSKEResponse?.S2CKey,
+                                                        RequireNTS:  NTSKEResponse is not null,
+                                                        IsReplay:    true
+                                                    );
 
-                                if (!validation2.IsValid)
-                                {
-
-                                    RetireOnNTSNAK(ntpResponse2, requestPacket);
-
-                                    return NTSQueryResult.Failed(
-                                               validation2.ErrorMessage ?? "NTP/NTS 2nd response validation failed.",
-                                               validation2.ErrorCategory,
-                                               remoteEndPoint,
-                                               remoteDescription,
-                                               cookie,
-                                               AvailableCookieCount,
-                                               SendStopwatchTimestamp:     sendStopwatchTimestamp,
-                                               ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp2,
-                                               DestinationTimestamp:       destinationTimestamp2,
-                                               Response:                   ntpResponse2,
-                                               CookiePoolDiagnostics:      CookiePoolDiagnostics,
-                                               ResponseValidation:         validation2
-                                           );
-
-                                }
-
-                                if (!TryRememberAcceptedResponse(ntpResponse2, remoteDescription))
-                                {
-
-                                    var replayValidation2 = NTSResponseValidator.Validate(
-                                                                ntpResponse2,
-                                                                requestPacket,
-                                                                requestPacket.UniqueIdentifier(),
-                                                                NTSKEResponse?.S2CKey,
-                                                                RequireNTS:  NTSKEResponse is not null,
-                                                                IsReplay:    true
-                                                            );
-
-                                    return NTSQueryResult.Failed(
-                                               replayValidation2.ErrorMessage ?? "NTP/NTS 2nd response duplicate/replay detected.",
-                                               replayValidation2.ErrorCategory,
-                                               remoteEndPoint,
-                                               remoteDescription,
-                                               cookie,
-                                               AvailableCookieCount,
-                                               SendStopwatchTimestamp:     sendStopwatchTimestamp,
-                                               ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp2,
-                                               DestinationTimestamp:       destinationTimestamp2,
-                                               Response:                   ntpResponse2,
-                                               CookiePoolDiagnostics:      CookiePoolDiagnostics,
-                                               ResponseValidation:         replayValidation2
-                                           );
-
-                                }
-
-                                AddCookies(ntpResponse2);
-
-                                return NTSQueryResult.SuccessResult(
-                                           ntpResponse2,
+                                return NTSQueryResult.Failed(
+                                           replayValidation1.ErrorMessage ?? "NTP/NTS response duplicate/replay detected.",
+                                           replayValidation1.ErrorCategory,
                                            remoteEndPoint,
                                            remoteDescription,
                                            cookie,
                                            AvailableCookieCount,
-                                           1,
-                                           ntpResponse2.Extensions.Any(extension => extension is NTSCookieExtension { Encrypted: true }),
-                                           CookiePoolDiagnostics,
-                                           validation2
+                                           SendStopwatchTimestamp:     sendStopwatchTimestamp,
+                                           ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp1,
+                                           DestinationTimestamp:       destinationTimestamp1,
+                                           Response:                   ntpResponse1,
+                                           CookiePoolDiagnostics:      CookiePoolDiagnostics,
+                                           ResponseValidation:         replayValidation1
                                        );
+
                             }
 
-                            RetireOnNTSNAK(ntpResponse2, requestPacket);
+                            AddCookies(ntpResponse1);
 
-                            return NTSQueryResult.FailedWithClassifiedPacket(
-                                       "NTP 2nd response error: " + errorResponse2,
+                            // RFC 9769 § 2. The measurement has to be taken before the association
+                            // is advanced, because it is made from the timestamps the previous
+                            // exchange left behind and this response's transmit timestamp — and
+                            // recording this response overwrites exactly those.
+                            var measurement = responseMode == InterleavedResponseMode.Interleaved
+                                                  ? interleaved?.MeasurementFor(ntpResponse1)
+                                                  : null;
+
+                            interleaved?.RecordValidResponse(
+                                ntpResponse1,
+                                actualRequestTransmit,
+                                destinationTimestamp1
+                            );
+
+                            return NTSQueryResult.SuccessResult(
+                                       ntpResponse1,
                                        remoteEndPoint,
                                        remoteDescription,
                                        cookie,
                                        AvailableCookieCount,
-                                       SendStopwatchTimestamp:     sendStopwatchTimestamp,
-                                       ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp2,
-                                       DestinationTimestamp:       destinationTimestamp2,
-                                       CookiePoolDiagnostics:      CookiePoolDiagnostics
+                                       1,
+                                       ntpResponse1.Extensions.Any(extension => extension is NTSCookieExtension { Encrypted: true }),
+                                       CookiePoolDiagnostics,
+                                       validation1,
+                                       measurement
                                    );
 
                         }
-
-                        #endregion
-
-                        if (!TryRememberAcceptedResponse(ntpResponse1, remoteDescription))
+                        else
                         {
 
-                            replayValidation1 = NTSResponseValidator.Validate(
-                                                    ntpResponse1,
-                                                    requestPacket,
-                                                    requestPacket.UniqueIdentifier(),
-                                                    NTSKEResponse?.S2CKey,
-                                                    RequireNTS:  NTSKEResponse is not null,
-                                                    IsReplay:    true
-                                                );
+                            // As above: passed over, and reported only if nothing valid follows.
+                            if (rejectedResult is null)
+                            {
 
-                            return NTSQueryResult.Failed(
-                                       replayValidation1.ErrorMessage ?? "NTP/NTS response duplicate/replay detected.",
-                                       replayValidation1.ErrorCategory,
-                                       remoteEndPoint,
-                                       remoteDescription,
-                                       cookie,
-                                       AvailableCookieCount,
-                                       SendStopwatchTimestamp:     sendStopwatchTimestamp,
-                                       ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp1,
-                                       DestinationTimestamp:       destinationTimestamp1,
-                                       Response:                   ntpResponse1,
-                                       CookiePoolDiagnostics:      CookiePoolDiagnostics,
-                                       ResponseValidation:         replayValidation1
-                                   );
+                                rejectedResponse = ntpResponse1;
 
+                                rejectedResult   = () => NTSQueryResult.FailedWithClassifiedPacket(
+                                                             "NTP 1st response error: " + errorResponse1,
+                                                             remoteEndPoint,
+                                                             remoteDescription,
+                                                             cookie,
+                                                             AvailableCookieCount,
+                                                             SendStopwatchTimestamp:     sendStopwatchTimestamp,
+                                                             ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp1,
+                                                             DestinationTimestamp:       destinationTimestamp1,
+                                                             CookiePoolDiagnostics:      CookiePoolDiagnostics,
+                                                             Response:                   ntpResponse1
+                                                          );
+
+                            }
+
+                            continue;
                         }
 
-                        AddCookies(ntpResponse1);
-
-                        // RFC 9769 § 2. The measurement has to be taken before the association
-                        // is advanced, because it is made from the timestamps the previous
-                        // exchange left behind and this response's transmit timestamp — and
-                        // recording this response overwrites exactly those.
-                        var measurement = responseMode == InterleavedResponseMode.Interleaved
-                                              ? interleaved?.MeasurementFor(ntpResponse1)
-                                              : null;
-
-                        interleaved?.RecordValidResponse(
-                            ntpResponse1,
-                            actualRequestTransmit,
-                            destinationTimestamp1
-                        );
-
-                        return NTSQueryResult.SuccessResult(
-                                   ntpResponse1,
-                                   remoteEndPoint,
-                                   remoteDescription,
-                                   cookie,
-                                   AvailableCookieCount,
-                                   1,
-                                   ntpResponse1.Extensions.Any(extension => extension is NTSCookieExtension { Encrypted: true }),
-                                   CookiePoolDiagnostics,
-                                   validation1,
-                                   measurement
-                               );
-
-                    }
-                    else
-                    {
-
-                        RetireOnNTSNAK(ntpResponse1, requestPacket);
-
-                        return NTSQueryResult.FailedWithClassifiedPacket(
-                                   "NTP 1st response error: " + errorResponse1,
-                                   remoteEndPoint,
-                                   remoteDescription,
-                                   cookie,
-                                   AvailableCookieCount,
-                                   SendStopwatchTimestamp:     sendStopwatchTimestamp,
-                                   ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp1,
-                                   DestinationTimestamp:       destinationTimestamp1,
-                                   CookiePoolDiagnostics:      CookiePoolDiagnostics,
-                                   Response:                   ntpResponse1
-                                );
                     }
 
                 }
