@@ -278,12 +278,29 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
                     case ExtensionTypes.AuthenticatorAndEncrypted:
 
+                        // RFC 8915 §5.7 wants an NTS NAK for a request whose cookie cannot be
+                        // unsealed or whose authenticator does not verify, and a NAK needs the
+                        // parsed request: its timestamps and its unique identifier. So where the
+                        // request does carry a cookie, an authenticator that cannot be checked
+                        // is kept as an opaque field instead of failing the parse. It is never
+                        // the typed AuthenticatorAndEncryptedExtension, and nothing before it is
+                        // marked as authenticated, which is how the server tells the two apart.
+                        var carriesCookie = extensions.Any(extension => extension.Type == ExtensionTypes.NTSCookie);
+
                         if (NTSKey is null)
                         {
+
+                            if (carriesCookie)
+                            {
+                                extensions.Add(new NTPExtension(type, data));
+                                break;
+                            }
+
                             ErrorResponse = ntsCookieError is not null
                                                 ? $"Missing NTS key for the AuthenticatorAndEncrypted extension: {ntsCookieError}"
                                                 :  "Missing NTS key for the AuthenticatorAndEncrypted extension!";
                             return false;
+
                         }
 
                         if (!AuthenticatorAndEncryptedExtension.TryParse(data,
@@ -294,7 +311,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                                                                          out ErrorResponse,
                                                                          ntsAEADAlgorithm))
                         {
+
+                            if (carriesCookie)
+                            {
+                                ErrorResponse = null;
+                                extensions.Add(new NTPExtension(type, data));
+                                break;
+                            }
+
                             return false;
+
                         }
 
                         extensions.Add(authenticatorAndEncryptedExtension);

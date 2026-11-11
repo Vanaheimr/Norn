@@ -782,6 +782,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             var aeadRecords = records.Where(record => record.Type == NTSKE_RecordTypes.AEADAlgorithmNegotiation).ToArray();
 
+            // "If the NTS Next Protocol Negotiation record offers Protocol ID 0 (for NTPv4),
+            // then this record MUST be included exactly once."
+            if (aeadRecords.Length == 0 && offeredProtocols.Contains(NextProtocolNTPv4))
+                return NTSKENegotiation.Refuse(
+                           NTSKEErrorCodes.BadRequest,
+                           "the request offers NTPv4 but carries no AEAD Algorithm Negotiation record"
+                       );
+
             if (aeadRecords.Length > 1)
                 return NTSKENegotiation.Refuse(
                            NTSKEErrorCodes.BadRequest,
@@ -1604,12 +1612,27 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                         var buffer          = new Byte[BufferSize];
                         var remoteEP        = AnyRemoteEndPoint();
 
-                        var udpPacket       = await udpSocket.ReceiveFromAsync(
+                        SocketReceiveFromResult udpPacket;
+
+                        try
+                        {
+                            udpPacket       = await udpSocket.ReceiveFromAsync(
                                                         new ArraySegment<Byte>(buffer),
                                                         SocketFlags.None,
                                                         remoteEP,
                                                         cts.Token
                                                     );
+                        }
+                        catch (SocketException e) when (!cts.Token.IsCancellationRequested)
+                        {
+                            // A datagram socket reports the fate of an earlier answer here: an
+                            // ICMP "port unreachable" for a client that has already closed its
+                            // socket arrives as ConnectionReset on Windows. That is news about
+                            // one client and must not end the service for all the others.
+                            System.Threading.Interlocked.Increment(ref ntpRequestFailures);
+                            DebugX.Log($"Receiving an NTP request failed: {e.SocketErrorCode}");
+                            continue;
+                        }
 
                         // Read here and nowhere later. Everything after this point — parsing,
                         // unsealing the cookie, verifying the authenticator, queueing onto a
@@ -1636,6 +1659,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                         }
 
 
+                        // Only a client request (mode 3) is answered (RFC 5905 § 9.2). Answering
+                        // anything else lets a single forged datagram bounce between two servers
+                        // forever: a server's answer (mode 4) arriving here would be answered,
+                        // and that answer answered in turn.
+                        if (udpPacketLocal.ReceivedBytes < 48 ||
+                            (buffer[0] & 0x07) != 3)
+                        {
+                            System.Threading.Interlocked.Increment(ref ntpRequestsInvalid);
+                            continue;
+                        }
+
                         // RFC 8633 § 5.4, and deliberately the first thing done with an allowed
                         // datagram: the point of a rate limit is to not spend work on the traffic
                         // it refuses, and the expensive work here — unsealing a cookie, verifying
@@ -1657,14 +1691,25 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                      out var kissOfDeath))
                                 {
 
-                                    await udpSocket.SendToAsync(
-                                              new ArraySegment<Byte>(kissOfDeath),
-                                              SocketFlags.None,
-                                              udpPacketLocal.RemoteEndPoint,
-                                              cts.Token
-                                          );
+                                    try
+                                    {
 
-                                    System.Threading.Interlocked.Increment(ref ntpKissesOfDeathSent);
+                                        await udpSocket.SendToAsync(
+                                                  new ArraySegment<Byte>(kissOfDeath),
+                                                  SocketFlags.None,
+                                                  udpPacketLocal.RemoteEndPoint,
+                                                  cts.Token
+                                              );
+
+                                        System.Threading.Interlocked.Increment(ref ntpKissesOfDeathSent);
+
+                                    }
+                                    catch (SocketException e) when (!cts.Token.IsCancellationRequested)
+                                    {
+                                        // An address that cannot be reached is that client's
+                                        // problem, and must not end the receive loop.
+                                        DebugX.Log($"Sending a kiss-o'-death to {udpPacketLocal.RemoteEndPoint} failed: {e.SocketErrorCode}");
+                                    }
 
                                 }
 
@@ -1695,7 +1740,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                         MasterKeys: masterKeys))
                                 {
 
-                                    var toBeSigned       = requestPacket.NTSRequestSignedResponse() is not null;
+                                    // Only a request the authenticator covers may ask for a
+                                    // second, signed datagram: honouring the extension outside
+                                    // of it would let anyone double the traffic sent to an
+                                    // address of their choosing.
+                                    var toBeSigned       = requestPacket.NTSRequestSignedResponse()?.Authenticated == true;
 
                                     // RFC 9769 § 2 decides here which of this server's earlier
                                     // timestamps the answer carries, before anything is built:
@@ -1709,11 +1758,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                                      receivedAt,
                                                                      requestPacket,
                                                                      TimeProvider,
-                                                                     // TryParse fails closed on an authenticator that
-                                                                     // does not verify, so a parsed request carrying one
-                                                                     // has been authenticated.
+                                                                     // TryParse yields the typed extension only for an
+                                                                     // authenticator that verified; one that did not is
+                                                                     // kept as an opaque field, and does not count.
                                                                      Authenticated: requestPacket.Extensions.Any(
-                                                                                        extension => extension.Type == ExtensionTypes.AuthenticatorAndEncrypted)
+                                                                                        extension => extension is AuthenticatorAndEncryptedExtension)
                                                                  )
 
                                                                : InterleavedExchange.Basic(
@@ -1826,7 +1875,19 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     while (!cts.Token.IsCancellationRequested)
                     {
 
-                        var clientSocket = await tcpSocket.AcceptAsync(cts.Token);
+                        Socket clientSocket;
+
+                        try
+                        {
+                            clientSocket = await tcpSocket.AcceptAsync(cts.Token);
+                        }
+                        catch (SocketException e) when (!cts.Token.IsCancellationRequested)
+                        {
+                            // A connection that was reset while it waited in the backlog is
+                            // reported here, and is no reason to stop accepting the next one.
+                            DebugX.Log($"Accepting an NTS-KE connection failed: {e.SocketErrorCode}");
+                            continue;
+                        }
 
                         if (clientSocket == null)
                             continue;
@@ -2115,6 +2176,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             => new (
 
                    LI:                   LeapIndicator,
+                   // RFC 5905 § 9.2: the answer carries the version of the request, so an
+                   // NTPv3 client is not handed a version it did not ask for.
+                   VN:                   RequestPacket.VN is >= 1 and <= 4
+                                             ? RequestPacket.VN
+                                             : (Byte) 4,
                    Mode:                 4, // Server
                    Stratum:              Stratum,
                    Poll:                 RequestPacket.Poll,
@@ -2426,6 +2492,22 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             if (!NTSCookie.TryParse(n1.Value, masterKeys, out var ntsCookie, out var errorResponse))
                 return BuildNTSNAK(RequestPacket, Exchange, "Invalid NTS cookie: " + errorResponse);
 
+            // RFC 8915 §5.7: a request carries exactly one cookie in the clear. With two, the
+            // one the authenticator was checked under and the one answered here could differ.
+            if (RequestPacket.Extensions.Count(extension => extension.Type == ExtensionTypes.NTSCookie &&
+                                                            !extension.Encrypted) != 1)
+            {
+                return BuildNTSNAK(RequestPacket, Exchange, "The request must carry exactly one NTS cookie!");
+            }
+
+            // RFC 8915 §5.7: the cookie alone proves nothing, as it crosses the network in the
+            // clear and anyone who saw it can send it again. Only the authenticator shows that
+            // the sender holds the C2S key. NTPRequest.TryParse yields the typed extension
+            // only when it verified under this cookie's key; a missing one, or one that did
+            // not verify, is answered with an NTS NAK and nothing else.
+            if (!RequestPacket.Extensions.Any(extension => extension is AuthenticatorAndEncryptedExtension))
+                return BuildNTSNAK(RequestPacket, Exchange, "The request is not authenticated!");
+
 
             // RFC 8915 §5.7: "The number of NTS Cookie extension fields included SHOULD be
             // equal to, and MUST NOT exceed, one plus the number of valid NTS Cookie
@@ -2440,6 +2522,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             // type. The type field is the same either way.
             var validPlaceholders = RequestPacket.Extensions.
                                         Count(extension => extension.Type == ExtensionTypes.NTSCookiePlaceholder &&
+                                                           extension.Authenticated                               &&
                                                            extension.Value.Length == n1.Value.Length);
 
             var numberOfCookies   = (UInt16) Math.Min(1 + validPlaceholders, MaxCookiesPerResponse);
