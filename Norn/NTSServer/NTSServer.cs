@@ -1091,11 +1091,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 // Data, exit-status, EOF, and then the SSH server closes the channel: the order of
                 // OpenSSH's sshd. Without an exit-status `ssh -s` reports the exchange as failed
                 // (exit code 255), although every record arrived. 0 means cookies, 1 an Error record.
+                //
+                // With the data the exchange is done. A client has what it asked for once it has
+                // read the End of Message record, and Norn's own client closes its channel then,
+                // which may be before the exit-status and the EOF are out: its CLOSE cancels the
+                // token they are sent with. So neither may fail the exchange. The EOF did, and a
+                // key exchange that had been served was counted and reported as a failed one,
+                // "A task was canceled."
                 await SendExitStatusAsync(Context.Channel,
                                           ntsKERecords.Any(record => record.Type == NTSKE_RecordTypes.Error) ? 1U : 0U,
                                           requestCTS.Token).ConfigureAwait(false);
 
-                await Context.Channel.SendEofAsync(requestCTS.Token).ConfigureAwait(false);
+                await SendEofAsync(Context.Channel, requestCTS.Token).ConfigureAwait(false);
 
                 System.Threading.Interlocked.Increment(ref ntskeResponsesSent);
 
@@ -1140,6 +1147,26 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             catch
             { }
 
+        }
+
+        #endregion
+
+        #region (private static) SendEofAsync(Channel, CancellationToken)
+
+        /// <summary>
+        /// Tell the client that nothing more will come (RFC 4254, section 5.3), once the answer is
+        /// out. Like the exit-status: a channel the client has closed already, having read the
+        /// answer, has nobody left to tell, so a failure here is not one of the exchange.
+        /// </summary>
+        private static async ValueTask SendEofAsync(SshMuxChannel      Channel,
+                                                    CancellationToken  CancellationToken)
+        {
+            try
+            {
+                await Channel.SendEofAsync(CancellationToken).ConfigureAwait(false);
+            }
+            catch
+            { }
         }
 
         #endregion

@@ -601,6 +601,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                     Assert.That(exchanges[0].AEADAlgorithm,     Is.EqualTo(served.Response!.AEADAlgorithm));
                     Assert.That(exchanges[0].Cookies,           Is.EqualTo(NTSServer.MaxCookiesPerResponse));
                     Assert.That(exchanges[0].ErrorCode,         Is.Null);
+                    Assert.That(exchanges[0].Problem,           Is.Null);
 
                     Assert.That(exchanges[1].Succeeded,         Is.False);
                     Assert.That(exchanges[1].Method,            Is.Null);
