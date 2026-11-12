@@ -381,14 +381,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                 var offset  = 4 + length;
 
-                // The key alone: what was sent before the record said what kind of key
-                // it is. Read as the defaults, which is what such a key was.
-                if (offset == ByteArray.Length)
-                {
-                    PublicKey = new PublicKey(id, value);
-                    return true;
-                }
-
                 if (!TryReadName(ByteArray, ref offset, out var ellipticCurve) ||
                     !TryReadName(ByteArray, ref offset, out var signatureAlgorithm))
                 {

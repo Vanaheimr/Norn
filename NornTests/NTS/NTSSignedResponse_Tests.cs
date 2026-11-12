@@ -286,15 +286,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
             Assert.That(unlimited.IsValidAt(DateTimeOffset.MinValue),              Is.True);
             Assert.That(unlimited.IsValidAt(DateTimeOffset.MaxValue),              Is.True);
 
-            // The key alone, as it was sent before: read as the defaults.
+            // The key alone, as it was sent before, is not a key record any more:
+            // a key that does not say what it is is not taken for what it might be.
             var bare       = new Byte[4 + generated.PublicKey.Length];
             bare[1]        = 7;
             bare[3]        = (Byte) generated.PublicKey.Length;
             generated.PublicKey.CopyTo(bare, 4);
 
-            Assert.That(PublicKey.TryParse(bare, out var old, out _),              Is.True);
-            Assert.That(old!.Value,                                                Is.EqualTo(generated.PublicKey));
-            Assert.That(old!.EllipticCurve,                                        Is.EqualTo("secp256r1"));
+            Assert.That(PublicKey.TryParse(bare, out _, out _),                    Is.False);
 
             // What is not a key record is refused, and not thrown about.
             var whole      = publicKey.ToByteArray();
