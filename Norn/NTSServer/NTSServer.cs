@@ -2091,7 +2091,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                                         NTSKERequestTimeout,
                                                                         MaxNTSKERequestSize,
                                                                         requestCTS.Token,
-                                                                        clientSocket
+                                                                        clientSocket,
+                                                                        BlockingReadsOnOwnThread: true
                                                                     ).ConfigureAwait(false);
 
                                 // Whatever happens from here, the client is told why. RFC 8915

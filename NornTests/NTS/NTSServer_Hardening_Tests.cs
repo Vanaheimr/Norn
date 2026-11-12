@@ -51,7 +51,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         public void RateLimiter_TheHostsOfOneIPv6PrefixShareABudget()
         {
 
-            var rateLimiter = new NTPRateLimiter(Burst: 4, MinimumInterval: TimeSpan.FromHours(1));
+            var rateLimiter = new NTPRateLimiter(Burst: 4, MinimumInterval: TimeSpan.FromHours(1), Leak: 0);
 
             var answered    = Enumerable.Range(1, 100).
                                   Count(host => rateLimiter.Check(System.Net.IPAddress.Parse($"2001:db8:1:2::{host:x}")) == RateLimitDecision.Answer);
@@ -72,7 +72,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         public void RateLimiter_ThePrefixLengthCanBeChosen()
         {
 
-            var rateLimiter = new NTPRateLimiter(Burst: 1, MinimumInterval: TimeSpan.FromHours(1), IPv6PrefixLength: 128);
+            var rateLimiter = new NTPRateLimiter(Burst: 1, MinimumInterval: TimeSpan.FromHours(1), IPv6PrefixLength: 128, Leak: 0);
 
             Assert.That(rateLimiter.Check(System.Net.IPAddress.Parse("2001:db8::1")),                       Is.EqualTo(RateLimitDecision.Answer));
             Assert.That(rateLimiter.Check(System.Net.IPAddress.Parse("2001:db8::2")),                       Is.EqualTo(RateLimitDecision.Answer));
@@ -95,7 +95,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         public void RateLimiter_AnIPv4ClientOnADualStackSocketIsItself()
         {
 
-            var rateLimiter = new NTPRateLimiter(Burst: 1, MinimumInterval: TimeSpan.FromHours(1));
+            var rateLimiter = new NTPRateLimiter(Burst: 1, MinimumInterval: TimeSpan.FromHours(1), Leak: 0);
 
             Assert.That(rateLimiter.Check(System.Net.IPAddress.Parse("::ffff:192.0.2.1")),                  Is.EqualTo(RateLimitDecision.Answer));
             Assert.That(rateLimiter.Check(System.Net.IPAddress.Parse("::ffff:192.0.2.2")),                  Is.EqualTo(RateLimitDecision.Answer));
@@ -125,6 +125,73 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
             Assert.That(rateLimiter.TrackedClients,                                                         Is.LessThanOrEqualTo(4096));
             Assert.That(rateLimiter.TrackedClients,                                                         Is.GreaterThan(2048));
+
+        }
+
+        #endregion
+
+
+        #region RateLimiter_SomeRequestsOverTheLimitAreAnsweredAllTheSame()
+
+        /// <summary>
+        /// Whoever sends under a client's address spends its budget. The client's own
+        /// requests must still have a chance: of those over the limit, one in four.
+        /// </summary>
+        [Test]
+        public void RateLimiter_SomeRequestsOverTheLimitAreAnsweredAllTheSame()
+        {
+
+            var rateLimiter = new NTPRateLimiter(Burst: 1, MinimumInterval: TimeSpan.FromHours(1), MaxKissesPerSecond: 0);
+            var victim      = System.Net.IPAddress.Parse("192.0.2.9");
+
+            Assert.That(rateLimiter.Leak,                                                                   Is.EqualTo(2));
+            Assert.That(rateLimiter.Check(victim),                                                          Is.EqualTo(RateLimitDecision.Answer));
+
+            var answered    = Enumerable.Range(0, 8000).
+                                  Count(_ => rateLimiter.Check(victim) == RateLimitDecision.Answer);
+
+            // 2000 expected, with a standard deviation of about 39.
+            Assert.That(answered,                                                                           Is.InRange(1700, 2300));
+
+            // And none at all where the operator would rather have it so.
+            var strict      = new NTPRateLimiter(Burst: 1, MinimumInterval: TimeSpan.FromHours(1), Leak: 0);
+
+            Assert.That(strict.Check(victim),                                                               Is.EqualTo(RateLimitDecision.Answer));
+            Assert.That(Enumerable.Range(0, 2000).Count(_ => strict.Check(victim) == RateLimitDecision.Answer),
+                        Is.EqualTo(0));
+
+        }
+
+        #endregion
+
+        #region RateLimiter_AnAddressThatComesBackFindsNoFullBurst()
+
+        /// <summary>
+        /// With more addresses than the table holds, every one of them is new again
+        /// each time round. It gets the one answer any address gets, not a burst.
+        /// </summary>
+        [Test]
+        public void RateLimiter_AnAddressThatComesBackFindsNoFullBurst()
+        {
+
+            var rateLimiter = new NTPRateLimiter(Burst: 8, MinimumInterval: TimeSpan.FromHours(1), MaxClients: 4, Leak: 0);
+
+            Int32 AnsweredOf8(Int32 Client)
+                => Enumerable.Range(0, 8).
+                       Count(_ => rateLimiter.Check(new System.Net.IPAddress([ 198, 51, 100, (Byte) Client ])) == RateLimitDecision.Answer);
+
+            // While there is room, a newcomer has its whole burst.
+            for (var client = 1; client <= 4; client++)
+                Assert.That(AnsweredOf8(client),                                                            Is.EqualTo(8));
+
+            // From here on every newcomer pushes somebody out.
+            for (var client = 5; client <= 12; client++)
+                Assert.That(AnsweredOf8(client),                                                            Is.EqualTo(1));
+
+            // The first ones were pushed out long ago, and are newcomers again.
+            Assert.That(AnsweredOf8(1),                                                                     Is.EqualTo(1));
+
+            Assert.That(rateLimiter.TrackedClients,                                                         Is.EqualTo(4));
 
         }
 
@@ -401,6 +468,81 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         #endregion
 
 
+        #region NTSKE_AClientStallingMidRequestIsAnsweredAndLetGo()
+
+        /// <summary>
+        /// A client that completes the handshake, sends half a request and stops. The
+        /// server gives it its request timeout, tells it so, and the next client is
+        /// served as if nothing had been.
+        /// </summary>
+        [Test]
+        [Category("LocalIntegration")]
+        public async Task NTSKE_AClientStallingMidRequestIsAnsweredAndLetGo()
+        {
+
+            await using var server = await RunningServer.Start(NTSKERequestTimeout: TimeSpan.FromSeconds(1));
+
+            var stalled = new List<SslStream>();
+
+            try
+            {
+
+                for (var i = 0; i < 4; i++)
+                {
+
+                    var tls = await server.Connect(SslProtocols.Tls13);
+
+                    // The record header of a Next Protocol Negotiation, and not its body.
+                    await tls.WriteAsync(new Byte[] { 0x80, 0x01, 0x00, 0x02 });
+                    await tls.FlushAsync();
+
+                    stalled.Add(tls);
+
+                }
+
+                // Somebody else, meanwhile, with a whole request.
+                using (var tls = await server.Connect(SslProtocols.Tls13))
+                {
+
+                    await tls.WriteAsync(new Byte[] { 0x80, 0x01, 0x00, 0x02, 0x00, 0x00,     // Next Protocol: NTPv4
+                                                      0x80, 0x04, 0x00, 0x02, 0x00, 0x0f,     // AEAD: AES-SIV-CMAC-256
+                                                      0x80, 0x00, 0x00, 0x00 });              // End of Message
+                    await tls.FlushAsync();
+
+                    var response = new Byte[4096];
+                    var length   = await tls.ReadAtLeastAsync(response, 6, throwOnEndOfStream: false);
+
+                    Assert.That(length,                                                                     Is.GreaterThan(100), "Cookies were expected.");
+                    Assert.That(response[..6],                                                              Is.EqualTo(new Byte[] { 0x80, 0x01, 0x00, 0x02, 0x00, 0x00 }));
+
+                }
+
+                // The stalled ones are told that their request was no request.
+                foreach (var tls in stalled)
+                {
+
+                    using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+                    var response = new Byte[64];
+                    var length   = await tls.ReadAtLeastAsync(response, 10, throwOnEndOfStream: false, timeout.Token);
+
+                    Assert.That(response[..length],                                                         Is.EqualTo(new Byte[] { 0x80, 0x02, 0x00, 0x02, 0x00, 0x01,
+                                                                                                                                      0x80, 0x00, 0x00, 0x00 }));
+
+                }
+
+            }
+            finally
+            {
+                foreach (var tls in stalled)
+                    tls.Dispose();
+            }
+
+        }
+
+        #endregion
+
+
         #region (private) RunningServer
 
         private sealed class RunningServer : IAsyncDisposable
@@ -415,7 +557,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                 this.NTSKEPort  = NTSKEPort;
             }
 
-            public static async Task<RunningServer> Start(Int32? MaxNTSKEConnectionsPerClient = null)
+            public static async Task<RunningServer> Start(Int32?     MaxNTSKEConnectionsPerClient   = null,
+                                                          TimeSpan?  NTSKERequestTimeout            = null)
             {
 
                 var ntsKEPort = FindFreePort(SocketType.Stream, ProtocolType.Tcp);
@@ -424,7 +567,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                                     NTSKEPort:                     IPPort.Parse(ntsKEPort),
                                     NTSPort:                       IPPort.Parse(FindFreePort(SocketType.Dgram, ProtocolType.Udp)),
                                     MasterKeysFilePath:            null,
-                                    MaxNTSKEConnectionsPerClient:  MaxNTSKEConnectionsPerClient
+                                    MaxNTSKEConnectionsPerClient:  MaxNTSKEConnectionsPerClient,
+                                    NTSKERequestTimeout:           NTSKERequestTimeout
                                 );
 
                 await server.Start();

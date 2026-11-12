@@ -149,6 +149,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public const           Int32    DefaultIPv6PrefixLength   = 64;
 
         /// <summary>
+        /// The default leak: of the requests over the limit, one in 2^2 is answered anyway.
+        /// </summary>
+        public const           Byte     DefaultLeak               = 2;
+
+        /// <summary>
+        /// The largest leak that can be asked for: one in 2^8.
+        /// </summary>
+        public const           Byte     MaxLeak                   = 8;
+
+        /// <summary>
         /// The largest poll exponent this server will ask a client to move to.
         /// </summary>
         /// <remarks>
@@ -268,6 +278,21 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public Int32         IPv6PrefixLength    { get; }
 
         /// <summary>
+        /// Of the requests over the limit, one in 2^Leak is answered all the same, chosen at
+        /// random. Zero answers none of them.
+        /// </summary>
+        /// <remarks>
+        /// The limit is applied before anything is authenticated, to an address that anyone
+        /// can write into a datagram. So whoever sends a stream of requests under a client's
+        /// address spends that client's budget, and without a leak the client would get no
+        /// answer for as long as the stream lasts: the limiter would be the means of the
+        /// attack. With it, some of the client's own requests still get through, however
+        /// hard its address is being used. The price is that a flood is answered at that
+        /// fraction too, instead of not at all.
+        /// </remarks>
+        public Byte          Leak                { get; }
+
+        /// <summary>
         /// How many client addresses are currently tracked.
         /// </summary>
         public Int32         TrackedClients
@@ -312,14 +337,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <param name="MaxClients">How many client addresses to track at once.</param>
         /// <param name="TimeProvider">The clock to measure elapsed time on.</param>
         /// <param name="IPv6PrefixLength">How many leading bits of an IPv6 address make up one client.</param>
+        /// <param name="Leak">Of the requests over the limit, one in 2^Leak is answered anyway; zero answers none.</param>
         public NTPRateLimiter(TimeSpan?      MinimumInterval      = null,
                               Int32?         Burst                = null,
                               TimeSpan?      KissInterval         = null,
                               Double?        MaxKissesPerSecond   = null,
                               Int32?         MaxClients           = null,
                               TimeProvider?  TimeProvider         = null,
-                              Int32?         IPv6PrefixLength     = null)
+                              Int32?         IPv6PrefixLength     = null,
+                              Byte?          Leak                 = null)
         {
+
+            this.Leak                = Math.Min(Leak ?? DefaultLeak, MaxLeak);
 
             this.IPv6PrefixLength    = Math.Clamp(IPv6PrefixLength ?? DefaultIPv6PrefixLength, 1, 128);
 
@@ -387,6 +416,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 if (client.Tokens >= 1.0)
                 {
                     client.Tokens -= 1.0;
+                    return RateLimitDecision.Answer;
+                }
+
+                // Over the limit, and answered all the same: see Leak. Drawn at random, so
+                // that whoever is using up a client's budget cannot arrange for the
+                // client's own requests to be the ones that are dropped.
+                if (Leak > 0 &&
+                    Random.Shared.Next(1 << Leak) == 0)
+                {
                     return RateLimitDecision.Answer;
                 }
 
@@ -580,9 +618,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             // Refusing would mean an untracked address is an unlimited one, so a flood large
             // enough to fill the table would switch the limiter off for its own later packets —
             // which is the opposite of what it is for.
+            var evicted = false;
+
             if (Shard.Clients.Count >= maxClientsPerShard &&
                 Shard.Recency.First is not null)
             {
+
+                evicted = true;
 
                 var leastRecentlyUsed = Shard.Recency.First;
 
@@ -594,8 +636,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             // A new address starts with a full bucket. It has not been seen misbehaving, and the
             // alternative — starting empty — would limit every first-time client, including the
             // one packet a passing monitoring system sends.
+            // A full burst for a newcomer, unless it took another client's place. An address
+            // that was pushed out and comes back is new again, so whoever has more addresses
+            // to send from than a part of the table holds could go round them and find a
+            // full burst waiting each time. While clients are being pushed out, a newcomer
+            // starts with the one answer that every address gets, and earns the rest.
             var created = new ClientState {
-                              Tokens      = Burst,
+                              Tokens      = evicted ? 1 : Burst,
                               LastRefill  = Now,
                               Recency     = Shard.Recency.AddLast(RemoteAddress)
                           };

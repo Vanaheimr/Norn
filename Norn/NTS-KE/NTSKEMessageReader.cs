@@ -48,11 +48,22 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// caller would lose the ability to send the Error record RFC 8915 § 4.1.3 requires.
         /// Waiting outside the TLS layer keeps the connection healthy enough to answer.
         /// </param>
+        /// <param name="BlockingReadsOnOwnThread">
+        /// Read from the TLS stream on a thread of its own instead of one of the pool's.
+        ///
+        /// The TLS stream of this library has no asynchronous read: ReadAsync is the blocking
+        /// Read on a pool thread. Waiting for the socket to become readable keeps that short
+        /// for a client that says nothing, but not for one that sends the first octet of a
+        /// record and then stops: the read then holds its thread until the socket's receive
+        /// timeout. A server sets this, so that such clients cost it threads of their own
+        /// and none of those that answer NTP requests.
+        /// </param>
         public static async Task<(Byte[]? ResponseBytes, String? ErrorMessage)> ReadAsync(Stream             TLSStream,
                                                                                           TimeSpan           Timeout,
                                                                                           Int32              MaxResponseSize,
-                                                                                          CancellationToken  CancellationToken = default,
-                                                                                          Socket?            WaitForDataOn     = null)
+                                                                                          CancellationToken  CancellationToken          = default,
+                                                                                          Socket?            WaitForDataOn              = null,
+                                                                                          Boolean            BlockingReadsOnOwnThread   = false)
         {
 
             using var memoryStream = new MemoryStream();
@@ -75,8 +86,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                 try
                 {
-                    bytesRead = await TLSStream.
-                                          ReadAsync(buffer, 0, buffer.Length, CancellationToken).
+                    bytesRead = await (BlockingReadsOnOwnThread
+
+                                           ? Task.Factory.StartNew(
+                                                 () => TLSStream.Read(buffer, 0, buffer.Length),
+                                                 CancellationToken,
+                                                 TaskCreationOptions.LongRunning,
+                                                 TaskScheduler.Default
+                                             )
+
+                                           : TLSStream.
+                                                 ReadAsync(buffer, 0, buffer.Length, CancellationToken)).
+
                                           WaitAsync(Timeout, CancellationToken).
                                           ConfigureAwait(false);
                 }

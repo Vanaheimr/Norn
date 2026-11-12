@@ -231,7 +231,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.CLI.Commands
                         $"precision 2^{NTSServerPrecision(server)} s");
             Output.Line($"Interleaved mode: {server.InterleavedMode}");
             Output.Line($"Rate limiting: {(server.RateLimiter is not null
-                                               ? $"one answer per {server.RateLimiter.MinimumInterval.TotalSeconds:0.###} s per address, burst {server.RateLimiter.Burst}"
+                                               ? $"one answer per {server.RateLimiter.MinimumInterval.TotalSeconds:0.###} s per address, burst {server.RateLimiter.Burst}, one in {1 << server.RateLimiter.Leak} over the limit answered"
                                                : "off")}");
             Output.Line($"Access: {server.AccessList}");
             Output.Line();

@@ -176,6 +176,11 @@ with a `RATE` kiss-o'-death carrying the interval the server will serve, rather 
 `--burst` is how much of a head start an address gets, so that a client's `iburst` is not the first
 thing refused.
 
+An address here is an IPv4 address or an IPv6 /64, as a host has every address of its /64 to send
+from. Of the requests over the limit, one in four is answered all the same, chosen at random: the
+limit is applied to a source address nobody has verified, so without that anyone could spend a
+client's budget for it and have it refused for as long as they liked.
+
 `--deny` and `--allow` are the access list of RFC 8633 § 5.1: who may query this server at all.
 Without them every address is answered. An address that is denied learns nothing, not even that a
 server is there: its NTP requests are dropped without a kiss, and its NTS-KE connections are closed
