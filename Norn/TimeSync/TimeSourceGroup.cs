@@ -75,7 +75,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.TimeSync
         /// <remarks>
         /// One is a group that believes whoever answers. Two is the smallest
         /// number that can notice a server disagreeing with the world, and the
-        /// white paper's recommended value for a legal group.
+        /// white paper's recommended value for a legal group. Two that disagree
+        /// have no time, though, and nothing to choose between them by: three is
+        /// the smallest number in which one that is wrong is outvoted.
+        ///
+        /// The default is one. A group left at it steers its clock by a single
+        /// server whenever only one answers, and that server can move the time
+        /// by as much as it likes: this is what asking one server means, and
+        /// not an oversight. Whoever needs more than one server's word says so
+        /// here.
         /// </remarks>
         public Byte                            MinServers    { get; }
 
@@ -96,7 +104,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.TimeSync
         /// </summary>
         /// <param name="Name">What this group is for, e.g. "legal" or "local".</param>
         /// <param name="Sources">Its servers.</param>
-        /// <param name="MinServers">How many must answer for the group to have a time (default: 1).</param>
+        /// <param name="MinServers">How many must answer for the group to have a time (default: 1, which believes a single server - see <see cref="MinServers"/>).</param>
         /// <param name="MaxDeviation">The gap at which their disagreement is recorded, and within which a majority must agree (default: 60 seconds).</param>
         public TimeSourceGroup(String                          Name,
                                IEnumerable<NTSServerEndpoint>  Sources,
