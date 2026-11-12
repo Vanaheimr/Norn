@@ -236,6 +236,31 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         private Byte[] FreshCookie()
             => ntsServer.GetServerInfos(1).First().Cookies.First();
 
+
+        #region ServerInfosNeverCarryMoreCookiesThanAKeyExchange()
+
+        /// <summary>
+        /// The number of cookies of GET ~/serverInfos is the caller's "n", and it used
+        /// to be taken as it came: 65535 cookies, each of them an encryption, and a
+        /// response of megabytes for one small request. It is what a key exchange
+        /// gives at the most, and one where none were asked for.
+        /// </summary>
+        [TestCase((UInt16)     0, 1)]
+        [TestCase((UInt16)     1, 1)]
+        [TestCase((UInt16)     7, 7)]
+        [TestCase((UInt16)     8, 8)]
+        [TestCase((UInt16)     9, 8)]
+        [TestCase((UInt16) 65535, 8)]
+        public void ServerInfosNeverCarryMoreCookiesThanAKeyExchange(UInt16 AskedFor, Int32 Given)
+        {
+
+            Assert.That(NTSServer.MaxCookiesPerResponse,                                Is.EqualTo(8));
+            Assert.That(ntsServer.GetServerInfos(AskedFor).First().Cookies.Count(),     Is.EqualTo(Given));
+
+        }
+
+        #endregion
+
         private static Byte[] Header(Byte Mode)
         {
             var header = new Byte[48];

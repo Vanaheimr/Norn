@@ -1719,7 +1719,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             return new NTSKE_ServerInfo(
                        C2SKey,
                        S2CKey,
-                       Enumerable.Range(0, NumberOfCookies).
+                       // Never more than a key exchange hands out, whoever asks and by
+                       // which way: each cookie is an encryption, and whoever may name
+                       // the number may name 65535.
+                       Enumerable.Range(0, Math.Min(NumberOfCookies, MaxCookiesPerResponse)).
                                   Select(_ => NTSCookie.Create (MasterKey, C2SKey, S2CKey, AEADAlgorithm, TimeProvider).
                                                         Encrypt(MasterKey)),
                        ExternalURLs,
@@ -1737,8 +1740,19 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #region GetServerInfos(NumberOfCookies = 7)
 
+        /// <summary>
+        /// What a key exchange hands out, made without one: fresh keys, and cookies for them.
+        /// </summary>
+        /// <param name="NumberOfCookies">
+        /// How many cookies are wanted. At least one is given and never more than
+        /// <see cref="MaxCookiesPerResponse"/>, whatever is asked for: the number comes
+        /// from whoever asks - the "n" of GET ~/serverInfos - and each cookie is an
+        /// encryption.
+        /// </param>
         public IEnumerable<NTSKE_ServerInfo> GetServerInfos(UInt16 NumberOfCookies = 7)
         {
+
+            NumberOfCookies = Math.Clamp(NumberOfCookies, (UInt16) 1, MaxCookiesPerResponse);
 
             var serverInfos = new List<NTSKE_ServerInfo>();
 
