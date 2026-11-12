@@ -1418,11 +1418,69 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #endregion
 
+        #region (private static) VerifySignature(Response, NTSKEResponse, SignedResponseMode)
+
+        /// <summary>
+        /// Check the signature of a response that has otherwise been accepted against the
+        /// public keys the key exchange named.
+        /// </summary>
+        /// <remarks>
+        /// Against those keys and no others: they came over the authenticated key exchange,
+        /// which is what ties them to the server that was asked. The key is the one the
+        /// signature names, whichever was requested - a server is free to sign with another
+        /// of the keys it published, and the result says which it was.
+        /// </remarks>
+        /// <param name="Response">The accepted response.</param>
+        /// <param name="NTSKEResponse">The key exchange the query was made with.</param>
+        /// <param name="SignedResponseMode">Whether, and how, a signed response was asked for.</param>
+        private static (NTSSignatureVerification Verification, UInt16? KeyId)
+
+            VerifySignature(NTPPacket           Response,
+                            NTSKE_Response?     NTSKEResponse,
+                            SignedResponseMode  SignedResponseMode)
+
+        {
+
+            if (SignedResponseMode == SignedResponseMode.None)
+                return (NTSSignatureVerification.NotRequested, null);
+
+            if (Response.NTSSignedResponse() is not NTSSignedResponseExtension signature)
+                return (NTSSignatureVerification.NotSigned, null);
+
+            PublicKey? publicKey = null;
+
+            try
+            {
+                publicKey = NTSKEResponse?.PublicKeys.FirstOrDefault(key => key.Id == signature.KeyId);
+            }
+            catch
+            {
+                // A public key record that cannot be read names no key.
+            }
+
+            if (publicKey is null)
+                return (NTSSignatureVerification.UnknownKey, signature.KeyId);
+
+            return (signature.Verify(Response, publicKey)
+                        ? NTSSignatureVerification.Verified
+                        : NTSSignatureVerification.Invalid,
+                    signature.KeyId);
+
+        }
+
+        #endregion
+
         #region QueryTime (Timeout = null, NTSKEResponse = null, SignedResponseMode = None, SignedResponseKeyId = 1, ...)
 
         /// <summary>
         /// Sends a single NTS-authenticated NTP request and returns a structured result.
         /// </summary>
+        /// <param name="SignedResponseMode">
+        /// Whether to ask for a signed response. Where one is asked for, its signature is
+        /// checked here against the public keys of <paramref name="NTSKEResponse"/>, and
+        /// <see cref="NTSQueryResult.SignatureVerification"/> says what came of it. A
+        /// signature that is not the named key's fails the query.
+        /// </param>
         /// <param name="NTPServer">
         /// Which of the servers the key exchange named to send this request to,
         /// to the exclusion of the others; null takes them in the order they
@@ -1973,6 +2031,26 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                                     AddCookies(ntpResponse2);
 
+                                    var (signature2, signatureKeyId2) = VerifySignature(ntpResponse2, NTSKEResponse, SignedResponseMode);
+
+                                    if (signature2 == NTSSignatureVerification.Invalid)
+                                        return NTSQueryResult.Failed(
+                                                   $"The signature of the 2nd NTP response is not the one of the public key {signatureKeyId2} the key exchange named!",
+                                                   NTSQueryErrorCategory.NTSAuthentication,
+                                                   remoteEndPoint,
+                                                   remoteDescription,
+                                                   cookie,
+                                                   AvailableCookieCount,
+                                                   SendStopwatchTimestamp:     sendStopwatchTimestamp,
+                                                   ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp2,
+                                                   DestinationTimestamp:       destinationTimestamp2,
+                                                   Response:                   ntpResponse2,
+                                                   CookiePoolDiagnostics:      CookiePoolDiagnostics,
+                                                   ResponseValidation:         validation2,
+                                                   SignatureVerification:      signature2,
+                                                   SignatureKeyId:             signatureKeyId2
+                                               );
+
                                     return NTSQueryResult.SuccessResult(
                                                ntpResponse2,
                                                remoteEndPoint,
@@ -1982,7 +2060,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                1,
                                                ntpResponse2.Extensions.Any(extension => extension is NTSCookieExtension { Encrypted: true }),
                                                CookiePoolDiagnostics,
-                                               validation2
+                                               validation2,
+                                               SignatureVerification:  signature2,
+                                               SignatureKeyId:         signatureKeyId2
                                            );
                                 }
 
@@ -2049,6 +2129,28 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                 destinationTimestamp1
                             );
 
+                            // Asked for directly, the signature came with this response; asked
+                            // for as a second response that was not announced, it did not come.
+                            var (signature1, signatureKeyId1) = VerifySignature(ntpResponse1, NTSKEResponse, SignedResponseMode);
+
+                            if (signature1 == NTSSignatureVerification.Invalid)
+                                return NTSQueryResult.Failed(
+                                           $"The signature of the NTP response is not the one of the public key {signatureKeyId1} the key exchange named!",
+                                           NTSQueryErrorCategory.NTSAuthentication,
+                                           remoteEndPoint,
+                                           remoteDescription,
+                                           cookie,
+                                           AvailableCookieCount,
+                                           SendStopwatchTimestamp:     sendStopwatchTimestamp,
+                                           ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp1,
+                                           DestinationTimestamp:       destinationTimestamp1,
+                                           Response:                   ntpResponse1,
+                                           CookiePoolDiagnostics:      CookiePoolDiagnostics,
+                                           ResponseValidation:         validation1,
+                                           SignatureVerification:      signature1,
+                                           SignatureKeyId:             signatureKeyId1
+                                       );
+
                             return NTSQueryResult.SuccessResult(
                                        ntpResponse1,
                                        remoteEndPoint,
@@ -2059,7 +2161,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                        ntpResponse1.Extensions.Any(extension => extension is NTSCookieExtension { Encrypted: true }),
                                        CookiePoolDiagnostics,
                                        validation1,
-                                       measurement
+                                       measurement,
+                                       signature1,
+                                       signatureKeyId1
                                    );
 
                         }

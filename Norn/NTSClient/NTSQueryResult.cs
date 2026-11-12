@@ -121,6 +121,23 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             => Response?.Extensions.Any(extension => extension is AuthenticatorAndEncryptedExtension) == true;
 
+        /// <summary>
+        /// What became of the signature this query asked for.
+        /// </summary>
+        /// <remarks>
+        /// Checked by the query itself, against the public keys of the key exchange it was
+        /// given. <see cref="NTSSignatureVerification.Invalid"/> comes only with a failed
+        /// query; a response without a signature, or with one of a key the key exchange
+        /// did not name, is still a time that the NTS authenticator vouches for, and it is
+        /// for the caller to say whether that is enough.
+        /// </remarks>
+        public NTSSignatureVerification     SignatureVerification   { get; }
+
+        /// <summary>
+        /// The id of the key the response says it was signed with, where it is signed.
+        /// </summary>
+        public UInt16?                      SignatureKeyId          { get; }
+
         public NTSQueryDiagnostics          Diagnostics             { get; }
 
         #endregion
@@ -142,7 +159,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                Boolean                NewCookieReceived           = false,
                                NTSCookiePoolDiagnostics? CookiePoolDiagnostics     = null,
                                NTSResponseValidationResult? ResponseValidation      = null,
-                               InterleavedMeasurement?   InterleavedMeasurement      = null)
+                               InterleavedMeasurement?   InterleavedMeasurement      = null,
+                               NTSSignatureVerification  SignatureVerification       = NTSSignatureVerification.NotRequested,
+                               UInt16?                   SignatureKeyId              = null)
         {
 
             this.Success                     = Success;
@@ -161,6 +180,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             this.CookiePoolDiagnostics       = CookiePoolDiagnostics;
             this.InterleavedMeasurement      = InterleavedMeasurement;
             this.ResponseValidation          = ResponseValidation;
+            this.SignatureVerification       = SignatureVerification;
+            this.SignatureKeyId              = SignatureKeyId;
 
             if (SendStopwatchTimestamp.HasValue &&
                 ReceiveStopwatchTimestamp.HasValue)
@@ -198,7 +219,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                     Boolean      NewCookieReceived,
                                                     NTSCookiePoolDiagnostics? CookiePoolDiagnostics = null,
                                                     NTSResponseValidationResult? ResponseValidation  = null,
-                                                    InterleavedMeasurement?   InterleavedMeasurement = null)
+                                                    InterleavedMeasurement?   InterleavedMeasurement = null,
+                                                    NTSSignatureVerification  SignatureVerification  = NTSSignatureVerification.NotRequested,
+                                                    UInt16?                   SignatureKeyId         = null)
 
             => new (
                    Success:                     true,
@@ -216,7 +239,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     NewCookieReceived:           NewCookieReceived,
                     CookiePoolDiagnostics:       CookiePoolDiagnostics,
                     ResponseValidation:          ResponseValidation,
-                    InterleavedMeasurement:      InterleavedMeasurement
+                    InterleavedMeasurement:      InterleavedMeasurement,
+                    SignatureVerification:       SignatureVerification,
+                    SignatureKeyId:              SignatureKeyId
                 );
 
         #endregion
@@ -235,7 +260,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                             Int64?                 ReceiveStopwatchTimestamp   = null,
                                              UInt64?                DestinationTimestamp        = null,
                                              NTSCookiePoolDiagnostics? CookiePoolDiagnostics    = null,
-                                             NTSResponseValidationResult? ResponseValidation     = null)
+                                             NTSResponseValidationResult? ResponseValidation     = null,
+                                             NTSSignatureVerification  SignatureVerification    = NTSSignatureVerification.NotRequested,
+                                             UInt16?                   SignatureKeyId           = null)
 
             => new (
                    Success:                     false,
@@ -251,7 +278,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     ReceiveStopwatchTimestamp:   ReceiveStopwatchTimestamp,
                     DestinationTimestamp:        DestinationTimestamp,
                     CookiePoolDiagnostics:       CookiePoolDiagnostics,
-                    ResponseValidation:          ResponseValidation
+                    ResponseValidation:          ResponseValidation,
+                    SignatureVerification:       SignatureVerification,
+                    SignatureKeyId:              SignatureKeyId
                 );
 
         #endregion

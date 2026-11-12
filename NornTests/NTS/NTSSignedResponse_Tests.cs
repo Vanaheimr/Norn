@@ -74,6 +74,168 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                 Assert.That(queryResult.Response!.NTSSignedResponseAnnouncement(), Is.Null);
                 Assert.That(queryResult.Response!.NTSSignedResponse(),             Is.Null);
 
+                // And the query says so, instead of leaving it to be found out.
+                Assert.That(queryResult.SignatureVerification,                     Is.EqualTo(NTSSignatureVerification.NotSigned));
+                Assert.That(queryResult.SignatureKeyId,                            Is.Null);
+
+            }
+            finally
+            {
+                await ntsServer.ShutdownAsync();
+            }
+
+        }
+
+        #endregion
+
+        #region AQueryChecksTheSignatureItAskedFor()
+
+        /// <summary>
+        /// Whoever asks a query for a signed response is told what the signature is
+        /// worth, and does not have to find the extension, the key and the check.
+        /// </summary>
+        [Test]
+        [Category("LocalIntegration")]
+        public async Task AQueryChecksTheSignatureItAskedFor()
+        {
+
+            var (ntsServer, ntsClient) = await Start(KeyPair.GenerateECKeys(7));
+
+            try
+            {
+
+                var ntsKEResult  = await ntsClient.GetNTSKERecords(RequestNTSPublicKeys: true);
+
+                Assert.That(ntsKEResult.Success,                                   Is.True, ntsKEResult.ErrorMessage);
+
+                var signed       = await ntsClient.QueryTime(
+                                             NTSKEResponse:       ntsKEResult.Response,
+                                             SignedResponseMode:  SignedResponseMode.Scheduled,
+                                             SignedResponseKeyId: 7,
+                                             Timeout:             TimeSpan.FromSeconds(5)
+                                         );
+
+                Assert.That(signed.Success,                                        Is.True, signed.ErrorMessage);
+                Assert.That(signed.SignatureVerification,                          Is.EqualTo(NTSSignatureVerification.Verified));
+                Assert.That(signed.SignatureKeyId,                                 Is.EqualTo(7));
+
+                // Not asked for, not looked for.
+                var unsigned     = await ntsClient.QueryTime(
+                                             NTSKEResponse:       ntsKEResult.Response,
+                                             Timeout:             TimeSpan.FromSeconds(5)
+                                         );
+
+                Assert.That(unsigned.Success,                                      Is.True, unsigned.ErrorMessage);
+                Assert.That(unsigned.SignatureVerification,                        Is.EqualTo(NTSSignatureVerification.NotRequested));
+                Assert.That(unsigned.SignatureKeyId,                               Is.Null);
+
+            }
+            finally
+            {
+                await ntsServer.ShutdownAsync();
+            }
+
+        }
+
+        #endregion
+
+        #region ASignatureOfAKeyTheKeyExchangeDidNotNameIsNotVerified()
+
+        /// <summary>
+        /// A key exchange that did not ask for the public keys has none to check with.
+        /// The time is still the server's, by the authenticator; of the signature
+        /// nothing is known, and "verified" is not what that is called.
+        /// </summary>
+        [Test]
+        [Category("LocalIntegration")]
+        public async Task ASignatureOfAKeyTheKeyExchangeDidNotNameIsNotVerified()
+        {
+
+            var (ntsServer, ntsClient) = await Start(KeyPair.GenerateECKeys(7));
+
+            try
+            {
+
+                var ntsKEResult  = await ntsClient.GetNTSKERecords(RequestNTSPublicKeys: false);
+
+                Assert.That(ntsKEResult.Success,                                   Is.True, ntsKEResult.ErrorMessage);
+                Assert.That(ntsKEResult.Response!.PublicKeys,                      Is.Empty);
+
+                var queryResult  = await ntsClient.QueryTime(
+                                             NTSKEResponse:       ntsKEResult.Response,
+                                             SignedResponseMode:  SignedResponseMode.Scheduled,
+                                             SignedResponseKeyId: 7,
+                                             Timeout:             TimeSpan.FromSeconds(5)
+                                         );
+
+                Assert.That(queryResult.Success,                                   Is.True, queryResult.ErrorMessage);
+                Assert.That(queryResult.Response!.NTSSignedResponse(),             Is.Not.Null);
+                Assert.That(queryResult.SignatureVerification,                     Is.EqualTo(NTSSignatureVerification.UnknownKey));
+                Assert.That(queryResult.SignatureKeyId,                            Is.EqualTo(7));
+
+            }
+            finally
+            {
+                await ntsServer.ShutdownAsync();
+            }
+
+        }
+
+        #endregion
+
+        #region ASignatureThatIsNotTheNamedKeysFailsTheQuery()
+
+        /// <summary>
+        /// The key exchange named key 7, and the response is signed "with key 7" by
+        /// somebody else. That is not a time with a signature missing: it is a
+        /// response claiming a proof it does not have, and the query has failed.
+        /// </summary>
+        [Test]
+        [Category("LocalIntegration")]
+        public async Task ASignatureThatIsNotTheNamedKeysFailsTheQuery()
+        {
+
+            var (ntsServer, ntsClient) = await Start(KeyPair.GenerateECKeys(7));
+
+            try
+            {
+
+                var ntsKEResult  = await ntsClient.GetNTSKERecords(RequestNTSPublicKeys: true);
+
+                Assert.That(ntsKEResult.Success,                                   Is.True, ntsKEResult.ErrorMessage);
+
+                // The same key exchange, but with another key under the number 7.
+                var keyExchange  = ntsKEResult.Response!;
+                var otherKey     = KeyPair.GenerateECKeys(7).ToPublicKey();
+
+                var forged       = new NTSKE_Response(
+                                       keyExchange.NTSKERecords.
+                                           Select(record => record.Type == NTSKE_RecordTypes.NTSPublicKey
+                                                                ? NTSKE_Record.NTSPublicKey(otherKey)
+                                                                : record).
+                                           ToArray(),
+                                       keyExchange.C2SKey,
+                                       keyExchange.S2CKey
+                                   );
+
+                Assert.That(forged.PublicKeys.Single().Id,                         Is.EqualTo(7));
+
+                var queryResult  = await ntsClient.QueryTime(
+                                             NTSKEResponse:       forged,
+                                             SignedResponseMode:  SignedResponseMode.Scheduled,
+                                             SignedResponseKeyId: 7,
+                                             Timeout:             TimeSpan.FromSeconds(5)
+                                         );
+
+                Assert.That(queryResult.Success,                                   Is.False);
+                Assert.That(queryResult.SignatureVerification,                     Is.EqualTo(NTSSignatureVerification.Invalid));
+                Assert.That(queryResult.SignatureKeyId,                            Is.EqualTo(7));
+                Assert.That(queryResult.ErrorCategory,                             Is.EqualTo(NTSQueryErrorCategory.NTSAuthentication));
+                Assert.That(queryResult.ErrorMessage,                              Does.Contain("signature"));
+
+                // What came is still there to be looked at.
+                Assert.That(queryResult.Response!.NTSSignedResponse(),             Is.Not.Null);
+
             }
             finally
             {

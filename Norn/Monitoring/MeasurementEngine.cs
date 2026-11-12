@@ -1270,23 +1270,31 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                 CachedState.RemainingCookies = ToByteCookieCount(answer.CookiePoolDiagnostics?.AvailableCookieCount ??
                                                                  answer.RemainingCookiesAfterQuery);
 
-                if (!answer.Success || answer.Response is not NTPPacket response)
+                // The query checks the signature itself. A signature that is not the named
+                // key's fails it, and is reported here all the same: as the signed response
+                // that came, and did not verify.
+                var invalid   = answer.SignatureVerification == NTSSignatureVerification.Invalid;
+
+                if ((!answer.Success && !invalid) || answer.Response is not NTPPacket response)
                     return new SignedResponseResult(false, ErrorMessage: answer.ErrorMessage ?? "No signed response");
 
                 var packet    = response.ToByteArray();
 
-                if (response.NTSSignedResponse() is not NTSSignedResponseExtension signature)
-                    return new SignedResponseResult(false, packet, ErrorMessage: "The response was not signed");
+                return answer.SignatureVerification switch {
 
-                var key       = keys.FirstOrDefault(key => key.Id == signature.KeyId);
+                           NTSSignatureVerification.Verified
+                               => new SignedResponseResult(true, packet, answer.SignatureKeyId, true),
 
-                return new SignedResponseResult(
-                           true,
-                           packet,
-                           signature.KeyId,
-                           key is not null ? signature.Verify(response, key) : null,
-                           key is null ? $"The key exchange named no public key {signature.KeyId}" : null
-                       );
+                           NTSSignatureVerification.Invalid
+                               => new SignedResponseResult(true, packet, answer.SignatureKeyId, false, answer.ErrorMessage),
+
+                           NTSSignatureVerification.UnknownKey
+                               => new SignedResponseResult(true, packet, answer.SignatureKeyId, null,
+                                                           $"The key exchange named no public key {answer.SignatureKeyId}"),
+
+                           _   => new SignedResponseResult(false, packet, ErrorMessage: "The response was not signed")
+
+                       };
 
             }
             catch (Exception e) when (!CancellationToken.IsCancellationRequested)
