@@ -97,6 +97,42 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             }
 
 
+            // RFC 8915 § 4.1.1 to 4.1.4: for End of Message, NTS Next Protocol Negotiation,
+            // Error and Warning alike, "The Critical Bit MUST be set". These are the records a
+            // receiver cannot be allowed to skip: a message that marks one of them as
+            // optional says something about itself that cannot be true, and what else it
+            // says is not to be relied on. Checked before the Error record is read, so
+            // that it is read only from a message that is one.
+            foreach (var record in records)
+            {
+
+                if (!record.IsCritical &&
+                    record.Type is NTSKE_RecordTypes.EndOfMessage
+                                or NTSKE_RecordTypes.NTSNextProtocolNegotiation
+                                or NTSKE_RecordTypes.Error
+                                or NTSKE_RecordTypes.Warning)
+                {
+
+                    ErrorMessage   = $"NTS-KE response carries a {record.Type} record without its critical bit, which RFC 8915 requires to be set.";
+                    ErrorCategory  = NTSKEErrorCategory.Protocol;
+                    return false;
+
+                }
+
+                // § 4.1.1: "The Record Body MUST be empty."
+                if (record.Type == NTSKE_RecordTypes.EndOfMessage &&
+                    record.Body.Length != 0)
+                {
+
+                    ErrorMessage   = $"NTS-KE response carries an End of Message record with a body of {record.Body.Length} octets, which must be empty.";
+                    ErrorCategory  = NTSKEErrorCategory.Protocol;
+                    return false;
+
+                }
+
+            }
+
+
             var errorRecord = records.FirstOrDefault(record => record.Type == NTSKE_RecordTypes.Error);
             if (errorRecord is not null)
             {

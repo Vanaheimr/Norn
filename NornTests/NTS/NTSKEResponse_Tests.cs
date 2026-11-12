@@ -341,6 +341,110 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
         #endregion
 
+        #region NTSKERecordValidator_Rejects_A_Mandatory_Record_Without_Its_Critical_Bit(...)
+
+        /// <summary>
+        /// RFC 8915 § 4.1.1 to 4.1.4: for End of Message, NTS Next Protocol Negotiation,
+        /// Error and Warning, "The Critical Bit MUST be set".
+        /// </summary>
+        [TestCase(NTSKE_RecordTypes.EndOfMessage,               new Byte[0])]
+        [TestCase(NTSKE_RecordTypes.NTSNextProtocolNegotiation, new Byte[] { 0x00, 0x00 })]
+        [TestCase(NTSKE_RecordTypes.Error,                      new Byte[] { 0x00, 0x01 })]
+        [TestCase(NTSKE_RecordTypes.Warning,                    new Byte[] { 0x00, 0x01 })]
+        public void NTSKERecordValidator_Rejects_A_Mandatory_Record_Without_Its_Critical_Bit(NTSKE_RecordTypes  RecordType,
+                                                                                             Byte[]             Body)
+        {
+
+            // The valid response, with the record in question replaced by one that is
+            // the same in everything but its critical bit, or added where there was none.
+            var records = CreateValidResponseRecords().
+                              Where (record => record.Type != RecordType).
+                              Append(new NTSKE_Record(false, RecordType, Body)).
+                              ToArray();
+
+            Assert.That(
+                NTSKERecordValidator.ValidateServerResponse(
+                    records,
+                    out var errorMessage,
+                    out var errorCategory
+                ),
+                Is.False
+            );
+
+            Assert.That(errorMessage,   Does.Contain("critical bit"));
+            Assert.That(errorMessage,   Does.Contain(RecordType.ToString()));
+            Assert.That(errorCategory,  Is.EqualTo(NTSKEErrorCategory.Protocol));
+
+        }
+
+        #endregion
+
+        #region NTSKERecordValidator_Rejects_An_End_Of_Message_With_A_Body()
+
+        /// <summary>
+        /// RFC 8915 § 4.1.1: "The Record Body MUST be empty."
+        /// </summary>
+        [Test]
+        public void NTSKERecordValidator_Rejects_An_End_Of_Message_With_A_Body()
+        {
+
+            var records = CreateValidResponseRecords().
+                              Where (record => record.Type != NTSKE_RecordTypes.EndOfMessage).
+                              Append(new NTSKE_Record(true, NTSKE_RecordTypes.EndOfMessage, [ 0x00 ])).
+                              ToArray();
+
+            Assert.That(
+                NTSKERecordValidator.ValidateServerResponse(
+                    records,
+                    out var errorMessage,
+                    out var errorCategory
+                ),
+                Is.False
+            );
+
+            Assert.That(errorMessage,   Does.Contain("End of Message"));
+            Assert.That(errorCategory,  Is.EqualTo(NTSKEErrorCategory.Protocol));
+
+        }
+
+        #endregion
+
+        #region NTSKERecordValidator_Leaves_The_Critical_Bit_Of_Other_Records_Alone()
+
+        /// <summary>
+        /// The AEAD record "MAY" have it, a cookie "SHOULD NOT": neither is a reason
+        /// to refuse a server, whichever way it set them.
+        /// </summary>
+        [Test]
+        public void NTSKERecordValidator_Leaves_The_Critical_Bit_Of_Other_Records_Alone()
+        {
+
+            foreach (var critical in new[] { true, false })
+            {
+
+                var records = new NTSKE_Record[] {
+                                  NTSKE_Record.NTSNextProtocolNegotiation,
+                                  new (critical, NTSKE_RecordTypes.AEADAlgorithmNegotiation, [ 0x00, 0x0f ]),
+                                  new (critical, NTSKE_RecordTypes.NewCookieForNTPv4,        [ 0x01, 0x02, 0x03 ]),
+                                  NTSKE_Record.EndOfMessage
+                              };
+
+                Assert.That(
+                    NTSKERecordValidator.ValidateServerResponse(
+                        records,
+                        out var errorMessage,
+                        out var errorCategory
+                    ),
+                    Is.True,
+                    errorMessage
+                );
+
+            }
+
+        }
+
+        #endregion
+
         #region (private static) CreateValidResponseRecords(AdditionalRecords)
 
         private static IEnumerable<NTSKE_Record> CreateValidResponseRecords(params NTSKE_Record[] AdditionalRecords)

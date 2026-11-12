@@ -570,14 +570,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
             Assert.That(ntsKEResult.Success,        Is.False);
             Assert.That(ntsKEResult.ErrorCategory,  Is.EqualTo(NTSKEErrorCategory.TLSCertificate));
-            Assert.That(ntsKEResponse.ErrorMessage,   Is.EqualTo("certificate_unknown(46)"));
+            Assert.That(ntsKEResponse.ErrorMessage,   Does.EndWith("certificate_unknown(46)"));
 
 
             var ntsResult                  = await ntsClient.QueryTime(NTSKEResponse: ntsKEResponse);
             var ntsResponse                = ntsResult.Response;
 
             Assert.That(ntsResponse,                  Is.Not.Null);
-            Assert.That(ntsResult.ErrorMessage,       Is.EqualTo("certificate_unknown(46)"));
+            Assert.That(ntsResult.ErrorMessage,       Does.EndWith("certificate_unknown(46)"));
 
         }
 

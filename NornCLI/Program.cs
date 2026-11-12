@@ -96,6 +96,21 @@ namespace org.GraphDefined.Vanaheimr.Norn.CLI
                 cancellation.Cancel();
             };
 
+            return await Run(Arguments, cancellation.Token);
+
+        }
+
+
+        /// <summary>
+        /// Everything <see cref="Main"/> does, short of listening for Ctrl-C: the command
+        /// line is read, the command is run, and its exit code is returned.
+        /// </summary>
+        /// <param name="Arguments">The command line.</param>
+        /// <param name="CancellationToken">What Ctrl-C would cancel.</param>
+        public static async Task<Int32> Run(String[]           Arguments,
+                                            CancellationToken  CancellationToken)
+        {
+
             var output = new Output(Arguments.Contains("--json"));
 
             try
@@ -156,9 +171,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.CLI
                 parsed.Flag("--json");
 
                 return command switch {
-                           "query"  => await QueryCommand.      Run(parsed, output, cancellation.Token),
-                           "ke"     => await KeyExchangeCommand.Run(parsed, output, cancellation.Token),
-                           _        => await ServeCommand.      Run(parsed, output, cancellation.Token)
+                           "query"  => await QueryCommand.      Run(parsed, output, CancellationToken),
+                           "ke"     => await KeyExchangeCommand.Run(parsed, output, CancellationToken),
+                           _        => await ServeCommand.      Run(parsed, output, CancellationToken)
                        };
 
             }

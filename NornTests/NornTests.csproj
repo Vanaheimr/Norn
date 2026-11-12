@@ -18,6 +18,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\Hermod\Hermod\Hermod.csproj" />
     <ProjectReference Include="..\Norn\Norn.csproj" />
+    <ProjectReference Include="..\NornCLI\NornCLI.csproj" />
   </ItemGroup>
 
 </Project>
