@@ -201,6 +201,47 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTP
         #endregion
 
 
+        #region DENY_WithoutAuthenticationCostsThePauseThatWasSet()
+
+        /// <summary>
+        /// Two hours is a default, and whoever runs the client may weigh it otherwise.
+        /// </summary>
+        [Test]
+        public void DENY_WithoutAuthenticationCostsThePauseThatWasSet()
+        {
+
+            Assert.That(new NTPServerAccessState().UnauthenticatedDenyPause,                           Is.EqualTo(TimeSpan.FromSeconds(8192)));
+            Assert.That(new NTPServerAccessState(MaximumPollExponent: 10).UnauthenticatedDenyPause,    Is.EqualTo(TimeSpan.FromSeconds(1024)));
+
+            var access = new NTPServerAccessState(UnauthenticatedDenyPause: TimeSpan.FromMinutes(10));
+
+            access.Apply(new NTPKissOfDeath("DENY", 4), now, NTPKissTrust.Unauthenticated);
+
+            Assert.That(access.Demobilized,                              Is.False);
+            Assert.That(access.MayQuery(now.AddSeconds(599)),            Is.False);
+            Assert.That(access.MayQuery(now.AddSeconds(600)),            Is.True);
+
+            // Zero: such a kiss is not listened to at all.
+            var deaf   = new NTPServerAccessState(UnauthenticatedDenyPause: TimeSpan.Zero);
+
+            deaf.Apply(new NTPKissOfDeath("DENY", 4), now, NTPKissTrust.Unauthenticated);
+
+            Assert.That(deaf.Demobilized,                                Is.False);
+            Assert.That(deaf.MayQuery(now),                              Is.True);
+
+            // An authenticated one is obeyed whatever the pause is set to.
+            deaf.Apply(new NTPKissOfDeath("DENY", 4), now, NTPKissTrust.Authenticated);
+
+            Assert.That(deaf.Demobilized,                                Is.True);
+
+            Assert.That(() => new NTPServerAccessState(UnauthenticatedDenyPause: TimeSpan.FromSeconds(-1)),
+                        Throws.InstanceOf<ArgumentOutOfRangeException>());
+
+        }
+
+        #endregion
+
+
         #region Reset_ReturnsToTheStartingRate()
 
         [Test]

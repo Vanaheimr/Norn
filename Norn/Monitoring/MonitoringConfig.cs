@@ -72,6 +72,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         public TimeSpan                    NTPTimeout                 { get; set; } = TimeSpan.FromSeconds(5);
 
         /// <summary>
+        /// How long to stay away from an NTS server after a "DENY" or "RSTR" kiss that was not
+        /// authenticated; null for the longest poll interval, about two hours.
+        /// </summary>
+        /// <remarks>
+        /// See <see cref="NTPServerAccessState.UnauthenticatedDenyPause"/>.
+        /// </remarks>
+        public TimeSpan?                   UnauthenticatedDenyPause   { get; set; }
+
+        /// <summary>
         /// Whether to obey a server's Kiss-o'-Death: back off after "RATE", stop querying after
         /// "DENY" or "RSTR".
         /// </summary>

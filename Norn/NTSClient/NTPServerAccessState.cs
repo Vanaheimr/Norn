@@ -50,7 +50,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
     /// <para>
     /// "DENY" and "RSTR" end the association for good, as § 7.4 a says, unless the association
     /// is an NTS one and the kiss was not authenticated (<see cref="NTPKissTrust"/>). Then it
-    /// costs this client one pause of the longest poll interval and no more. Anyone on the
+    /// costs this client one pause of <see cref="UnauthenticatedDenyPause"/>, by default the
+    /// longest poll interval, and no more. Anyone on the
     /// path can write such a kiss; one datagram must not be the end of a time source.
     /// </para>
     /// <para>
@@ -96,6 +97,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// The poll exponent this client started from, and returns to as it is answered.
         /// </summary>
         public Byte             InitialPollExponent  { get; }
+
+        /// <summary>
+        /// How long this client stays away from an NTS server after a "DENY" or "RSTR" kiss
+        /// that was not authenticated.
+        /// </summary>
+        /// <remarks>
+        /// The price of one datagram that anyone on the path can write, so it is a weighing:
+        /// long enough that a server which meant it is left alone, short enough that a
+        /// forger gains little. The default is the longest poll interval, about two hours
+        /// with RFC 8633's ceiling of 13. Zero ignores such a kiss altogether.
+        /// </remarks>
+        public TimeSpan         UnauthenticatedDenyPause  { get; }
 
         /// <summary>
         /// The current poll exponent: the interval between queries is 2^this seconds.
@@ -145,10 +158,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <param name="InitialPollExponent">Where to start, before any kiss code (default: the minimum).</param>
         /// <param name="MinimumPollExponent">The fastest this client will poll this server.</param>
         /// <param name="MaximumPollExponent">The slowest a kiss code can drive this client.</param>
-        public NTPServerAccessState(Byte?  InitialPollExponent  = null,
-                                    Byte?  MinimumPollExponent  = null,
-                                    Byte?  MaximumPollExponent  = null)
+        /// <param name="UnauthenticatedDenyPause">How long to stay away after an unauthenticated "DENY" or "RSTR" on an NTS association (default: the longest poll interval).</param>
+        public NTPServerAccessState(Byte?      InitialPollExponent        = null,
+                                    Byte?      MinimumPollExponent        = null,
+                                    Byte?      MaximumPollExponent        = null,
+                                    TimeSpan?  UnauthenticatedDenyPause   = null)
         {
+
+            if (UnauthenticatedDenyPause < TimeSpan.Zero)
+                throw new ArgumentOutOfRangeException(nameof(UnauthenticatedDenyPause), "The pause must not be negative!");
 
             this.MinimumPollExponent  = MinimumPollExponent ?? DefaultMinimumPollExponent;
             this.MaximumPollExponent  = Math.Max(this.MinimumPollExponent,
@@ -159,6 +177,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                           this.MaximumPollExponent);
 
             this.PollExponent         = this.InitialPollExponent;
+
+            this.UnauthenticatedDenyPause  = UnauthenticatedDenyPause ?? TimeSpan.FromSeconds(Math.Pow(2, this.MaximumPollExponent));
 
         }
 
@@ -268,9 +288,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                             // An NTS server that wants this client gone can seal that under
                             // the S2C key. A kiss without it may come from anyone who saw
                             // the request, and "stop for good" is too much to take from
-                            // them: it costs the longest pause there is, once, and leaves
-                            // the polling rate as it was.
-                            NextQueryNotBefore  = Now + TimeSpan.FromSeconds(Math.Pow(2, MaximumPollExponent));
+                            // them: it costs one pause, and leaves the polling rate as it
+                            // was.
+                            NextQueryNotBefore  = UnauthenticatedDenyPause > TimeSpan.Zero
+                                                      ? Now + UnauthenticatedDenyPause
+                                                      : NextQueryNotBefore;
 
                             break;
 

@@ -119,7 +119,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                                                                                         Math.Ceiling(Math.Log2(Math.Max(1.0, config.MeasurementInterval.TotalSeconds))),
                                                                                         NTPServerAccessState.DefaultMinimumPollExponent,
                                                                                         NTPServerAccessState.DefaultMaximumPollExponent
-                                                                                    )
+                                                                                    ),
+                                                        UnauthenticatedDenyPause: config.UnauthenticatedDenyPause
                                                     ));
 
         #endregion
