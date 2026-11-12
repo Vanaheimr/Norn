@@ -161,10 +161,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                 Assert.That(ntsKEResult.Success,                                   Is.True, ntsKEResult.ErrorMessage);
                 Assert.That(ntsKEResult.Response!.PublicKeys,                      Is.Empty);
 
+                // Asked for no key in particular: the time stands, and the query says
+                // that nothing is known about the signature.
                 var queryResult  = await ntsClient.QueryTime(
                                              NTSKEResponse:       ntsKEResult.Response,
                                              SignedResponseMode:  SignedResponseMode.Scheduled,
-                                             SignedResponseKeyId: 7,
                                              Timeout:             TimeSpan.FromSeconds(5)
                                          );
 
@@ -172,6 +173,23 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                 Assert.That(queryResult.Response!.NTSSignedResponse(),             Is.Not.Null);
                 Assert.That(queryResult.SignatureVerification,                     Is.EqualTo(NTSSignatureVerification.UnknownKey));
                 Assert.That(queryResult.SignatureKeyId,                            Is.EqualTo(7));
+
+                // Asked for key 7 by its id: its word was wanted, and there is nothing
+                // to check it against.
+                ntsKEResult      = await ntsClient.GetNTSKERecords(RequestNTSPublicKeys: false);
+
+                var askedFor7    = await ntsClient.QueryTime(
+                                             NTSKEResponse:       ntsKEResult.Response,
+                                             SignedResponseMode:  SignedResponseMode.Scheduled,
+                                             SignedResponseKeyId: 7,
+                                             Timeout:             TimeSpan.FromSeconds(5)
+                                         );
+
+                Assert.That(askedFor7.Success,                                     Is.False);
+                Assert.That(askedFor7.ErrorCategory,                               Is.EqualTo(NTSQueryErrorCategory.NTSAuthentication));
+                Assert.That(askedFor7.ErrorMessage,                                Does.Contain("named no such key"));
+                Assert.That(askedFor7.SignatureVerification,                       Is.EqualTo(NTSSignatureVerification.UnknownKey));
+                Assert.That(askedFor7.SignatureKeyId,                              Is.EqualTo(7));
 
             }
             finally
@@ -858,8 +876,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         /// <summary>
         /// The query asked for key 8 and the response is signed with key 7 - a key the
         /// key exchange named, and a signature that is good. It is still not what was
-        /// asked for: whoever names a key wants that key's word, and the query says
-        /// that it is another's, and whose, without looking at the signature further.
+        /// asked for: whoever names a key wants that key's word, and the query fails
+        /// and says that it is another's, and whose, without looking at the signature
+        /// further.
         ///
         /// Asked for no key in particular, the same response is verified.
         /// </summary>
@@ -892,9 +911,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                                              Timeout:             TimeSpan.FromSeconds(5)
                                          );
 
-                // The time is good - it is NTS that vouches for it - and the query says
-                // what the signature is not.
-                Assert.That(askedFor8.Success,                                     Is.True, askedFor8.ErrorMessage);
+                // Key 8's word was asked for, and this is not it: the query has failed,
+                // and says whose word it got.
+                Assert.That(askedFor8.Success,                                     Is.False);
+                Assert.That(askedFor8.ErrorCategory,                               Is.EqualTo(NTSQueryErrorCategory.NTSAuthentication));
+                Assert.That(askedFor8.ErrorMessage,                                Does.Contain("not with the public key 8"));
                 Assert.That(askedFor8.SignatureVerification,                       Is.EqualTo(NTSSignatureVerification.WrongKey));
                 Assert.That(askedFor8.SignatureKeyId,                              Is.EqualTo(7));
 

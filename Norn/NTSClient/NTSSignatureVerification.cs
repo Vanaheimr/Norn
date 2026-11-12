@@ -54,14 +54,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         KeyNotValid,
 
         /// <summary>
-        /// The response is signed with another key than the one that was asked for.
+        /// The response is signed with another key than the one that was asked for. Such
+        /// a query has failed: whoever names a key wants that key's word.
         /// </summary>
         WrongKey,
 
         /// <summary>
         /// The response is signed with a key the key exchange did not name - because no
         /// public keys were requested there, or because the server signs with another.
-        /// Nothing is known about the signature, either way.
+        /// Nothing is known about the signature, either way. Where a key was asked for by
+        /// its id, such a query has failed; asked for no key in particular, it stands.
         /// </summary>
         UnknownKey,
 

@@ -126,10 +126,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </summary>
         /// <remarks>
         /// Checked by the query itself, against the public keys of the key exchange it was
-        /// given. <see cref="NTSSignatureVerification.Invalid"/> comes only with a failed
-        /// query; a response without a signature, or with one of a key the key exchange
-        /// did not name, is still a time that the NTS authenticator vouches for, and it is
-        /// for the caller to say whether that is enough.
+        /// given. <see cref="NTSSignatureVerification.Invalid"/>,
+        /// <see cref="NTSSignatureVerification.KeyNotValid"/> and
+        /// <see cref="NTSSignatureVerification.WrongKey"/> come only with a failed query,
+        /// and so does <see cref="NTSSignatureVerification.UnknownKey"/> where a key was
+        /// asked for by its id. A response without a signature - or, asked for no key in
+        /// particular, with one of a key the key exchange did not name - is still a time
+        /// that the NTS authenticator vouches for, and it is for the caller to say whether
+        /// that is enough.
         /// </remarks>
         public NTSSignatureVerification     SignatureVerification   { get; }
 

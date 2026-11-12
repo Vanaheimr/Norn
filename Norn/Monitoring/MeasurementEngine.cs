@@ -1274,8 +1274,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                 // The query checks the signature itself. A signature that is not the named
                 // key's fails it, and is reported here all the same: as the signed response
                 // that came, and did not verify.
-                var invalid   = answer.SignatureVerification is NTSSignatureVerification.Invalid
-                                                                     or NTSSignatureVerification.KeyNotValid;
+                var invalid   = !answer.Success &&
+                                answer.SignatureVerification is NTSSignatureVerification.Invalid
+                                                             or NTSSignatureVerification.KeyNotValid
+                                                             or NTSSignatureVerification.WrongKey
+                                                             or NTSSignatureVerification.UnknownKey;
 
                 if ((!answer.Success && !invalid) || answer.Response is not NTPPacket response)
                     return new SignedResponseResult(false, ErrorMessage: answer.ErrorMessage ?? "No signed response");

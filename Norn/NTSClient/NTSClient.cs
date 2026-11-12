@@ -1493,6 +1493,51 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #endregion
 
+        #region (private static) SignatureFailure(Verification, KeyId, RequestedKeyId, What)
+
+        /// <summary>
+        /// Why a signature fails the query it was asked for by, or null where it does not.
+        /// </summary>
+        /// <remarks>
+        /// A signature that is wrong fails it, whoever asked: not the named key's, or of a
+        /// key that was not valid. Whoever asked for one key in particular is failed by
+        /// anything but that key's word as well - a signature of another key, or of a key
+        /// by that number which the key exchange did not name and nothing can be checked
+        /// against. Naming a key says that no other proof will do.
+        ///
+        /// Asked for no key in particular, a signature of a key the key exchange did not
+        /// name is reported and the query stands, and so does a response without any: the
+        /// time is still one the NTS authenticator vouches for.
+        /// </remarks>
+        /// <param name="Verification">What became of the signature.</param>
+        /// <param name="KeyId">The id of the key the response is signed with.</param>
+        /// <param name="RequestedKeyId">The id of the key that was asked for, or AnyKey.</param>
+        /// <param name="What">The response, as the message calls it.</param>
+        private static String? SignatureFailure(NTSSignatureVerification  Verification,
+                                                UInt16?                   KeyId,
+                                                UInt16                    RequestedKeyId,
+                                                String                    What)
+
+            => Verification switch {
+
+                   NTSSignatureVerification.Invalid
+                       => $"The signature of the {What} is not the one of the public key {KeyId} the key exchange named!",
+
+                   NTSSignatureVerification.KeyNotValid
+                       => $"The {What} is signed with the public key {KeyId}, which was not valid at the time it gives!",
+
+                   NTSSignatureVerification.WrongKey
+                       => $"The {What} is signed with the public key {KeyId}, and not with the public key {RequestedKeyId} that was asked for!",
+
+                   NTSSignatureVerification.UnknownKey when RequestedKeyId != NTSRequestSignedResponseExtension.AnyKey
+                       => $"The {What} is signed with the public key {KeyId} that was asked for, and the key exchange named no such key!",
+
+                   _   => null
+
+               };
+
+        #endregion
+
         #region QueryTime (Timeout = null, NTSKEResponse = null, SignedResponseMode = None, SignedResponseKeyId = AnyKey, ...)
 
         /// <summary>
@@ -1508,8 +1553,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <param name="SignedResponseKeyId">
         /// The id of the key the response is to be signed with, as the key exchange named it;
         /// <see cref="NTSRequestSignedResponseExtension.AnyKey"/> leaves the choice to the
-        /// server. A response signed with another key than the one asked for is reported as
-        /// <see cref="NTSSignatureVerification.WrongKey"/>.
+        /// server. A response signed with another key than the one asked for fails the query,
+        /// as <see cref="NTSSignatureVerification.WrongKey"/>, and so does one signed with
+        /// that key where the key exchange did not name it: whoever names a key wants that
+        /// key's word, checked.
         /// </param>
         /// <param name="NTPServer">
         /// Which of the servers the key exchange named to send this request to,
@@ -2063,11 +2110,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                                     var (signature2, signatureKeyId2) = VerifySignature(ntpResponse2, NTSKEResponse, SignedResponseMode, SignedResponseKeyId, TimeProvider);
 
-                                    if (signature2 is NTSSignatureVerification.Invalid or NTSSignatureVerification.KeyNotValid)
+                                    if (SignatureFailure(signature2, signatureKeyId2, SignedResponseKeyId, "2nd NTP response") is String signatureFailure2)
                                         return NTSQueryResult.Failed(
-                                                   signature2 == NTSSignatureVerification.KeyNotValid
-                                               ? $"The 2nd NTP response is signed with the public key {signatureKeyId2}, which was not valid at the time it gives!"
-                                               : $"The signature of the 2nd NTP response is not the one of the public key {signatureKeyId2} the key exchange named!",
+                                                   signatureFailure2,
                                                    NTSQueryErrorCategory.NTSAuthentication,
                                                    remoteEndPoint,
                                                    remoteDescription,
@@ -2165,11 +2210,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                             // for as a second response that was not announced, it did not come.
                             var (signature1, signatureKeyId1) = VerifySignature(ntpResponse1, NTSKEResponse, SignedResponseMode, SignedResponseKeyId, TimeProvider);
 
-                            if (signature1 is NTSSignatureVerification.Invalid or NTSSignatureVerification.KeyNotValid)
+                            if (SignatureFailure(signature1, signatureKeyId1, SignedResponseKeyId, "NTP response") is String signatureFailure1)
                                 return NTSQueryResult.Failed(
-                                           signature1 == NTSSignatureVerification.KeyNotValid
-                                               ? $"The NTP response is signed with the public key {signatureKeyId1}, which was not valid at the time it gives!"
-                                               : $"The signature of the NTP response is not the one of the public key {signatureKeyId1} the key exchange named!",
+                                           signatureFailure1,
                                            NTSQueryErrorCategory.NTSAuthentication,
                                            remoteEndPoint,
                                            remoteDescription,
