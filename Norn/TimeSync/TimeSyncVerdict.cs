@@ -107,8 +107,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.TimeSync
         /// <see cref="Agreeing"/> answers it: a majority that agrees outvotes the
         /// rest, and the round is usable with this flag set. Without such a
         /// majority the outcome is <see cref="TimeSyncOutcome.ServersDisagree"/>.
-        /// That is stricter than the white paper, and on purpose: the median of
-        /// two servers ninety seconds apart is a time neither of them gave, and
+        /// This is the "Agreement" rule of section 3.2.3 of the white paper. It
+        /// used to ask for the spread to be recorded only: the median of two
+        /// servers ninety seconds apart is a time neither of them gave, and
         /// "usable" was the wrong word for it.
         /// </remarks>
         public Boolean                              DeviationExceeded  { get; }

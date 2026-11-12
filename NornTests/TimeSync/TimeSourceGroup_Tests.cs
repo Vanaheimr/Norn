@@ -219,8 +219,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.TimeSync
         /// This used to be "usable" with a flag to be looked at, on the grounds
         /// that the white paper asks for the discrepancy to be recorded and not
         /// for the time to be thrown away. It is still recorded. But a flag is
-        /// read by whoever thinks of it, and an outcome by everyone: the stricter
-        /// rule is adopted here on purpose, and this test is what says so.
+        /// read by whoever thinks of it, and an outcome by everyone: the white
+        /// paper now asks for agreement (section 3.2.3, "Agreement"), and this
+        /// test is what holds the implementation to it.
         /// </remarks>
         [Test]
         public void TwoServersThatDisagreeAreNoTime()
