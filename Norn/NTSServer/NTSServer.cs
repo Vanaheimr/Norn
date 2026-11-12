@@ -781,6 +781,47 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                            $"unrecognized critical record type {(UInt16) unknownCritical.Type}"
                        );
 
+            #region What a request must not say about itself (§ 4.1.1 to 4.1.6)
+
+            // § 4.1.1 and 4.1.2: for End of Message and NTS Next Protocol Negotiation "The
+            // Critical Bit MUST be set". The client is held to it as this library's own
+            // client holds a server to it: a request that marks as skippable the two records
+            // nobody may skip is not one whose offers are to be taken at their word.
+            var notCritical = records.FirstOrDefault(record => !record.IsCritical &&
+                                                               record.Type is NTSKE_RecordTypes.EndOfMessage
+                                                                           or NTSKE_RecordTypes.NTSNextProtocolNegotiation);
+
+            if (notCritical is not null)
+                return NTSKENegotiation.Refuse(
+                           NTSKEErrorCodes.BadRequest,
+                           $"the request carries a {notCritical.Type} record without its critical bit"
+                       );
+
+            // § 4.1.1: "The Record Body MUST be empty."
+            var endOfMessage = records.FirstOrDefault(record => record.Type == NTSKE_RecordTypes.EndOfMessage &&
+                                                                record.Body.Length != 0);
+
+            if (endOfMessage is not null)
+                return NTSKENegotiation.Refuse(
+                           NTSKEErrorCodes.BadRequest,
+                           $"the End of Message record of the request has a body of {endOfMessage.Body.Length} octets"
+                       );
+
+            // § 4.1.3: "Clients MUST NOT include Error records in their request", § 4.1.4
+            // says the same of Warning records, and § 4.1.6 of the cookies: "Clients MUST NOT
+            // send records of this type." These are the three a server speaks with.
+            var serversOnly = records.FirstOrDefault(record => record.Type is NTSKE_RecordTypes.Error
+                                                                           or NTSKE_RecordTypes.Warning
+                                                                           or NTSKE_RecordTypes.NewCookieForNTPv4);
+
+            if (serversOnly is not null)
+                return NTSKENegotiation.Refuse(
+                           NTSKEErrorCodes.BadRequest,
+                           $"the request carries a {serversOnly.Type} record, which only a server sends"
+                       );
+
+            #endregion
+
             #region Next Protocol Negotiation (§ 4.1.2)
 
             var nextProtocolRecords = records.Where(record => record.Type == NTSKE_RecordTypes.NTSNextProtocolNegotiation).ToArray();

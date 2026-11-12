@@ -154,7 +154,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                         NTSKE_RecordTypes.EndOfMessage
                             => new NTSKERecords.EndOfMessage(
-                                   critical
+                                   critical,
+                                   body
                                ),
 
                         NTSKE_RecordTypes.NTSNextProtocolNegotiation

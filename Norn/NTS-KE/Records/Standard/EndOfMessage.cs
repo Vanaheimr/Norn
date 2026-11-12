@@ -22,10 +22,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS.NTSKERecords
     /// End of Message
     /// </summary>
     /// <param name="IsCritical">Whether an unrecognized record must cause an error.</param>
-    public class EndOfMessage(Boolean IsCritical)
+    /// <param name="Body">
+    /// What was received as the body. RFC 8915 § 4.1.1 has it empty, and it is kept
+    /// for exactly that reason: whoever validates the message can only refuse a body
+    /// the parser did not already throw away.
+    /// </param>
+    public class EndOfMessage(Boolean  IsCritical,
+                              Byte[]?  Body   = null)
 
          : NTSKE_Record(IsCritical,
-                        NTSKE_RecordTypes.EndOfMessage)
+                        NTSKE_RecordTypes.EndOfMessage,
+                        Body)
 
     { }
 

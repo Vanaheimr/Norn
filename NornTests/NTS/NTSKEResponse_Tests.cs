@@ -409,6 +409,43 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
         #endregion
 
+        #region NTSKERecordValidator_Rejects_An_End_Of_Message_With_A_Body_As_Received()
+
+        /// <summary>
+        /// The same from the octets a server sent. The parser used to hand on an End of
+        /// Message without whatever body it had come with, so the check above was passed
+        /// by every response that was actually received.
+        /// </summary>
+        [Test]
+        public void NTSKERecordValidator_Rejects_An_End_Of_Message_With_A_Body_As_Received()
+        {
+
+            var received = CreateValidResponseRecords().
+                               Where (record => record.Type != NTSKE_RecordTypes.EndOfMessage).
+                               ToByteArray().
+                               Concat(new Byte[] { 0x80, 0x00, 0x00, 0x01, 0x00 }).
+                               ToArray();
+
+            Assert.That(NTSKE_Record.TryParse(received, out var records, out _),   Is.True);
+            Assert.That(records!.Last().Type,                                       Is.EqualTo(NTSKE_RecordTypes.EndOfMessage));
+            Assert.That(records!.Last().Body,                                       Is.EqualTo(new Byte[] { 0x00 }));
+
+            Assert.That(
+                NTSKERecordValidator.ValidateServerResponse(
+                    records!,
+                    out var errorMessage,
+                    out var errorCategory
+                ),
+                Is.False
+            );
+
+            Assert.That(errorMessage,   Does.Contain("End of Message"));
+            Assert.That(errorCategory,  Is.EqualTo(NTSKEErrorCategory.Protocol));
+
+        }
+
+        #endregion
+
         #region NTSKERecordValidator_Leaves_The_Critical_Bit_Of_Other_Records_Alone()
 
         /// <summary>

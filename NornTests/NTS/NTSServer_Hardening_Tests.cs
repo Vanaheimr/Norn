@@ -398,6 +398,91 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
         #endregion
 
+        #region NTSKE_ARequestThatContradictsItselfIsABadRequest(Request)
+
+        /// <summary>
+        /// RFC 8915 § 4.1.1 to 4.1.6: End of Message and Next Protocol Negotiation are
+        /// critical, End of Message is empty, and Error, Warning and New Cookie records
+        /// are the server's to send. Each of these requests is complete and would be
+        /// served, were it not for the one thing wrong with it.
+        /// </summary>
+        [TestCase(new Byte[] { 0x00, 0x01, 0x00, 0x02, 0x00, 0x00,                 // Next Protocol, not critical
+                               0x80, 0x04, 0x00, 0x02, 0x00, 0x0f,
+                               0x80, 0x00, 0x00, 0x00 },                           TestName = "NTSKE_ANextProtocolRecordWithoutCriticalBitIsABadRequest")]
+        [TestCase(new Byte[] { 0x80, 0x01, 0x00, 0x02, 0x00, 0x00,
+                               0x80, 0x04, 0x00, 0x02, 0x00, 0x0f,
+                               0x00, 0x00, 0x00, 0x00 },                           TestName = "NTSKE_AnEndOfMessageWithoutCriticalBitIsABadRequest")]
+        [TestCase(new Byte[] { 0x80, 0x01, 0x00, 0x02, 0x00, 0x00,
+                               0x80, 0x04, 0x00, 0x02, 0x00, 0x0f,
+                               0x80, 0x00, 0x00, 0x01, 0x00 },                     TestName = "NTSKE_AnEndOfMessageWithABodyIsABadRequest")]
+        [TestCase(new Byte[] { 0x80, 0x01, 0x00, 0x02, 0x00, 0x00,
+                               0x80, 0x04, 0x00, 0x02, 0x00, 0x0f,
+                               0x80, 0x02, 0x00, 0x02, 0x00, 0x01,                 // Error: Bad Request
+                               0x80, 0x00, 0x00, 0x00 },                           TestName = "NTSKE_ARequestWithAnErrorRecordIsABadRequest")]
+        [TestCase(new Byte[] { 0x80, 0x01, 0x00, 0x02, 0x00, 0x00,
+                               0x80, 0x04, 0x00, 0x02, 0x00, 0x0f,
+                               0x80, 0x03, 0x00, 0x02, 0x00, 0x00,                 // Warning
+                               0x80, 0x00, 0x00, 0x00 },                           TestName = "NTSKE_ARequestWithAWarningRecordIsABadRequest")]
+        [TestCase(new Byte[] { 0x80, 0x01, 0x00, 0x02, 0x00, 0x00,
+                               0x80, 0x04, 0x00, 0x02, 0x00, 0x0f,
+                               0x00, 0x05, 0x00, 0x04, 0x01, 0x02, 0x03, 0x04,     // New Cookie for NTPv4
+                               0x80, 0x00, 0x00, 0x00 },                           TestName = "NTSKE_ARequestWithACookieRecordIsABadRequest")]
+        [Category("LocalIntegration")]
+        public async Task NTSKE_ARequestThatContradictsItselfIsABadRequest(Byte[] Request)
+        {
+
+            await using var server = await RunningServer.Start();
+
+            using var tls = await server.Connect(SslProtocols.Tls13);
+
+            await tls.WriteAsync(Request);
+            await tls.FlushAsync();
+
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+            var response = new Byte[4096];
+            var length   = await tls.ReadAtLeastAsync(response, 10, throwOnEndOfStream: false, timeout.Token);
+
+            // Error (critical), 2 octets, code 1 = Bad Request. End of Message (critical).
+            Assert.That(response[..length],                                                                 Is.EqualTo(new Byte[] { 0x80, 0x02, 0x00, 0x02, 0x00, 0x01,
+                                                                                                                                      0x80, 0x00, 0x00, 0x00 }));
+
+            Assert.That(server.Server.Metrics.NTSKERequestsInvalid,                                         Is.EqualTo(1));
+
+        }
+
+        #endregion
+
+        #region NTSKE_AnAEADRecordWithoutCriticalBitIsServed()
+
+        /// <summary>
+        /// The other side of it: § 4.1.5 leaves the critical bit of the
+        /// AEAD Algorithm Negotiation record to the sender ("MAY be set").
+        /// </summary>
+        [Test]
+        [Category("LocalIntegration")]
+        public async Task NTSKE_AnAEADRecordWithoutCriticalBitIsServed()
+        {
+
+            await using var server = await RunningServer.Start();
+
+            using var tls = await server.Connect(SslProtocols.Tls13);
+
+            await tls.WriteAsync(new Byte[] { 0x80, 0x01, 0x00, 0x02, 0x00, 0x00,
+                                              0x00, 0x04, 0x00, 0x02, 0x00, 0x0f,     // AEAD, not critical
+                                              0x80, 0x00, 0x00, 0x00 });
+            await tls.FlushAsync();
+
+            var response = new Byte[4096];
+            var length   = await tls.ReadAtLeastAsync(response, 6, throwOnEndOfStream: false);
+
+            Assert.That(length,                                                                             Is.GreaterThan(100), "Cookies were expected.");
+            Assert.That(response[..6],                                                                      Is.EqualTo(new Byte[] { 0x80, 0x01, 0x00, 0x02, 0x00, 0x00 }));
+
+        }
+
+        #endregion
+
         #region NTSKE_OneClientCannotTakeEverySlot()
 
         /// <summary>
