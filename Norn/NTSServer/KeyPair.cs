@@ -434,6 +434,21 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #endregion
 
+        #region IsValidAt(Timestamp)
+
+        /// <summary>
+        /// Whether the key is valid at the given time: not before its first day,
+        /// and not after its last. A key without either is valid without limit.
+        /// </summary>
+        /// <param name="Timestamp">The time in question.</param>
+        public Boolean IsValidAt(DateTimeOffset Timestamp)
+
+            => (!NotBefore.HasValue || Timestamp >= NotBefore.Value) &&
+               (!NotAfter. HasValue || Timestamp <= NotAfter. Value);
+
+        #endregion
+
+
         #region Clone()
 
         /// <summary>

@@ -246,6 +246,279 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
         #endregion
 
+        #region APublicKeySaysWhatItIs()
+
+        /// <summary>
+        /// The record a key exchange hands out carries the curve, the algorithm and the
+        /// validity of the key. It used to carry the id and the octets, and whoever
+        /// received it assumed the rest.
+        /// </summary>
+        [Test]
+        public void APublicKeySaysWhatItIs()
+        {
+
+            var notBefore  = new DateTimeOffset(2026,  1,  1, 0, 0, 0, TimeSpan.Zero);
+            var notAfter   = new DateTimeOffset(2027,  1,  1, 0, 0, 0, TimeSpan.Zero);
+            var generated  = KeyPair.GenerateECKeys(7);
+
+            var publicKey  = new PublicKey(7, generated.PublicKey, null, "secp384r1", "SHA-384withECDSA", notBefore, notAfter);
+            var parsed     = PublicKey.Parse(publicKey.ToByteArray());
+
+            Assert.That(parsed.Id,                                                 Is.EqualTo(7));
+            Assert.That(parsed.Value,                                              Is.EqualTo(generated.PublicKey));
+            Assert.That(parsed.EllipticCurve,                                      Is.EqualTo("secp384r1"));
+            Assert.That(parsed.SignatureAlgorithm,                                 Is.EqualTo("SHA-384withECDSA"));
+            Assert.That(parsed.NotBefore,                                          Is.EqualTo(notBefore));
+            Assert.That(parsed.NotAfter,                                           Is.EqualTo(notAfter));
+            Assert.That(parsed,                                                    Is.EqualTo(publicKey));
+
+            // No limits, and none invented.
+            var unlimited  = PublicKey.Parse(generated.ToPublicKey().ToByteArray());
+
+            Assert.That(unlimited.NotBefore,                                       Is.Null);
+            Assert.That(unlimited.NotAfter,                                        Is.Null);
+            Assert.That(unlimited.EllipticCurve,                                   Is.EqualTo("secp256r1"));
+
+            Assert.That(parsed.IsValidAt(notBefore),                               Is.True);
+            Assert.That(parsed.IsValidAt(notAfter),                                Is.True);
+            Assert.That(parsed.IsValidAt(notBefore.AddSeconds(-1)),                Is.False);
+            Assert.That(parsed.IsValidAt(notAfter. AddSeconds( 1)),                Is.False);
+            Assert.That(unlimited.IsValidAt(DateTimeOffset.MinValue),              Is.True);
+            Assert.That(unlimited.IsValidAt(DateTimeOffset.MaxValue),              Is.True);
+
+            // The key alone, as it was sent before: read as the defaults.
+            var bare       = new Byte[4 + generated.PublicKey.Length];
+            bare[1]        = 7;
+            bare[3]        = (Byte) generated.PublicKey.Length;
+            generated.PublicKey.CopyTo(bare, 4);
+
+            Assert.That(PublicKey.TryParse(bare, out var old, out _),              Is.True);
+            Assert.That(old!.Value,                                                Is.EqualTo(generated.PublicKey));
+            Assert.That(old!.EllipticCurve,                                        Is.EqualTo("secp256r1"));
+
+            // What is not a key record is refused, and not thrown about.
+            var whole      = publicKey.ToByteArray();
+
+            Assert.That(PublicKey.TryParse(Array.Empty<Byte>(),                  out _, out _),   Is.False);
+            Assert.That(PublicKey.TryParse(new Byte[] { 0, 7, 0xff, 0xff }, out _, out _),   Is.False);
+            Assert.That(PublicKey.TryParse(whole[..^1],           out _, out _),   Is.False);
+            Assert.That(PublicKey.TryParse(whole.Append((Byte) 0).ToArray(), out _, out _),   Is.False);
+
+            // An escape sequence where the name of the curve should be.
+            var hostile    = (Byte[]) whole.Clone();
+            hostile[4 + generated.PublicKey.Length + 1] = 0x1b;
+
+            Assert.That(PublicKey.TryParse(hostile,               out _, out _),   Is.False);
+
+            // A validity that ends before it begins.
+            var backwards  = new PublicKey(7, generated.PublicKey, NotBefore: notAfter, NotAfter: notBefore);
+
+            Assert.That(PublicKey.TryParse(backwards.ToByteArray(), out _, out _), Is.False);
+
+        }
+
+        #endregion
+
+        #region APublicKeyReadsTheJSONItWrote()
+
+        /// <summary>
+        /// ToJSON() wrote the key as "publicKey", and Parse() looked for it as "value".
+        /// </summary>
+        [Test]
+        public void APublicKeyReadsTheJSONItWrote()
+        {
+
+            var publicKey  = new PublicKey(
+                                 7,
+                                 KeyPair.GenerateECKeys(7).PublicKey,
+                                 NotBefore:  new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero),
+                                 NotAfter:   new DateTimeOffset(2027, 1, 1, 0, 0, 0, TimeSpan.Zero)
+                             );
+
+            Assert.That(PublicKey.TryParse(publicKey.ToJSON(), out var parsed, out var errorResponse),
+                                                                                   Is.True, errorResponse);
+
+            Assert.That(parsed,                                                    Is.EqualTo(publicKey));
+
+        }
+
+        #endregion
+
+        #region AServerSignsWithTheKeyThatWasAskedFor()
+
+        /// <summary>
+        /// Asked for a key it does not have, the server does not sign with the one it
+        /// has: the client would hold a signature it did not ask for. Asked for no
+        /// key in particular, it signs with its own, and the query says which.
+        /// </summary>
+        [Test]
+        [Category("LocalIntegration")]
+        public async Task AServerSignsWithTheKeyThatWasAskedFor()
+        {
+
+            var (ntsServer, ntsClient) = await Start(KeyPair.GenerateECKeys(7));
+
+            try
+            {
+
+                var ntsKEResult  = await ntsClient.GetNTSKERecords(RequestNTSPublicKeys: true);
+
+                Assert.That(ntsKEResult.Success,                                   Is.True, ntsKEResult.ErrorMessage);
+
+                var started      = System.Diagnostics.Stopwatch.GetTimestamp();
+
+                var otherKey     = await ntsClient.QueryTime(
+                                             NTSKEResponse:       ntsKEResult.Response,
+                                             SignedResponseMode:  SignedResponseMode.Scheduled,
+                                             SignedResponseKeyId: 8,
+                                             Timeout:             TimeSpan.FromSeconds(5)
+                                         );
+
+                Assert.That(otherKey.Success,                                      Is.True, otherKey.ErrorMessage);
+                Assert.That(otherKey.SignatureVerification,                        Is.EqualTo(NTSSignatureVerification.NotSigned));
+                Assert.That(otherKey.Response!.NTSSignedResponseAnnouncement(),    Is.Null);
+                Assert.That(System.Diagnostics.Stopwatch.GetElapsedTime(started),  Is.LessThan(TimeSpan.FromSeconds(2)));
+
+                var anyKey       = await ntsClient.QueryTime(
+                                             NTSKEResponse:       ntsKEResult.Response,
+                                             SignedResponseMode:  SignedResponseMode.Scheduled,
+                                             Timeout:             TimeSpan.FromSeconds(5)
+                                         );
+
+                Assert.That(anyKey.Success,                                        Is.True, anyKey.ErrorMessage);
+                Assert.That(anyKey.SignatureVerification,                          Is.EqualTo(NTSSignatureVerification.Verified));
+                Assert.That(anyKey.SignatureKeyId,                                 Is.EqualTo(7));
+
+            }
+            finally
+            {
+                await ntsServer.ShutdownAsync();
+            }
+
+        }
+
+        #endregion
+
+        #region AServerDoesNotSignWithAKeyThatIsNotValid(DaysFromNow)
+
+        /// <summary>
+        /// A key past its last day, and one before its first: neither signs. The one
+        /// that is past is not handed out by the key exchange either; the one to come
+        /// is, so that it is known by the time it is used.
+        /// </summary>
+        [TestCase(-30, -1, false, TestName = "AServerDoesNotSignWithAKeyThatHasExpired")]
+        [TestCase(  1, 30, true,  TestName = "AServerDoesNotSignWithAKeyThatIsNotValidYet")]
+        [Category("LocalIntegration")]
+        public async Task AServerDoesNotSignWithAKeyThatIsNotValid(Int32 FromDays, Int32 ToDays, Boolean HandedOut)
+        {
+
+            var generated              = KeyPair.GenerateECKeys(7);
+            var now                    = DateTimeOffset.UtcNow;
+
+            var (ntsServer, ntsClient) = await Start(
+                                                   new KeyPair(
+                                                       7,
+                                                       generated.PrivateKey,
+                                                       generated.PublicKey,
+                                                       NotBefore:  now.AddDays(FromDays),
+                                                       NotAfter:   now.AddDays(ToDays)
+                                                   )
+                                               );
+
+            try
+            {
+
+                var ntsKEResult  = await ntsClient.GetNTSKERecords(RequestNTSPublicKeys: true);
+
+                Assert.That(ntsKEResult.Success,                                   Is.True, ntsKEResult.ErrorMessage);
+                Assert.That(ntsKEResult.Response!.PublicKeys.Any(),                Is.EqualTo(HandedOut));
+
+                var queryResult  = await ntsClient.QueryTime(
+                                             NTSKEResponse:       ntsKEResult.Response,
+                                             SignedResponseMode:  SignedResponseMode.Scheduled,
+                                             SignedResponseKeyId: 7,
+                                             Timeout:             TimeSpan.FromSeconds(5)
+                                         );
+
+                Assert.That(queryResult.Success,                                   Is.True, queryResult.ErrorMessage);
+                Assert.That(queryResult.SignatureVerification,                     Is.EqualTo(NTSSignatureVerification.NotSigned));
+                Assert.That(queryResult.Response!.NTSSignedResponse(),             Is.Null);
+
+            }
+            finally
+            {
+                await ntsServer.ShutdownAsync();
+            }
+
+        }
+
+        #endregion
+
+        #region ASignatureOfAKeyThatWasNotValidFailsTheQuery()
+
+        /// <summary>
+        /// The signature is the key's, and the key exchange said that key ended last
+        /// year. A server that signs with a key it has retired, or somebody who got
+        /// hold of one: either way not a proof of anything.
+        /// </summary>
+        [Test]
+        [Category("LocalIntegration")]
+        public async Task ASignatureOfAKeyThatWasNotValidFailsTheQuery()
+        {
+
+            var (ntsServer, ntsClient) = await Start(KeyPair.GenerateECKeys(7));
+
+            try
+            {
+
+                var ntsKEResult  = await ntsClient.GetNTSKERecords(RequestNTSPublicKeys: true);
+
+                Assert.That(ntsKEResult.Success,                                   Is.True, ntsKEResult.ErrorMessage);
+
+                // The same key exchange and the same key, with a validity that is over.
+                var keyExchange  = ntsKEResult.Response!;
+                var serverKey    = keyExchange.PublicKeys.Single();
+
+                var retired      = new PublicKey(
+                                       serverKey.Id,
+                                       serverKey.Value,
+                                       NotBefore:  DateTimeOffset.UtcNow.AddDays(-400),
+                                       NotAfter:   DateTimeOffset.UtcNow.AddDays(-35)
+                                   );
+
+                var outdated     = new NTSKE_Response(
+                                       keyExchange.NTSKERecords.
+                                           Select(record => record.Type == NTSKE_RecordTypes.NTSPublicKey
+                                                                ? NTSKE_Record.NTSPublicKey(retired)
+                                                                : record).
+                                           ToArray(),
+                                       keyExchange.C2SKey,
+                                       keyExchange.S2CKey
+                                   );
+
+                var queryResult  = await ntsClient.QueryTime(
+                                             NTSKEResponse:       outdated,
+                                             SignedResponseMode:  SignedResponseMode.Scheduled,
+                                             SignedResponseKeyId: 7,
+                                             Timeout:             TimeSpan.FromSeconds(5)
+                                         );
+
+                Assert.That(queryResult.Success,                                   Is.False);
+                Assert.That(queryResult.SignatureVerification,                     Is.EqualTo(NTSSignatureVerification.KeyNotValid));
+                Assert.That(queryResult.SignatureKeyId,                            Is.EqualTo(7));
+                Assert.That(queryResult.ErrorCategory,                             Is.EqualTo(NTSQueryErrorCategory.NTSAuthentication));
+                Assert.That(queryResult.ErrorMessage,                              Does.Contain("not valid"));
+
+            }
+            finally
+            {
+                await ntsServer.ShutdownAsync();
+            }
+
+        }
+
+        #endregion
+
         #region ASignatureIsCheckedAgainstTheKeyItNames()
 
         /// <summary>

@@ -237,7 +237,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                 #region Value                 [mandatory]
 
-                if (!JSON.ParseMandatoryText("value",
+                // "publicKey" is what ToJSON() writes. Parse() asked for "value" only,
+                // and so could not read what this class itself had written.
+                if (!JSON.ParseMandatoryText(JSON["publicKey"] is not null ? "publicKey" : "value",
                                              "public key value",
                                              out String? valueBase64,
                                              out ErrorResponse))
@@ -358,9 +360,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 PublicKey      = null;
                 ErrorResponse  = null;
 
+                if (ByteArray is null || ByteArray.Length < 4)
+                {
+                    ErrorResponse = "The given public key is too short!";
+                    return false;
+                }
+
                 var id      = (UInt16) ((ByteArray[0] << 8) | ByteArray[1]);
                 var length  = (UInt16) ((ByteArray[2] << 8) | ByteArray[3]);
-                var value   = new Byte[length];
 
                 if (length > ByteArray.Length - 4)
                 {
@@ -368,17 +375,54 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     return false;
                 }
 
+                var value   = new Byte[length];
+
                 Buffer.BlockCopy(ByteArray, 4, value, 0, length);
 
+                var offset  = 4 + length;
+
+                // The key alone: what was sent before the record said what kind of key
+                // it is. Read as the defaults, which is what such a key was.
+                if (offset == ByteArray.Length)
+                {
+                    PublicKey = new PublicKey(id, value);
+                    return true;
+                }
+
+                if (!TryReadName(ByteArray, ref offset, out var ellipticCurve) ||
+                    !TryReadName(ByteArray, ref offset, out var signatureAlgorithm))
+                {
+                    ErrorResponse = "The elliptic curve or the signature algorithm of the given public key is invalid!";
+                    return false;
+                }
+
+                if (ByteArray.Length - offset != 16)
+                {
+                    ErrorResponse = "The validity period of the given public key is invalid!";
+                    return false;
+                }
+
+                if (!TryReadTimestamp(ByteArray, offset,     out var notBefore) ||
+                    !TryReadTimestamp(ByteArray, offset + 8, out var notAfter))
+                {
+                    ErrorResponse = "The validity period of the given public key is out of range!";
+                    return false;
+                }
+
+                if (notBefore.HasValue && notAfter.HasValue && notAfter < notBefore)
+                {
+                    ErrorResponse = "The validity period of the given public key ends before it begins!";
+                    return false;
+                }
 
                 PublicKey = new PublicKey(
                                 id,
-                                value
-                                //description,
-                                //ellipticCurve,
-                                //signatureAlgorithm,
-                                //notBefore,
-                                //notAfter
+                                value,
+                                null,
+                                ellipticCurve,
+                                signatureAlgorithm,
+                                notBefore,
+                                notAfter
                             );
 
                 return true;
@@ -445,10 +489,29 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <summary>
         /// Return a binary representation of this public key.
         /// </summary>
+        /// <remarks>
+        /// <code>
+        ///   2 octets   key id
+        ///   2 octets   length of the key, and the key
+        ///   1 octet    length of the name of the elliptic curve, and the name (ASCII)
+        ///   1 octet    length of the name of the signature algorithm, and the name (ASCII)
+        ///   8 octets   not before, in seconds since 1970-01-01T00:00:00Z; 0 for "no limit"
+        ///   8 octets   not after,  likewise
+        /// </code>
+        /// A key says what it is. Without the curve and the algorithm, whoever receives it
+        /// can only assume them; without the validity, it cannot tell a key that is in
+        /// use from one that was retired.
+        /// </remarks>
         public Byte[] ToByteArray()
         {
 
-            var bytes = new Byte[2 + 2 + Value.Length];
+            var ellipticCurve       = System.Text.Encoding.ASCII.GetBytes(EllipticCurve);
+            var signatureAlgorithm  = System.Text.Encoding.ASCII.GetBytes(SignatureAlgorithm);
+
+            if (ellipticCurve.Length > 255 || signatureAlgorithm.Length > 255)
+                throw new InvalidOperationException("The name of the elliptic curve or of the signature algorithm is longer than 255 octets!");
+
+            var bytes  = new Byte[2 + 2 + Value.Length + 1 + ellipticCurve.Length + 1 + signatureAlgorithm.Length + 8 + 8];
 
             bytes[0] = (Byte) ((Id >> 8) & 0xFF);
             bytes[1] = (Byte)  (Id       & 0xFF);
@@ -459,11 +522,91 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             Buffer.BlockCopy(Value, 0, bytes, 4, length);
 
-            //ToDo: Add additional public key meta data!
+            var offset = 4 + length;
+
+            bytes[offset++] = (Byte) ellipticCurve.Length;
+            Buffer.BlockCopy(ellipticCurve, 0, bytes, offset, ellipticCurve.Length);
+            offset += ellipticCurve.Length;
+
+            bytes[offset++] = (Byte) signatureAlgorithm.Length;
+            Buffer.BlockCopy(signatureAlgorithm, 0, bytes, offset, signatureAlgorithm.Length);
+            offset += signatureAlgorithm.Length;
+
+            System.Buffers.Binary.BinaryPrimitives.WriteInt64BigEndian(bytes.AsSpan(offset),     NotBefore?.ToUnixTimeSeconds() ?? 0);
+            System.Buffers.Binary.BinaryPrimitives.WriteInt64BigEndian(bytes.AsSpan(offset + 8), NotAfter?. ToUnixTimeSeconds() ?? 0);
 
             return bytes;
 
         }
+
+        #endregion
+
+        #region (private static) TryReadName      (ByteArray, ref Offset, out Name)
+
+        /// <summary>
+        /// A name of one length octet and that many printable ASCII characters.
+        /// </summary>
+        private static Boolean TryReadName(Byte[] ByteArray, ref Int32 Offset, [NotNullWhen(true)] out String? Name)
+        {
+
+            Name = null;
+
+            if (Offset >= ByteArray.Length)
+                return false;
+
+            var length = ByteArray[Offset++];
+
+            if (length == 0 || length > ByteArray.Length - Offset)
+                return false;
+
+            for (var i = 0; i < length; i++)
+                if (ByteArray[Offset + i] < 0x21 || ByteArray[Offset + i] > 0x7e)
+                    return false;
+
+            Name    = System.Text.Encoding.ASCII.GetString(ByteArray, Offset, length);
+            Offset += length;
+
+            return true;
+
+        }
+
+        #endregion
+
+        #region (private static) TryReadTimestamp (ByteArray, Offset, out Timestamp)
+
+        private static Boolean TryReadTimestamp(Byte[] ByteArray, Int32 Offset, out DateTimeOffset? Timestamp)
+        {
+
+            Timestamp    = null;
+
+            var seconds  = System.Buffers.Binary.BinaryPrimitives.ReadInt64BigEndian(ByteArray.AsSpan(Offset, 8));
+
+            if (seconds == 0)
+                return true;
+
+            if (seconds < 0 || seconds > 253402300799)   // 9999-12-31T23:59:59Z
+                return false;
+
+            Timestamp    = DateTimeOffset.FromUnixTimeSeconds(seconds);
+
+            return true;
+
+        }
+
+        #endregion
+
+
+        #region IsValidAt(Timestamp)
+
+        /// <summary>
+        /// Whether the key is valid at the given time: not before its first day,
+        /// and not after its last. A key without either is valid without limit.
+        /// </summary>
+        /// <param name="Timestamp">The time in question.</param>
+        public Boolean IsValidAt(DateTimeOffset Timestamp)
+
+            => (!NotBefore.HasValue || Timestamp >= NotBefore.Value) &&
+               (!NotAfter. HasValue || Timestamp <= NotAfter. Value);
 
         #endregion
 

@@ -47,6 +47,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         Invalid,
 
         /// <summary>
+        /// The signature is that of a key the key exchange named, and by the time the
+        /// response gives that key was not valid yet, or not any more. Such a query has
+        /// failed.
+        /// </summary>
+        KeyNotValid,
+
+        /// <summary>
+        /// The response is signed with another key than the one that was asked for.
+        /// </summary>
+        WrongKey,
+
+        /// <summary>
         /// The response is signed with a key the key exchange did not name - because no
         /// public keys were requested there, or because the server signs with another.
         /// Nothing is known about the signature, either way.

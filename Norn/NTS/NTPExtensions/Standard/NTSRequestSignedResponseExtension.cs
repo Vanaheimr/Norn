@@ -29,6 +29,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
     public class NTSRequestSignedResponseExtension : NTPExtension
     {
 
+        /// <summary>
+        /// Stands for "whichever key the server signs with".
+        /// </summary>
+        public const UInt16 AnyKey = 0;
+
+        /// <summary>
+        /// The id of the key the response is to be signed with, or <see cref="AnyKey"/>.
+        /// </summary>
+        public UInt16  KeyId    { get; }
+
         public NTSRequestSignedResponseExtension(UInt16   KeyId,
                                                  Boolean  Authenticated   = false,
                                                  Boolean  Encrypted       = false)
@@ -39,6 +49,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                    Encrypted)
 
         {
+
+            this.KeyId = KeyId;
 
             Value[0] = (Byte) ((KeyId >> 8) & 0xff);
             Value[1] = (Byte)  (KeyId       & 0xff);

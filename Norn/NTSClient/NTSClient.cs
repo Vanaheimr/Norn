@@ -345,7 +345,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                   Byte[]?             UniqueId                = null,
                                                   Byte[]?             Plaintext               = null,
                                                   SignedResponseMode  RequestSignedResponse   = SignedResponseMode.None,
-                                                  UInt16              SignedResponseKeyId     = 1,
+                                                  UInt16              SignedResponseKeyId     = NTSRequestSignedResponseExtension.AnyKey,
                                                   UInt64?             TransmitTimestamp       = null,
                                                   UInt64?             OriginateTimestamp      = null,
                                                   UInt64?             ReceiveTimestamp        = null,
@@ -1426,18 +1426,25 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </summary>
         /// <remarks>
         /// Against those keys and no others: they came over the authenticated key exchange,
-        /// which is what ties them to the server that was asked. The key is the one the
-        /// signature names, whichever was requested - a server is free to sign with another
-        /// of the keys it published, and the result says which it was.
+        /// which is what ties them to the server that was asked.
+        ///
+        /// A key has to have been valid at the time the response gives, not at the time
+        /// this machine believes it is: the response is asked for because that belief may
+        /// be wrong, and its transmit timestamp is under the NTS authenticator. It is
+        /// also the time the signature vouches for.
         /// </remarks>
         /// <param name="Response">The accepted response.</param>
         /// <param name="NTSKEResponse">The key exchange the query was made with.</param>
         /// <param name="SignedResponseMode">Whether, and how, a signed response was asked for.</param>
+        /// <param name="RequestedKeyId">The id of the key that was asked for, or AnyKey.</param>
+        /// <param name="TimeProvider">The clock the era of the response's timestamp is resolved against.</param>
         private static (NTSSignatureVerification Verification, UInt16? KeyId)
 
             VerifySignature(NTPPacket           Response,
                             NTSKE_Response?     NTSKEResponse,
-                            SignedResponseMode  SignedResponseMode)
+                            SignedResponseMode  SignedResponseMode,
+                            UInt16              RequestedKeyId,
+                            TimeProvider        TimeProvider)
 
         {
 
@@ -1458,19 +1465,35 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 // A public key record that cannot be read names no key.
             }
 
+            // Not the key that was asked for. Whatever it is the signature of, it is not
+            // the proof the caller wanted, and is not looked at any further.
+            if (RequestedKeyId != NTSRequestSignedResponseExtension.AnyKey &&
+                RequestedKeyId != signature.KeyId)
+            {
+                return (NTSSignatureVerification.WrongKey, signature.KeyId);
+            }
+
             if (publicKey is null)
                 return (NTSSignatureVerification.UnknownKey, signature.KeyId);
 
-            return (signature.Verify(Response, publicKey)
+            if (!signature.Verify(Response, publicKey))
+                return (NTSSignatureVerification.Invalid, signature.KeyId);
+
+            var signedAt = new DateTimeOffset(
+                               NTPPacket.NTPTimestampToDateTime(Response.TransmitTimestamp ?? 0, TimeProvider),
+                               TimeSpan.Zero
+                           );
+
+            return (publicKey.IsValidAt(signedAt)
                         ? NTSSignatureVerification.Verified
-                        : NTSSignatureVerification.Invalid,
+                        : NTSSignatureVerification.KeyNotValid,
                     signature.KeyId);
 
         }
 
         #endregion
 
-        #region QueryTime (Timeout = null, NTSKEResponse = null, SignedResponseMode = None, SignedResponseKeyId = 1, ...)
+        #region QueryTime (Timeout = null, NTSKEResponse = null, SignedResponseMode = None, SignedResponseKeyId = AnyKey, ...)
 
         /// <summary>
         /// Sends a single NTS-authenticated NTP request and returns a structured result.
@@ -1479,7 +1502,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// Whether to ask for a signed response. Where one is asked for, its signature is
         /// checked here against the public keys of <paramref name="NTSKEResponse"/>, and
         /// <see cref="NTSQueryResult.SignatureVerification"/> says what came of it. A
-        /// signature that is not the named key's fails the query.
+        /// signature that is not the named key's fails the query, and so does one of a key
+        /// that was not valid at the time the response gives.
+        /// </param>
+        /// <param name="SignedResponseKeyId">
+        /// The id of the key the response is to be signed with, as the key exchange named it;
+        /// <see cref="NTSRequestSignedResponseExtension.AnyKey"/> leaves the choice to the
+        /// server. A response signed with another key than the one asked for is reported as
+        /// <see cref="NTSSignatureVerification.WrongKey"/>.
         /// </param>
         /// <param name="NTPServer">
         /// Which of the servers the key exchange named to send this request to,
@@ -1500,7 +1530,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public async Task<NTSQueryResult> QueryTime(TimeSpan?           Timeout               = null,
                                                     NTSKE_Response?     NTSKEResponse         = null,
                                                     SignedResponseMode  SignedResponseMode    = SignedResponseMode.None,
-                                                    UInt16              SignedResponseKeyId   = 1,
+                                                    UInt16              SignedResponseKeyId   = NTSRequestSignedResponseExtension.AnyKey,
                                                     String?             NTPServer             = null,
                                                     CancellationToken   CancellationToken     = default)
         {
@@ -2031,11 +2061,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                                     AddCookies(ntpResponse2);
 
-                                    var (signature2, signatureKeyId2) = VerifySignature(ntpResponse2, NTSKEResponse, SignedResponseMode);
+                                    var (signature2, signatureKeyId2) = VerifySignature(ntpResponse2, NTSKEResponse, SignedResponseMode, SignedResponseKeyId, TimeProvider);
 
-                                    if (signature2 == NTSSignatureVerification.Invalid)
+                                    if (signature2 is NTSSignatureVerification.Invalid or NTSSignatureVerification.KeyNotValid)
                                         return NTSQueryResult.Failed(
-                                                   $"The signature of the 2nd NTP response is not the one of the public key {signatureKeyId2} the key exchange named!",
+                                                   signature2 == NTSSignatureVerification.KeyNotValid
+                                               ? $"The 2nd NTP response is signed with the public key {signatureKeyId2}, which was not valid at the time it gives!"
+                                               : $"The signature of the 2nd NTP response is not the one of the public key {signatureKeyId2} the key exchange named!",
                                                    NTSQueryErrorCategory.NTSAuthentication,
                                                    remoteEndPoint,
                                                    remoteDescription,
@@ -2131,11 +2163,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                             // Asked for directly, the signature came with this response; asked
                             // for as a second response that was not announced, it did not come.
-                            var (signature1, signatureKeyId1) = VerifySignature(ntpResponse1, NTSKEResponse, SignedResponseMode);
+                            var (signature1, signatureKeyId1) = VerifySignature(ntpResponse1, NTSKEResponse, SignedResponseMode, SignedResponseKeyId, TimeProvider);
 
-                            if (signature1 == NTSSignatureVerification.Invalid)
+                            if (signature1 is NTSSignatureVerification.Invalid or NTSSignatureVerification.KeyNotValid)
                                 return NTSQueryResult.Failed(
-                                           $"The signature of the NTP response is not the one of the public key {signatureKeyId1} the key exchange named!",
+                                           signature1 == NTSSignatureVerification.KeyNotValid
+                                               ? $"The NTP response is signed with the public key {signatureKeyId1}, which was not valid at the time it gives!"
+                                               : $"The signature of the NTP response is not the one of the public key {signatureKeyId1} the key exchange named!",
                                            NTSQueryErrorCategory.NTSAuthentication,
                                            remoteEndPoint,
                                            remoteDescription,

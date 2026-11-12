@@ -1050,8 +1050,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     )
             );
 
+            // A key that is past its last day is not handed out any more. One whose first
+            // day is still to come is: that is how a client learns of it in time.
             if (NTSKERequest.Any(ntsKERecord => ntsKERecord.Type == NTSKE_RecordTypes.NTSRequestPublicKey) &&
-                currentPublicKey is not null)
+                currentPublicKey is not null &&
+                !(currentPublicKey.NotAfter < TimeProvider.GetUtcNow()))
             {
                 ntsKERecords.Add(
                     NTSKE_Record.NTSPublicKey(currentPublicKey)
@@ -1898,10 +1901,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                     // The announcement goes into the first response; made
                                     // without a key, it had the client wait out its timeout
                                     // for a second response that was never sent.
-                                    var signingKeyPair   = currentKeyPair;
+                                    //
+                                    // And only with the key that was asked for, while it is
+                                    // valid. Signed with another, or with one that is past its
+                                    // last day, the response would carry a signature the client
+                                    // has to refuse; better none, which it can see at once.
+                                    var signingKeyPair   = requestPacket.NTSRequestSignedResponse() is { Authenticated: true } signatureRequest
+                                                               ? SigningKeyFor(signatureRequest.KeyId)
+                                                               : null;
 
-                                    var toBeSigned       = signingKeyPair is not null &&
-                                                           requestPacket.NTSRequestSignedResponse()?.Authenticated == true;
+                                    var toBeSigned       = signingKeyPair is not null;
 
                                     // RFC 9769 § 2 decides here which of this server's earlier
                                     // timestamps the answer carries, before anything is built:
@@ -2760,6 +2769,26 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                        response1,
                        Extensions: extensions
                    );
+
+        }
+
+
+        /// <summary>
+        /// The key pair a response is signed with when the request asks for the given key:
+        /// that key, if this server has it and it is valid now. Asked for no key in
+        /// particular, it is the current one.
+        /// </summary>
+        /// <param name="KeyId">The id of the key the request asks for.</param>
+        private KeyPair? SigningKeyFor(UInt16 KeyId)
+        {
+
+            var keyPair = KeyId == NTSRequestSignedResponseExtension.AnyKey
+                              ? currentKeyPair
+                              : keyPairs.GetValueOrDefault(KeyId);
+
+            return keyPair?.IsValidAt(TimeProvider.GetUtcNow()) == true
+                       ? keyPair
+                       : null;
 
         }
 

@@ -1263,7 +1263,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                                        Timeout:              config.NTPTimeout,
                                        NTSKEResponse:        CachedState.NTSKEResponse,
                                        SignedResponseMode:   SignedResponseMode.Scheduled,
-                                       SignedResponseKeyId:  keys.FirstOrDefault()?.Id ?? 1,
+                                       SignedResponseKeyId:  keys.FirstOrDefault()?.Id ?? NTSRequestSignedResponseExtension.AnyKey,
                                        CancellationToken:    CancellationToken
                                    );
 
@@ -1273,7 +1273,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                 // The query checks the signature itself. A signature that is not the named
                 // key's fails it, and is reported here all the same: as the signed response
                 // that came, and did not verify.
-                var invalid   = answer.SignatureVerification == NTSSignatureVerification.Invalid;
+                var invalid   = answer.SignatureVerification is NTSSignatureVerification.Invalid
+                                                                     or NTSSignatureVerification.KeyNotValid;
 
                 if ((!answer.Success && !invalid) || answer.Response is not NTPPacket response)
                     return new SignedResponseResult(false, ErrorMessage: answer.ErrorMessage ?? "No signed response");
@@ -1285,8 +1286,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                            NTSSignatureVerification.Verified
                                => new SignedResponseResult(true, packet, answer.SignatureKeyId, true),
 
-                           NTSSignatureVerification.Invalid
+                           NTSSignatureVerification.Invalid or NTSSignatureVerification.KeyNotValid
                                => new SignedResponseResult(true, packet, answer.SignatureKeyId, false, answer.ErrorMessage),
+
+                           NTSSignatureVerification.WrongKey
+                               => new SignedResponseResult(true, packet, answer.SignatureKeyId, null,
+                                                           $"The response is signed with the key {answer.SignatureKeyId}, which was not the one asked for"),
 
                            NTSSignatureVerification.UnknownKey
                                => new SignedResponseResult(true, packet, answer.SignatureKeyId, null,
