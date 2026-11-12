@@ -209,21 +209,21 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.TimeSync
 
         #endregion
 
-        #region DisagreementIsRecordedButNotRefused()
+        #region TwoServersThatDisagreeAreNoTime()
 
         /// <summary>
-        /// Beyond MaxDeviation the spread must be written down - and the time is
-        /// still a time.
+        /// Two answers, ninety seconds apart. Their median is a time that
+        /// neither of them gave.
         /// </summary>
         /// <remarks>
-        /// The white paper asks for the discrepancy to be recorded in the secure
-        /// metrological log book. It does not ask for the measurement to be
-        /// thrown away, and turning "write this down" into "refuse to
-        /// synchronize" would be a stricter rule than the specified one, adopted
-        /// quietly. This test is what keeps it from being adopted by accident.
+        /// This used to be "usable" with a flag to be looked at, on the grounds
+        /// that the white paper asks for the discrepancy to be recorded and not
+        /// for the time to be thrown away. It is still recorded. But a flag is
+        /// read by whoever thinks of it, and an outcome by everyone: the stricter
+        /// rule is adopted here on purpose, and this test is what says so.
         /// </remarks>
         [Test]
-        public void DisagreementIsRecordedButNotRefused()
+        public void TwoServersThatDisagreeAreNoTime()
         {
 
             var verdict = TimeSyncVerdict.From(
@@ -234,8 +234,74 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.TimeSync
 
             Assert.Multiple(() =>
             {
+                Assert.That(verdict.Outcome,            Is.EqualTo(TimeSyncOutcome.ServersDisagree));
+                Assert.That(verdict.IsUsable,           Is.False);
+                Assert.That(verdict.Offset,             Is.Null,  "a time was made up between two that disagree");
                 Assert.That(verdict.DeviationExceeded,  Is.True,  "90 seconds apart went unrecorded");
-                Assert.That(verdict.IsUsable,           Is.True,  "a disagreement to be logged was turned into a refusal");
+                Assert.That(verdict.Answered,           Is.EqualTo(2));
+                Assert.That(verdict.Agreeing,           Is.EqualTo(1));
+                Assert.That(verdict.Spread,             Is.EqualTo(TimeSpan.FromSeconds(90)));
+                Assert.That(verdict.ToString(),         Is.EqualTo("2 server(s) answered and disagree: spread 90000.0 ms, 1 within the agreed deviation"));
+            });
+
+        }
+
+        #endregion
+
+        #region AMajorityThatAgreesOutvotesTheRest()
+
+        /// <summary>
+        /// One server ninety seconds off, and three that agree: the three are the
+        /// time, the fourth is written down. A single broken server must not be
+        /// able to take the time away from everybody else.
+        /// </summary>
+        [Test]
+        public void AMajorityThatAgreesOutvotesTheRest()
+        {
+
+            var verdict = TimeSyncVerdict.From(
+                              [ Answer("a", 10), Answer("liar", 90_000), Answer("b", 12), Answer("c", 14) ],
+                              MinServers:    2,
+                              MaxDeviation:  oneMinute
+                          );
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(verdict.Outcome,                    Is.EqualTo(TimeSyncOutcome.Usable));
+                Assert.That(verdict.DeviationExceeded,          Is.True);
+                Assert.That(verdict.Answered,                   Is.EqualTo(4));
+                Assert.That(verdict.Agreeing,                   Is.EqualTo(3));
+                Assert.That(verdict.Offset?.TotalMilliseconds,  Is.EqualTo(12),  "the median of those that agree, not of all four");
+                Assert.That(verdict.ToString(),                 Is.EqualTo("+12.0 ms from 4 server(s), spread 89990.0 ms - beyond the agreed deviation, 3 agree"));
+            });
+
+        }
+
+        #endregion
+
+        #region AnAgreementSmallerThanTheQuorumIsNoTime(Offsets, Agreeing)
+
+        /// <summary>
+        /// Half is not a majority, and neither is the largest of three camps. And
+        /// a majority that agrees still has to be as many as the group insists on.
+        /// </summary>
+        [TestCase(new Double[] { 0, 10, 90_000, 90_010 },            2, 2, TestName = "TwoAgainstTwoIsNoTime")]
+        [TestCase(new Double[] { 0, 10, 90_000, 180_000, 270_000 },  2, 2, TestName = "TheLargestOfSeveralCampsIsNoTime")]
+        [TestCase(new Double[] { 0, 10, 90_000 },                    3, 2, TestName = "AMajoritySmallerThanTheQuorumIsNoTime")]
+        public void AnAgreementSmallerThanTheQuorumIsNoTime(Double[] Offsets, Byte MinServers, Int32 Agreeing)
+        {
+
+            var verdict = TimeSyncVerdict.From(
+                              [ .. Offsets.Select((offset, i) => Answer($"s{i}", offset)) ],
+                              MinServers:    MinServers,
+                              MaxDeviation:  oneMinute
+                          );
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(verdict.Outcome,   Is.EqualTo(TimeSyncOutcome.ServersDisagree));
+                Assert.That(verdict.Offset,    Is.Null);
+                Assert.That(verdict.Agreeing,  Is.EqualTo(Agreeing));
             });
 
         }

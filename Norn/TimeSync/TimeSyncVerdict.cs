@@ -43,6 +43,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.TimeSync
         TooFewServers,
 
         /// <summary>
+        /// Enough servers answered, and they do not agree: no majority of them lies
+        /// within the group's MaxDeviation of one another, or that majority is
+        /// smaller than the number the group insists on. There is no time here -
+        /// only several, and nothing to choose between them by.
+        /// </summary>
+        ServersDisagree,
+
+        /// <summary>
         /// Enough servers answered and agreed well enough to steer a clock by.
         /// </summary>
         Usable
@@ -78,6 +86,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.TimeSync
         /// moves a mean by as much as it is wrong, and moves a median by nothing
         /// at all as long as it is outnumbered. That is the entire reason for
         /// asking several servers.
+        ///
+        /// Where the answers lie further apart than MaxDeviation, it is the median
+        /// of those that agree, and there is one only if they are the majority.
         /// </remarks>
         public TimeSpan?                            Offset             { get; }
 
@@ -91,14 +102,23 @@ namespace org.GraphDefined.Vanaheimr.Norn.TimeSync
         /// be recorded in the secure metrological log book.
         /// </summary>
         /// <remarks>
-        /// A flag rather than a refusal, because the white paper asks for it to
-        /// be recorded and does not ask for the time to be discarded. Turning
-        /// "write this down" into "refuse to synchronize" would be a stricter
-        /// rule than the one that was specified, quietly adopted - and a vehicle
-        /// that refuses to know the time is not obviously safer than one that
-        /// knows it imprecisely and says so.
+        /// The white paper asks for it to be recorded, and it is recorded whatever
+        /// the outcome. Whether there is still a time is another question, and
+        /// <see cref="Agreeing"/> answers it: a majority that agrees outvotes the
+        /// rest, and the round is usable with this flag set. Without such a
+        /// majority the outcome is <see cref="TimeSyncOutcome.ServersDisagree"/>.
+        /// That is stricter than the white paper, and on purpose: the median of
+        /// two servers ninety seconds apart is a time neither of them gave, and
+        /// "usable" was the wrong word for it.
         /// </remarks>
         public Boolean                              DeviationExceeded  { get; }
+
+        /// <summary>
+        /// How many of the answers agree: the size of the largest set of them that
+        /// lie within MaxDeviation of one another. All of them, where the spread
+        /// stayed below it.
+        /// </summary>
+        public Int32                                Agreeing           { get; }
 
         /// <summary>
         /// How many servers answered in a way that could be trusted.
@@ -132,7 +152,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.TimeSync
                                 Boolean                              DeviationExceeded,
                                 Int32                                Answered,
                                 Int32                                Required,
-                                IReadOnlyList<NTSMeasurementResult>  Results)
+                                IReadOnlyList<NTSMeasurementResult>  Results,
+                                Int32?                               Agreeing   = null)
         {
 
             this.Outcome            = Outcome;
@@ -140,6 +161,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.TimeSync
             this.Spread             = Spread;
             this.DeviationExceeded  = DeviationExceeded;
             this.Answered           = Answered;
+            this.Agreeing           = Agreeing ?? Answered;
             this.Required           = Required;
             this.Results            = Results;
 
@@ -217,13 +239,59 @@ namespace org.GraphDefined.Vanaheimr.Norn.TimeSync
                            Results
                        );
 
+            // Those that agree: the longest run of the sorted answers that stays within
+            // MaxDeviation from its first to its last. Everything, as a rule.
+            var agreeingFrom   = 0;
+            var agreeingCount  = offsets.Length;
+
+            if (deviationExceeded)
+            {
+
+                agreeingCount = 1;
+
+                for (Int32 first = 0, last = 0; last < offsets.Length; last++)
+                {
+
+                    while (offsets[last] - offsets[first] >= MaxDeviation && first < last)
+                        first++;
+
+                    if (last - first + 1 > agreeingCount)
+                    {
+                        agreeingFrom   = first;
+                        agreeingCount  = last - first + 1;
+                    }
+
+                }
+
+                // They have to be more than half, or it is not they who are outvoted
+                // by the rest but the rest by them - and as many as the group insists
+                // on, because the others have said nothing that could be used.
+                if (agreeingCount * 2 <= offsets.Length ||
+                    agreeingCount     <  required)
+                {
+                    return new TimeSyncVerdict(
+                               TimeSyncOutcome.ServersDisagree,
+                               null,
+                               spread,
+                               deviationExceeded,
+                               offsets.Length,
+                               required,
+                               Results,
+                               agreeingCount
+                           );
+                }
+
+            }
+
             // Sorted above, so the middle one is the median. With an even count
             // there is no middle one and the two either side are averaged, which
             // is the usual reading of a median and keeps two servers from having
             // to agree exactly before their answer can be used.
-            var median  = offsets.Length % 2 == 1
-                              ? offsets[offsets.Length / 2]
-                              : (offsets[offsets.Length / 2 - 1] + offsets[offsets.Length / 2]) / 2;
+            var agreeing  = offsets.AsSpan(agreeingFrom, agreeingCount);
+
+            var median    = agreeing.Length % 2 == 1
+                                ? agreeing[agreeing.Length / 2]
+                                : (agreeing[agreeing.Length / 2 - 1] + agreeing[agreeing.Length / 2]) / 2;
 
             return new TimeSyncVerdict(
                        TimeSyncOutcome.Usable,
@@ -232,7 +300,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.TimeSync
                        deviationExceeded,
                        offsets.Length,
                        required,
-                       Results
+                       Results,
+                       agreeingCount
                    );
 
         }
@@ -255,7 +324,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.TimeSync
         public override String ToString()
 
             => Outcome switch {
-                   TimeSyncOutcome.Usable           => String.Create(CultureInfo.InvariantCulture, $"{Offset!.Value.TotalMilliseconds:+0.0;-0.0} ms from {Answered} server(s), spread {Spread!.Value.TotalMilliseconds:0.0} ms{(DeviationExceeded ? " - beyond the agreed deviation" : "")}"),
+                   TimeSyncOutcome.Usable           => String.Create(CultureInfo.InvariantCulture, $"{Offset!.Value.TotalMilliseconds:+0.0;-0.0} ms from {Answered} server(s), spread {Spread!.Value.TotalMilliseconds:0.0} ms{(DeviationExceeded ? $" - beyond the agreed deviation, {Agreeing} agree" : "")}"),
+                   TimeSyncOutcome.ServersDisagree  => String.Create(CultureInfo.InvariantCulture, $"{Answered} server(s) answered and disagree: spread {Spread!.Value.TotalMilliseconds:0.0} ms, {Agreeing} within the agreed deviation"),
                    TimeSyncOutcome.TooFewServers    => $"only {Answered} of {Required} server(s) answered",
                    _                                => "no server answered"
                };

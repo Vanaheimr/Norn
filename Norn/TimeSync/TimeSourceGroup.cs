@@ -81,7 +81,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.TimeSync
 
         /// <summary>
         /// The gap between answers at which the disagreement must be written
-        /// into the secure metrological log book.
+        /// into the secure metrological log book - and beyond which answers no
+        /// longer count as agreeing: a round has a time only if a majority of
+        /// them lies within it.
         /// </summary>
         public TimeSpan                        MaxDeviation  { get; }
 
@@ -95,7 +97,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.TimeSync
         /// <param name="Name">What this group is for, e.g. "legal" or "local".</param>
         /// <param name="Sources">Its servers.</param>
         /// <param name="MinServers">How many must answer for the group to have a time (default: 1).</param>
-        /// <param name="MaxDeviation">The gap at which their disagreement is recorded (default: 60 seconds).</param>
+        /// <param name="MaxDeviation">The gap at which their disagreement is recorded, and within which a majority must agree (default: 60 seconds).</param>
         public TimeSourceGroup(String                          Name,
                                IEnumerable<NTSServerEndpoint>  Sources,
                                Byte?                           MinServers     = null,
@@ -141,8 +143,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.TimeSync
         /// <remarks>
         /// Band by band, stopping at the first one that produces a usable time.
         /// A band that cannot reach the quorum - because it holds fewer servers
-        /// than MinServers, or because too few of them answered - is not a
-        /// failure of the group; it is a reason to ask the next one. The group
+        /// than MinServers, because too few of them answered, or because those
+        /// that answered disagree - is not a failure of the group; it is a reason to ask the next one. The group
         /// has failed only when the last band has been asked.
         ///
         /// What comes back when every band failed is the verdict of the last
