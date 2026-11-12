@@ -2897,15 +2897,20 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #endregion
 
-        #region (private) SigningKeyFor        (KeyId)
+        #region (protected virtual) SigningKeyFor(KeyId)
 
         /// <summary>
         /// The key pair a response is signed with when the request asks for the given key:
         /// that key, if this server has it and it is valid now. Asked for no key in
         /// particular, it is the one in use now.
         /// </summary>
+        /// <remarks>
+        /// To be overridden by a server that keeps its keys elsewhere - and by a test
+        /// that needs a server which signs with a key it was not asked for, which this
+        /// one never does.
+        /// </remarks>
         /// <param name="KeyId">The id of the key the request asks for.</param>
-        private KeyPair? SigningKeyFor(UInt16 KeyId)
+        protected virtual KeyPair? SigningKeyFor(UInt16 KeyId)
         {
 
             var now = TimeProvider.GetUtcNow();

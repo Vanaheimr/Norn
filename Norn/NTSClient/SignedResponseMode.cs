@@ -21,6 +21,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
     /// <summary>
     /// The NTS Signed Response Mode.
     /// </summary>
+    /// <remarks>
+    /// There is one way a response is signed, and it is the second, scheduled one.
+    /// A signature in the first response - there used to be a "Direct" here, which
+    /// no request could ask for and no server gave - would have the server sign
+    /// between receiving and sending: the time that takes is in the measurement,
+    /// and an ECDSA signature is what a small request would cost a server before
+    /// anything goes back.
+    /// </remarks>
     public enum SignedResponseMode
     {
 
@@ -28,11 +36,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// No NTS Signed Response is sent.
         /// </summary>
         None,
-
-        /// <summary>
-        /// The NTS Signed Response is sent directly to the client.
-        /// </summary>
-        Direct,
 
         /// <summary>
         /// The NTS Signed Response is sent to the client via a 2nd scheduled response.

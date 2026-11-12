@@ -834,21 +834,112 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         #endregion
 
 
+        #region AResponseSignedWithAnotherKeyThanAskedForIsNotTheProof()
+
+        /// <summary>
+        /// A server that signs with another key than the one the query asked for.
+        /// </summary>
+        private sealed class SignsWithItsFirstKey(IPPort NTSKEPort, IPPort NTSPort, params KeyPair[] KeyPairs)
+
+            : NTSServer(NTSKEPort:           NTSKEPort,
+                        NTSPort:             NTSPort,
+                        KeyPairs:            KeyPairs,
+                        MasterKeysFilePath:  null)
+
+        {
+
+            private readonly KeyPair first = KeyPairs[0];
+
+            protected override KeyPair? SigningKeyFor(UInt16 KeyId)
+                => first;
+
+        }
+
+        /// <summary>
+        /// The query asked for key 8 and the response is signed with key 7 - a key the
+        /// key exchange named, and a signature that is good. It is still not what was
+        /// asked for: whoever names a key wants that key's word, and the query says
+        /// that it is another's, and whose, without looking at the signature further.
+        ///
+        /// Asked for no key in particular, the same response is verified.
+        /// </summary>
+        [Test]
+        [Category("LocalIntegration")]
+        public async Task AResponseSignedWithAnotherKeyThanAskedForIsNotTheProof()
+        {
+
+            var (ntsServer, ntsClient) = await Start(
+                                                   (ntsKEPort, ntpPort) => new SignsWithItsFirstKey(
+                                                                               ntsKEPort,
+                                                                               ntpPort,
+                                                                               KeyPair.GenerateECKeys(7),
+                                                                               KeyPair.GenerateECKeys(8)
+                                                                           )
+                                               );
+
+            try
+            {
+
+                var ntsKEResult  = await ntsClient.GetNTSKERecords(RequestNTSPublicKeys: true);
+
+                Assert.That(ntsKEResult.Success,                                   Is.True, ntsKEResult.ErrorMessage);
+                Assert.That(ntsKEResult.Response!.PublicKeys.Select(key => key.Id), Is.EquivalentTo(new UInt16[] { 7, 8 }));
+
+                var askedFor8    = await ntsClient.QueryTime(
+                                             NTSKEResponse:       ntsKEResult.Response,
+                                             SignedResponseMode:  SignedResponseMode.Scheduled,
+                                             SignedResponseKeyId: 8,
+                                             Timeout:             TimeSpan.FromSeconds(5)
+                                         );
+
+                // The time is good - it is NTS that vouches for it - and the query says
+                // what the signature is not.
+                Assert.That(askedFor8.Success,                                     Is.True, askedFor8.ErrorMessage);
+                Assert.That(askedFor8.SignatureVerification,                       Is.EqualTo(NTSSignatureVerification.WrongKey));
+                Assert.That(askedFor8.SignatureKeyId,                              Is.EqualTo(7));
+
+                ntsKEResult      = await ntsClient.GetNTSKERecords(RequestNTSPublicKeys: true);
+
+                var askedForAny  = await ntsClient.QueryTime(
+                                             NTSKEResponse:       ntsKEResult.Response,
+                                             SignedResponseMode:  SignedResponseMode.Scheduled,
+                                             Timeout:             TimeSpan.FromSeconds(5)
+                                         );
+
+                Assert.That(askedForAny.Success,                                   Is.True, askedForAny.ErrorMessage);
+                Assert.That(askedForAny.SignatureVerification,                     Is.EqualTo(NTSSignatureVerification.Verified));
+                Assert.That(askedForAny.SignatureKeyId,                            Is.EqualTo(7));
+
+            }
+            finally
+            {
+                await ntsServer.ShutdownAsync();
+            }
+
+        }
+
+        #endregion
+
+
         #region (private) Start(KeyPair, params KeyPairs)
 
-        private static async Task<(NTSServer, NTSClient)> Start(KeyPair? KeyPair, params KeyPair[] KeyPairs)
+        private static Task<(NTSServer, NTSClient)> Start(KeyPair? KeyPair, params KeyPair[] KeyPairs)
+
+            => Start((ntsKEPort, ntpPort) => new NTSServer(
+                                                 NTSKEPort:           ntsKEPort,
+                                                 NTSPort:             ntpPort,
+                                                 KeyPair:             KeyPair,
+                                                 KeyPairs:            KeyPairs,
+                                                 MasterKeysFilePath:  null
+                                             ));
+
+        private static async Task<(NTSServer, NTSClient)> Start(Func<IPPort, IPPort, NTSServer> Create)
         {
 
             var ntsKEPort = FindFreePort(SocketType.Stream, ProtocolType.Tcp);
             var ntpPort   = FindFreePort(SocketType.Dgram,  ProtocolType.Udp);
 
-            var ntsServer = new NTSServer(
-                                NTSKEPort:           IPPort.Parse(ntsKEPort),
-                                NTSPort:             IPPort.Parse(ntpPort),
-                                KeyPair:             KeyPair,
-                                KeyPairs:            KeyPairs,
-                                MasterKeysFilePath:  null
-                            );
+            var ntsServer = Create(IPPort.Parse(ntsKEPort), IPPort.Parse(ntpPort));
 
             await ntsServer.Start();
 
