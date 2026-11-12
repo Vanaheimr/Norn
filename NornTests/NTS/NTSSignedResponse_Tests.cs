@@ -645,9 +645,198 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         #endregion
 
 
-        #region (private) Start(KeyPair)
+        #region ASuccessorTakesOverOnItsFirstDay()
 
-        private static async Task<(NTSServer, NTSClient)> Start(KeyPair? KeyPair)
+        /// <summary>
+        /// A server with several keys signs with the valid one that began last, and
+        /// nobody has to switch it. The key exchange tells of every key a response may
+        /// be signed with before the client asks again: the valid ones, and the one
+        /// whose first day is near - not yet the one that is ten days off.
+        /// </summary>
+        [Test]
+        [Category("LocalIntegration")]
+        public async Task ASuccessorTakesOverOnItsFirstDay()
+        {
+
+            var now                    = DateTimeOffset.UtcNow;
+
+            static KeyPair Dated(UInt16 Id, DateTimeOffset? NotBefore)
+            {
+                var generated = KeyPair.GenerateECKeys(Id);
+                return new KeyPair(Id, generated.PrivateKey, generated.PublicKey, NotBefore: NotBefore);
+            }
+
+            var (ntsServer, ntsClient) = await Start(
+                                                   Dated( 7, null),
+                                                   Dated(10, now.AddDays (10)),
+                                                   Dated( 9, now.AddHours(12)),
+                                                   Dated( 8, now.AddHours(-1))
+                                               );
+
+            try
+            {
+
+                Assert.That(ntsServer.CurrentKeyId,                                Is.EqualTo(8));
+                Assert.That(ntsServer.PublicKeys.Select(key => key.Id),            Is.EqualTo(new UInt16[] { 7, 8, 9, 10 }));
+
+                var ntsKEResult  = await ntsClient.GetNTSKERecords(RequestNTSPublicKeys: true);
+
+                Assert.That(ntsKEResult.Success,                                   Is.True, ntsKEResult.ErrorMessage);
+
+                // The one in use first, then as they began.
+                Assert.That(ntsKEResult.Response!.PublicKeys.Select(key => key.Id), Is.EqualTo(new UInt16[] { 8, 7, 9 }));
+
+                // Asked for no key in particular: the one in use.
+                var anyKey       = await ntsClient.QueryTime(
+                                             NTSKEResponse:       ntsKEResult.Response,
+                                             SignedResponseMode:  SignedResponseMode.Scheduled,
+                                             Timeout:             TimeSpan.FromSeconds(5)
+                                         );
+
+                Assert.That(anyKey.Success,                                        Is.True, anyKey.ErrorMessage);
+                Assert.That(anyKey.SignatureVerification,                          Is.EqualTo(NTSSignatureVerification.Verified));
+                Assert.That(anyKey.SignatureKeyId,                                 Is.EqualTo(8));
+
+                // Asked for its predecessor, which is still valid: that one.
+                ntsKEResult      = await ntsClient.GetNTSKERecords(RequestNTSPublicKeys: true);
+
+                var predecessor  = await ntsClient.QueryTime(
+                                             NTSKEResponse:       ntsKEResult.Response,
+                                             SignedResponseMode:  SignedResponseMode.Scheduled,
+                                             SignedResponseKeyId: 7,
+                                             Timeout:             TimeSpan.FromSeconds(5)
+                                         );
+
+                Assert.That(predecessor.Success,                                   Is.True, predecessor.ErrorMessage);
+                Assert.That(predecessor.SignatureVerification,                     Is.EqualTo(NTSSignatureVerification.Verified));
+                Assert.That(predecessor.SignatureKeyId,                            Is.EqualTo(7));
+
+                // Asked for its successor, whose day has not come: not signed.
+                ntsKEResult      = await ntsClient.GetNTSKERecords(RequestNTSPublicKeys: true);
+
+                var successor    = await ntsClient.QueryTime(
+                                             NTSKEResponse:       ntsKEResult.Response,
+                                             SignedResponseMode:  SignedResponseMode.Scheduled,
+                                             SignedResponseKeyId: 9,
+                                             Timeout:             TimeSpan.FromSeconds(5)
+                                         );
+
+                Assert.That(successor.Success,                                     Is.True, successor.ErrorMessage);
+                Assert.That(successor.SignatureVerification,                       Is.EqualTo(NTSSignatureVerification.NotSigned));
+
+            }
+            finally
+            {
+                await ntsServer.ShutdownAsync();
+            }
+
+        }
+
+        #endregion
+
+        #region AKeyIsAddedAndRemovedWhileTheServerRuns()
+
+        /// <summary>
+        /// A running server is given its next key and has a key taken from it, and
+        /// signs accordingly at once - with no restart, and with nothing to switch.
+        /// </summary>
+        [Test]
+        [Category("LocalIntegration")]
+        public async Task AKeyIsAddedAndRemovedWhileTheServerRuns()
+        {
+
+            var now                    = DateTimeOffset.UtcNow;
+            var first                  = KeyPair.GenerateECKeys(7);
+            var generated              = KeyPair.GenerateECKeys(8);
+            var second                 = new KeyPair(8, generated.PrivateKey, generated.PublicKey, NotBefore: now.AddMinutes(-1));
+
+            var (ntsServer, ntsClient) = await Start(first);
+
+            try
+            {
+
+                Assert.That(ntsServer.CurrentKeyId,                                Is.EqualTo(7));
+
+                Assert.That(ntsServer.AddKeyPair(second),                          Is.True);
+                Assert.That(ntsServer.AddKeyPair(KeyPair.GenerateECKeys(8)),       Is.False, "a second key of the same id was taken");
+                Assert.That(() => ntsServer.AddKeyPair(KeyPair.GenerateECKeys(0)), Throws.ArgumentException, "0 asks for no key in particular");
+                Assert.That(ntsServer.CurrentKeyId,                                Is.EqualTo(8));
+
+                var ntsKEResult  = await ntsClient.GetNTSKERecords(RequestNTSPublicKeys: true);
+
+                Assert.That(ntsKEResult.Success,                                   Is.True, ntsKEResult.ErrorMessage);
+                Assert.That(ntsKEResult.Response!.PublicKeys.Select(key => key.Id), Is.EqualTo(new UInt16[] { 8, 7 }));
+
+                var added        = await ntsClient.QueryTime(
+                                             NTSKEResponse:       ntsKEResult.Response,
+                                             SignedResponseMode:  SignedResponseMode.Scheduled,
+                                             Timeout:             TimeSpan.FromSeconds(5)
+                                         );
+
+                Assert.That(added.Success,                                         Is.True, added.ErrorMessage);
+                Assert.That(added.SignatureVerification,                           Is.EqualTo(NTSSignatureVerification.Verified));
+                Assert.That(added.SignatureKeyId,                                  Is.EqualTo(8));
+
+                Assert.That(ntsServer.RemoveKeyPair(8),                            Is.True);
+                Assert.That(ntsServer.RemoveKeyPair(8),                            Is.False);
+                Assert.That(ntsServer.CurrentKeyId,                                Is.EqualTo(7));
+
+                ntsKEResult      = await ntsClient.GetNTSKERecords(RequestNTSPublicKeys: true);
+
+                Assert.That(ntsKEResult.Success,                                   Is.True, ntsKEResult.ErrorMessage);
+                Assert.That(ntsKEResult.Response!.PublicKeys.Select(key => key.Id), Is.EqualTo(new UInt16[] { 7 }));
+
+                var removed      = await ntsClient.QueryTime(
+                                             NTSKEResponse:       ntsKEResult.Response,
+                                             SignedResponseMode:  SignedResponseMode.Scheduled,
+                                             Timeout:             TimeSpan.FromSeconds(5)
+                                         );
+
+                Assert.That(removed.Success,                                       Is.True, removed.ErrorMessage);
+                Assert.That(removed.SignatureVerification,                         Is.EqualTo(NTSSignatureVerification.Verified));
+                Assert.That(removed.SignatureKeyId,                                Is.EqualTo(7));
+
+            }
+            finally
+            {
+                await ntsServer.ShutdownAsync();
+            }
+
+        }
+
+        #endregion
+
+        #region AServerRefusesTwoKeysOfOneId()
+
+        /// <summary>
+        /// Two keys of one id cannot be told apart by a request or by a signature, and
+        /// a key of the id 0 cannot be asked for at all.
+        /// </summary>
+        [Test]
+        public void AServerRefusesTwoKeysOfOneId()
+        {
+
+            Assert.That(() => new NTSServer(
+                                  KeyPair:             KeyPair.GenerateECKeys(7),
+                                  KeyPairs:            [ KeyPair.GenerateECKeys(7) ],
+                                  MasterKeysFilePath:  null
+                              ),
+                        Throws.ArgumentException);
+
+            Assert.That(() => new NTSServer(
+                                  KeyPair:             KeyPair.GenerateECKeys(0),
+                                  MasterKeysFilePath:  null
+                              ),
+                        Throws.ArgumentException);
+
+        }
+
+        #endregion
+
+
+        #region (private) Start(KeyPair, params KeyPairs)
+
+        private static async Task<(NTSServer, NTSClient)> Start(KeyPair? KeyPair, params KeyPair[] KeyPairs)
         {
 
             var ntsKEPort = FindFreePort(SocketType.Stream, ProtocolType.Tcp);
@@ -657,6 +846,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                                 NTSKEPort:           IPPort.Parse(ntsKEPort),
                                 NTSPort:             IPPort.Parse(ntpPort),
                                 KeyPair:             KeyPair,
+                                KeyPairs:            KeyPairs,
                                 MasterKeysFilePath:  null
                             );
 

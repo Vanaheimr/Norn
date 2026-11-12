@@ -155,9 +155,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </summary>
         private                  UInt64                                   highestMasterKeyId;
 
-        private readonly         ConcurrentDictionary<UInt64, KeyPair>    keyPairs               = [];
-        private                  KeyPair?                                 currentKeyPair;
-        private                  PublicKey?                               currentPublicKey;
+        /// <summary>
+        /// The key pairs responses are signed with, by their id. Which of them is the
+        /// current one is not kept: it is read off their validity whenever it is asked,
+        /// see <see cref="CurrentKeyPairAt"/>.
+        /// </summary>
+        private readonly         ConcurrentDictionary<UInt16, KeyPair>    keyPairs               = [];
 
         private readonly         SemaphoreSlim                            ntpRequestSemaphore;
         private readonly         SemaphoreSlim                            ntskeConnectionSemaphore;
@@ -342,6 +345,28 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #endregion
 
+        /// <summary>
+        /// How long before its first day the public key of a signing key is handed out
+        /// in the NTS-KE: the time a client has to learn of a key before responses are
+        /// signed with it.
+        /// </summary>
+        public TimeSpan              PublicKeyLeadTime             { get; }
+
+        /// <summary>
+        /// The id of the key a response is signed with now when the request asks for no
+        /// key in particular, or none when there is no key that is valid now.
+        /// </summary>
+        public UInt16?               CurrentKeyId
+            => CurrentKeyPairAt(TimeProvider.GetUtcNow())?.Id;
+
+        /// <summary>
+        /// The public halves of all the signing keys this server has, valid or not, by their id.
+        /// </summary>
+        public IReadOnlyList<PublicKey>  PublicKeys
+            => [.. keyPairs.Values.
+                            OrderBy(keyPair => keyPair.Id).
+                            Select (keyPair => keyPair.ToPublicKey())];
+
         public TimeSpan              MasterKeyLifetime             { get; }
 
         public TimeSpan              MasterKeyRotationGracePeriod  { get; }
@@ -445,6 +470,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <param name="NTSKEPort">The optional TCP port for NTS-KE to listen on (default: 4460).</param>
         /// <param name="NTSPort">The optional UDP port for NTP to listen on (default: 123).</param>
         /// <param name="KeyPair">An optional key pair to be used for NTS response signing.</param>
+        /// <param name="KeyPairs">Further key pairs for NTS response signing: the one in use is the valid one that began last, so that a successor takes over on its first day.</param>
+        /// <param name="PublicKeyLeadTime">How long before its first day the public key of a signing key is handed out in the NTS-KE (default: one day).</param>
         /// <param name="ExternalURLs">An enumeration of external URLs to be used for NTP/NTS requests.</param>
         /// <param name="DNSClient">An optional DNS client to use.</param>
         /// <param name="ListenIPAddress">The optional local IP address to listen on (default: 0.0.0.0). Pass <see cref="IPvXAddress.Any"/> to serve IPv4 and IPv6 together.</param>
@@ -490,7 +517,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                          IEnumerable<ISshHostKey>? SSHHostKeys            = null,
                          ISshUserAuthenticator?    SSHAuthenticator       = null,
                          NTPAccessList?            AccessList             = null,
-                         Int32?                    MaxNTSKEConnectionsPerClient = null)
+                         Int32?                    MaxNTSKEConnectionsPerClient = null,
+                         IEnumerable<KeyPair>?     KeyPairs               = null,
+                         TimeSpan?                 PublicKeyLeadTime      = null)
         {
 
             // An SSH listener hands out cookies to whoever logs in, so who that may be is never a
@@ -583,14 +612,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 throw new ArgumentException("At least one of the given AEAD algorithms has to be one this server can perform.",
                                             nameof(SupportedAEADAlgorithms));
 
-            if (KeyPair is not null)
+            this.PublicKeyLeadTime            = PublicKeyLeadTime ?? TimeSpan.FromDays(1);
+
+            if (this.PublicKeyLeadTime < TimeSpan.Zero)
+                throw new ArgumentOutOfRangeException(nameof(PublicKeyLeadTime),
+                                                      "The lead time of a public key must not be negative.");
+
+            foreach (var keyPair in (KeyPair is not null ? [ KeyPair ] : Array.Empty<KeyPair>()).Concat(KeyPairs ?? []))
             {
-
-                this.currentKeyPair   = KeyPair;
-                this.currentPublicKey = KeyPair.ToPublicKey();
-
-                this.keyPairs.TryAdd(KeyPair.Id, KeyPair);
-
+                if (!AddKeyPair(keyPair))
+                    throw new ArgumentException($"There are two signing keys with the id {keyPair.Id}.",
+                                                nameof(KeyPairs));
             }
 
             // The master keys an earlier run of this server wrote are taken up again, so that the
@@ -1051,14 +1083,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             );
 
             // A key that is past its last day is not handed out any more. One whose first
-            // day is still to come is: that is how a client learns of it in time.
-            if (NTSKERequest.Any(ntsKERecord => ntsKERecord.Type == NTSKE_RecordTypes.NTSRequestPublicKey) &&
-                currentPublicKey is not null &&
-                !(currentPublicKey.NotAfter < TimeProvider.GetUtcNow()))
+            // day is still to come is, once that day is near: that is how a client learns
+            // of it in time. So a client is told of every key a response it gets under
+            // these cookies may be signed with.
+            if (NTSKERequest.Any(ntsKERecord => ntsKERecord.Type == NTSKE_RecordTypes.NTSRequestPublicKey))
             {
-                ntsKERecords.Add(
-                    NTSKE_Record.NTSPublicKey(currentPublicKey)
-                );
+                foreach (var publicKey in PublishedPublicKeysAt(TimeProvider.GetUtcNow()))
+                    ntsKERecords.Add(
+                        NTSKE_Record.NTSPublicKey(publicKey)
+                    );
             }
 
             ntsKERecords.Add(NTSKE_Record.EndOfMessage);
@@ -1690,8 +1723,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                   Select(_ => NTSCookie.Create (MasterKey, C2SKey, S2CKey, AEADAlgorithm, TimeProvider).
                                                         Encrypt(MasterKey)),
                        ExternalURLs,
-                       this.currentPublicKey is not null
-                           ? [ currentPublicKey.ToByteArray() ]
+                       PublishedPublicKeysAt(TimeProvider.GetUtcNow()) is { Count: > 0 } publishedPublicKeys
+                           ? publishedPublicKeys.Select(publicKey => publicKey.ToByteArray())
                            : null,
                        AEADAlgorithm,
                        null,
@@ -2773,24 +2806,120 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         }
 
 
+        #region AddKeyPair   (KeyPair)
+
+        /// <summary>
+        /// Give this server another key pair to sign responses with, while it runs.
+        /// </summary>
+        /// <remarks>
+        /// Nothing is switched by this, and nothing has to be: the key in use is the
+        /// valid one that began last. A successor is added with its first day still to
+        /// come - by <see cref="PublicKeyLeadTime"/> or more, so that clients learn of
+        /// it in an NTS-KE before a response is signed with it - and takes over on that
+        /// day. Several servers given the same keys change on the same day, and nobody
+        /// has to tell them.
+        /// </remarks>
+        /// <param name="KeyPair">The key pair. Its id must not be 0, which is how a request asks for no key in particular.</param>
+        /// <returns>False, when this server has a key pair of that id already.</returns>
+        public Boolean AddKeyPair(KeyPair KeyPair)
+        {
+
+            if (KeyPair.Id == NTSRequestSignedResponseExtension.AnyKey)
+                throw new ArgumentException($"A signing key must not have the id {NTSRequestSignedResponseExtension.AnyKey}: a request asks for no key in particular by it.",
+                                            nameof(KeyPair));
+
+            return keyPairs.TryAdd(KeyPair.Id, KeyPair);
+
+        }
+
+        #endregion
+
+        #region RemoveKeyPair(KeyId)
+
+        /// <summary>
+        /// Take a key pair from this server: no response is signed with it any more, and
+        /// its public key is not handed out any more.
+        /// </summary>
+        /// <remarks>
+        /// A key that is past its last day needs no removing for that: it is neither
+        /// signed with nor handed out. Removing is for the key that must go before its
+        /// time, and for not keeping a private key longer than it is of use.
+        /// </remarks>
+        /// <param name="KeyId">The id of the key pair.</param>
+        /// <returns>False, when this server has no key pair of that id.</returns>
+        public Boolean RemoveKeyPair(UInt16 KeyId)
+
+            => keyPairs.TryRemove(KeyId, out _);
+
+        #endregion
+
+        #region (private) CurrentKeyPairAt     (Timestamp)
+
+        /// <summary>
+        /// The key pair in use at the given time: of those valid then, the one that began
+        /// last. A key without a first day counts as the oldest there is, so that any key
+        /// with one succeeds it; between two that began together the higher id decides,
+        /// so that it is the same key on every server and at every call.
+        /// </summary>
+        /// <param name="Timestamp">The time in question.</param>
+        private KeyPair? CurrentKeyPairAt(DateTimeOffset Timestamp)
+
+            => keyPairs.Values.
+                        Where            (keyPair => keyPair.IsValidAt(Timestamp)).
+                        OrderByDescending(keyPair => keyPair.NotBefore ?? DateTimeOffset.MinValue).
+                        ThenByDescending (keyPair => keyPair.Id).
+                        FirstOrDefault();
+
+        #endregion
+
+        #region (private) PublishedPublicKeysAt(Timestamp)
+
+        /// <summary>
+        /// The public keys an NTS-KE hands out at the given time: those of the keys that
+        /// are valid then, and of those that will be within <see cref="PublicKeyLeadTime"/>.
+        /// The key in use comes first.
+        /// </summary>
+        /// <param name="Timestamp">The time in question.</param>
+        private IReadOnlyList<PublicKey> PublishedPublicKeysAt(DateTimeOffset Timestamp)
+        {
+
+            var current = CurrentKeyPairAt(Timestamp);
+
+            return [.. keyPairs.Values.
+                                Where            (keyPair => !(keyPair.NotAfter  < Timestamp) &&
+                                                             !(keyPair.NotBefore > Timestamp + PublicKeyLeadTime)).
+                                OrderByDescending(keyPair => keyPair.Id == current?.Id).
+                                ThenBy           (keyPair => keyPair.NotBefore ?? DateTimeOffset.MinValue).
+                                ThenBy           (keyPair => keyPair.Id).
+                                Select           (keyPair => keyPair.ToPublicKey())];
+
+        }
+
+        #endregion
+
+        #region (private) SigningKeyFor        (KeyId)
+
         /// <summary>
         /// The key pair a response is signed with when the request asks for the given key:
         /// that key, if this server has it and it is valid now. Asked for no key in
-        /// particular, it is the current one.
+        /// particular, it is the one in use now.
         /// </summary>
         /// <param name="KeyId">The id of the key the request asks for.</param>
         private KeyPair? SigningKeyFor(UInt16 KeyId)
         {
 
-            var keyPair = KeyId == NTSRequestSignedResponseExtension.AnyKey
-                              ? currentKeyPair
-                              : keyPairs.GetValueOrDefault(KeyId);
+            var now = TimeProvider.GetUtcNow();
 
-            return keyPair?.IsValidAt(TimeProvider.GetUtcNow()) == true
+            if (KeyId == NTSRequestSignedResponseExtension.AnyKey)
+                return CurrentKeyPairAt(now);
+
+            return keyPairs.TryGetValue(KeyId, out var keyPair) && keyPair.IsValidAt(now)
                        ? keyPair
                        : null;
 
         }
+
+        #endregion
 
 
         private NTPPacket SignResponse(NTPPacket  NTPResponse,
