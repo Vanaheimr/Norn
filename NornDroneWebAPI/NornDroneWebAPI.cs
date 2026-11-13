@@ -41,102 +41,6 @@ using org.GraphDefined.Vanaheimr.Norn.Monitoring;
 namespace org.GraphDefined.Vanaheimr.Norn.Drone.WebAPI
 {
 
-    /// <summary>
-    /// Norn WebAPI extention methods.
-    /// </summary>
-    public static class NornDroneWebAPIExtensions
-    {
-
-        #region ParseRoamingNetwork(this HTTPRequest, HTTPServer, out RoamingNetwork, out HTTPResponse)
-
-        ///// <summary>
-        ///// Parse the given HTTP request and return the roaming network
-        ///// for the given HTTP hostname and HTTP query parameter
-        ///// or an HTTP error response.
-        ///// </summary>
-        ///// <param name="HTTPRequest">A HTTP request.</param>
-        ///// <param name="HTTPServer">A HTTP server.</param>
-        ///// <param name="RoamingNetwork">The roaming network.</param>
-        ///// <param name="HTTPResponse">A HTTP error response.</param>
-        ///// <returns>True, when roaming network was found; false else.</returns>
-        //public static Boolean ParseRoamingNetwork(this HTTPRequest                             HTTPRequest,
-        //                                          HTTPServer<RoamingNetworks, RoamingNetwork>  HTTPServer,
-        //                                          out RoamingNetwork                           RoamingNetwork,
-        //                                          out HTTPResponse                             HTTPResponse)
-        //{
-
-        //    if (HTTPServer == null)
-        //        Console.WriteLine("HTTPServer == null!");
-
-        //    #region Initial checks
-
-        //    if (HTTPRequest == null)
-        //        throw new ArgumentNullException("HTTPRequest",  "The given HTTP request must not be null!");
-
-        //    if (HTTPServer == null)
-        //        throw new ArgumentNullException("HTTPServer",   "The given HTTP server must not be null!");
-
-        //    #endregion
-
-        //    RoamingNetwork_Id RoamingNetworkId;
-        //                      RoamingNetwork    = null;
-        //                      HTTPResponse      = null;
-
-        //    if (HTTPRequest.ParsedURLParameters.Length < 1)
-        //    {
-
-        //        HTTPResponse = new HTTPResponse.Builder(HTTPRequest) {
-        //            HTTPStatusCode  = HTTPStatusCode.BadRequest,
-        //            Server          = HTTPServer.DefaultServerName,
-        //            Date            = Timestamp.Now,
-        //        };
-
-        //        return false;
-
-        //    }
-
-        //    if (!RoamingNetwork_Id.TryParse(HTTPRequest.ParsedURLParameters[0], out RoamingNetworkId))
-        //    {
-
-        //        HTTPResponse = new HTTPResponse.Builder(HTTPRequest) {
-        //            HTTPStatusCode  = HTTPStatusCode.BadRequest,
-        //            Server          = HTTPServer.DefaultServerName,
-        //            Date            = Timestamp.Now,
-        //            ContentType     = HTTPContentType.Application.JSON_UTF8,
-        //            Content         = @"{ ""description"": ""Invalid RoamingNetworkId!"" }".ToUTF8Bytes()
-        //        };
-
-        //        return false;
-
-        //    }
-
-        //    RoamingNetwork  = HTTPServer.
-        //                          GetAllTenants(HTTPRequest.Host).
-        //                          FirstOrDefault(roamingnetwork => roamingnetwork.Id == RoamingNetworkId);
-
-        //    if (RoamingNetwork == null) {
-
-        //        HTTPResponse = new HTTPResponse.Builder(HTTPRequest) {
-        //            HTTPStatusCode  = HTTPStatusCode.NotFound,
-        //            Server          = HTTPServer.DefaultServerName,
-        //            Date            = Timestamp.Now,
-        //            ContentType     = HTTPContentType.Application.JSON_UTF8,
-        //            Content         = @"{ ""description"": ""Unknown RoamingNetworkId!"" }".ToUTF8Bytes()
-        //        };
-
-        //        return false;
-
-        //    }
-
-        //    return true;
-
-        //}
-
-        #endregion
-
-
-    }
-
 
     /// <summary>
     /// A HTTP API to configure and access the NTS-KE/NTS UDP server.
@@ -154,12 +58,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.Drone.WebAPI
         /// <summary>
         /// The default HTTP server name.
         /// </summary>
-        public new const            String              DefaultHTTPServerName     = "Open Charging Cloud OCPI WebAPI";
+        public new const            String              DefaultHTTPServerName     = "Norn Drone WebAPI";
 
         /// <summary>
         /// The default HTTP service name.
         /// </summary>
-        public new const            String              DefaultHTTPServiceName    = "Open Charging Cloud OCPI WebAPI";
+        public new const            String              DefaultHTTPServiceName    = "Norn Drone WebAPI";
 
         /// <summary>
         /// The HTTP root for embedded resources.
@@ -167,26 +71,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.Drone.WebAPI
         public     const            String              HTTPRoot                  = "org.graphdefined.vanaheimr.norn.WebAPI.HTTPRoot.";
 
 
-        //ToDo: http://www.iana.org/form/media-types
-
-        ///// <summary>
-        ///// The HTTP content type for serving Norn+ JSON data.
-        ///// </summary>
-        //public static readonly      HTTPContentType     NornPlusJSONContentType   = new ("application", "vnd.NornPlus+json", "utf-8", null, null);
-
-        ///// <summary>
-        ///// The HTTP content type for serving Norn+ HTML data.
-        ///// </summary>
-        //public static readonly      HTTPContentType     NornPlusHTMLContentType   = new ("application", "vnd.NornPlus+html", "utf-8", null, null);
-
-
         public static readonly      HTTPEventSource_Id  DefaultDebugLogId    = HTTPEventSource_Id.Parse($"NornDrone_{Version.String}_debugLog");
 
         /// <summary>
         /// The default WebAPI logfile name.
         /// </summary>
-        public  const               String              DefaultLogfileName   = "OCPI_WebAPI.log";
-
+        public  const               String              DefaultLogfileName   = "NornDrone_WebAPI.log";
 
 
         private readonly ConcurrentDictionary<DateTimeOffset, MeasurementRound>  measurementRounds = [];
@@ -380,7 +270,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Drone.WebAPI
                    HTTPAPI.URLPathPrefix + WebAPIURLPathPrefix,
                    HTTPAPI.URLPathPrefix + BasePath,
 
-                   Description     ?? I18NString.Create("OCPI Common Web API"),
+                   Description     ?? I18NString.Create("Norn Drone Web API"),
 
                    ExternalDNSName,
                    HTTPServerName  ?? DefaultHTTPServerName,
@@ -428,7 +318,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.Drone.WebAPI
             return Task.CompletedTask;
 
         }
-
 
 
         #region (private) RegisterURLTemplates()
@@ -590,7 +479,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.Drone.WebAPI
                                 UseHTTPSSE == ServiceSettings.RequiresAuthentication)
                             {
 
-                                //ToDo: Maybe redirect to a login page instead of sending a 401?
                                 return new HTTPResponse.Builder(request) {
                                            HTTPStatusCode             = HTTPStatusCode.Unauthorized,
                                            Server                     = HTTPServerName,
@@ -663,7 +551,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.Drone.WebAPI
 
                     HTTPMethod.GET,
                     OverlayURLPathPrefix.Value + "/favicon.png",
-                    //HTTPContentType.Image.PNG,
                     HTTPDelegate: request =>
 
                         Task.FromResult(

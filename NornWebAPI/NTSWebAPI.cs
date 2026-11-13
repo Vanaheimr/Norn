@@ -41,102 +41,6 @@ using org.GraphDefined.Vanaheimr.Norn.Monitoring;
 namespace org.GraphDefined.Vanaheimr.Norn.NTS.WebAPI
 {
 
-    /// <summary>
-    /// Norn WebAPI extention methods.
-    /// </summary>
-    public static class NTSWebAPIExtensions
-    {
-
-        #region ParseRoamingNetwork(this HTTPRequest, HTTPServer, out RoamingNetwork, out HTTPResponse)
-
-        ///// <summary>
-        ///// Parse the given HTTP request and return the roaming network
-        ///// for the given HTTP hostname and HTTP query parameter
-        ///// or an HTTP error response.
-        ///// </summary>
-        ///// <param name="HTTPRequest">A HTTP request.</param>
-        ///// <param name="HTTPServer">A HTTP server.</param>
-        ///// <param name="RoamingNetwork">The roaming network.</param>
-        ///// <param name="HTTPResponse">A HTTP error response.</param>
-        ///// <returns>True, when roaming network was found; false else.</returns>
-        //public static Boolean ParseRoamingNetwork(this HTTPRequest                             HTTPRequest,
-        //                                          HTTPServer<RoamingNetworks, RoamingNetwork>  HTTPServer,
-        //                                          out RoamingNetwork                           RoamingNetwork,
-        //                                          out HTTPResponse                             HTTPResponse)
-        //{
-
-        //    if (HTTPServer == null)
-        //        Console.WriteLine("HTTPServer == null!");
-
-        //    #region Initial checks
-
-        //    if (HTTPRequest == null)
-        //        throw new ArgumentNullException("HTTPRequest",  "The given HTTP request must not be null!");
-
-        //    if (HTTPServer == null)
-        //        throw new ArgumentNullException("HTTPServer",   "The given HTTP server must not be null!");
-
-        //    #endregion
-
-        //    RoamingNetwork_Id RoamingNetworkId;
-        //                      RoamingNetwork    = null;
-        //                      HTTPResponse      = null;
-
-        //    if (HTTPRequest.ParsedURLParameters.Length < 1)
-        //    {
-
-        //        HTTPResponse = new HTTPResponse.Builder(HTTPRequest) {
-        //            HTTPStatusCode  = HTTPStatusCode.BadRequest,
-        //            Server          = HTTPServer.DefaultServerName,
-        //            Date            = Timestamp.Now,
-        //        };
-
-        //        return false;
-
-        //    }
-
-        //    if (!RoamingNetwork_Id.TryParse(HTTPRequest.ParsedURLParameters[0], out RoamingNetworkId))
-        //    {
-
-        //        HTTPResponse = new HTTPResponse.Builder(HTTPRequest) {
-        //            HTTPStatusCode  = HTTPStatusCode.BadRequest,
-        //            Server          = HTTPServer.DefaultServerName,
-        //            Date            = Timestamp.Now,
-        //            ContentType     = HTTPContentType.Application.JSON_UTF8,
-        //            Content         = @"{ ""description"": ""Invalid RoamingNetworkId!"" }".ToUTF8Bytes()
-        //        };
-
-        //        return false;
-
-        //    }
-
-        //    RoamingNetwork  = HTTPServer.
-        //                          GetAllTenants(HTTPRequest.Host).
-        //                          FirstOrDefault(roamingnetwork => roamingnetwork.Id == RoamingNetworkId);
-
-        //    if (RoamingNetwork == null) {
-
-        //        HTTPResponse = new HTTPResponse.Builder(HTTPRequest) {
-        //            HTTPStatusCode  = HTTPStatusCode.NotFound,
-        //            Server          = HTTPServer.DefaultServerName,
-        //            Date            = Timestamp.Now,
-        //            ContentType     = HTTPContentType.Application.JSON_UTF8,
-        //            Content         = @"{ ""description"": ""Unknown RoamingNetworkId!"" }".ToUTF8Bytes()
-        //        };
-
-        //        return false;
-
-        //    }
-
-        //    return true;
-
-        //}
-
-        #endregion
-
-
-    }
-
 
     /// <summary>
     /// A HTTP API to configure and access the NTS-KE/NTS UDP server.
@@ -157,27 +61,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS.WebAPI
         public new const            String              DefaultHTTPServiceName    = $"Norn {Version.String} WebAPI {Norn.WebAPI.Version.String}";
 
         /// <summary>
-        /// The default HTTP realm, if HTTP Basic Authentication is used.
-        /// </summary>
-        public     const            String              DefaultHTTPRealm          = $"Norn {Version.String} WebAPI {Norn.WebAPI.Version.String}";
-
-        /// <summary>
         /// The HTTP root for embedded ressources.
         /// </summary>
         public new const            String              HTTPRoot                  = "org.graphdefined.vanaheimr.norn.WebAPI.HTTPRoot.";
-
-
-        //ToDo: http://www.iana.org/form/media-types
-
-        ///// <summary>
-        ///// The HTTP content type for serving Norn+ JSON data.
-        ///// </summary>
-        //public static readonly      HTTPContentType     NornPlusJSONContentType   = new ("application", "vnd.NornPlus+json", "utf-8", null, null);
-
-        ///// <summary>
-        ///// The HTTP content type for serving Norn+ HTML data.
-        ///// </summary>
-        //public static readonly      HTTPContentType     NornPlusHTMLContentType   = new ("application", "vnd.NornPlus+html", "utf-8", null, null);
 
 
         public static readonly      HTTPEventSource_Id  DebugLogId                = HTTPEventSource_Id.Parse($"Norn{Version.String}_debugLog");
@@ -188,16 +74,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS.WebAPI
         #endregion
 
         #region Properties
-
-        /// <summary>
-        /// The HTTP realm, if HTTP Basic Authentication is used.
-        /// </summary>
-        public String                                       HTTPRealm               { get; }
-
-        /// <summary>
-        /// An enumeration of logins for an optional HTTP Basic Authentication.
-        /// </summary>
-        public IEnumerable<KeyValuePair<String, String>>    HTTPLogins              { get; }
 
 
         /// <summary>
@@ -220,25 +96,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS.WebAPI
         #endregion
 
         #region Events
-
-        #region Generic HTTP server logging
-
-        ///// <summary>
-        ///// An event called whenever a HTTP request came in.
-        ///// </summary>
-        //public HTTPRequestLogEvent   RequestLog    = new HTTPRequestLogEvent();
-
-        ///// <summary>
-        ///// An event called whenever a HTTP request could successfully be processed.
-        ///// </summary>
-        //public HTTPResponseLogEvent  ResponseLog   = new HTTPResponseLogEvent();
-
-        ///// <summary>
-        ///// An event called whenever a HTTP request resulted in an error.
-        ///// </summary>
-        //public HTTPErrorLogEvent     ErrorLog      = new HTTPErrorLogEvent();
-
-        #endregion
 
 
         #region (protected internal) GETServerInfosHTTPRequest  (Request)
@@ -336,7 +193,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS.WebAPI
                    HTTPAPI.URLPathPrefix + WebAPIURLPathPrefix,
                    HTTPAPI.URLPathPrefix + BasePath,
 
-                   Description     ?? I18NString.Create("OCPI Common Web API"),
+                   Description     ?? I18NString.Create("Norn Web API"),
 
                    ExternalDNSName,
                    HTTPServerName  ?? DefaultHTTPServerName,
@@ -355,28 +212,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS.WebAPI
 
             this.HTTPAPI               = HTTPAPI;
 
-            this.HTTPRealm             = HTTPRealm.IsNotNullOrEmpty() ? HTTPRealm : DefaultHTTPRealm;
-            this.HTTPLogins            = HTTPLogins ?? [];
-
-            // Link HTTP events...
-            //HTTPServer.RequestLog     += (HTTPProcessor, ServerTimestamp, Request)                                 => RequestLog. WhenAll(HTTPProcessor, ServerTimestamp, Request);
-            //HTTPServer.ResponseLog    += (HTTPProcessor, ServerTimestamp, Request, Response)                       => ResponseLog.WhenAll(HTTPProcessor, ServerTimestamp, Request, Response);
-            //HTTPServer.ErrorLog       += (HTTPProcessor, ServerTimestamp, Request, Response, Error, LastException) => ErrorLog.   WhenAll(HTTPProcessor, ServerTimestamp, Request, Response, Error, LastException);
-
-            //var LogfilePrefix          = "HTTPSSEs" + Path.DirectorySeparatorChar;
-
-            //this.DebugLog              = this.AddJSONEventSource(
-            //                                 EventIdentification:      DebugLogId,
-            //                                 URLTemplate:              this.URLPathPrefix + "debugLog",
-            //                                 MaxNumberOfCachedEvents:  10000,
-            //                                 RetryInterval:            TimeSpan.FromSeconds(5),
-            //                                 EnableLogging:            true,
-            //                                 LogfilePrefix:            LogfilePrefix
-            //                             );
 
             RegisterURLTemplates();
 
-            //this.RequestTimeout        = RequestTimeout;
 
         }
 
@@ -394,7 +232,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS.WebAPI
             return Task.CompletedTask;
 
         }
-
 
 
         #region (private) RegisterURLTemplates()
@@ -483,17 +320,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS.WebAPI
         private void RegisterURLTemplates()
         {
 
-            #region / (HTTPRoot)
-
-            //this.MapResourceAssemblyFolder(
-            //    HTTPHostname.Any,
-            //    URLPathPrefix,
-            //    HTTPRoot,
-            //    DefaultFilename: "index.html"
-            //);
-
-            #endregion
-
 
             #region GET ~/
 
@@ -563,33 +389,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS.WebAPI
 
                     var numberOfRequestedNTSCookies = request.QueryString.GetUInt16("n") ?? 7;
 
-                    //if (request.ParsedURLParameters.Length < 1)
-                    //    return Task.FromResult(
-                    //               new HTTPResponse.Builder(request) {
-                    //                   HTTPStatusCode             = HTTPStatusCode.BadRequest,
-                    //                   //AccessControlAllowMethods  = [ "OPTIONS", "GET", "POST", "PUT", "DELETE" ],
-                    //                   AccessControlAllowHeaders  = [ "Authorization" ]
-                    //               }.AsImmutable
-                    //           );
-
-                    //var ocationId = Location_Id.TryParse(Request.ParsedURLParameters[0]);
-
-                    //if (!LocationId.HasValue)
-                    //{
-
-                    //    OCPIResponseBuilder = new OCPIResponse.Builder(Request) {
-                    //        StatusCode           = 2001,
-                    //        StatusMessage        = "Invalid location identification!",
-                    //        HTTPResponseBuilder  = new HTTPResponse.Builder(Request.HTTPRequest) {
-                    //            HTTPStatusCode             = HTTPStatusCode.BadRequest,
-                    //            //AccessControlAllowMethods  = [ "OPTIONS", "GET", "POST", "PUT", "DELETE" ],
-                    //            AccessControlAllowHeaders  = [ "Authorization" ]
-                    //        }
-                    //    };
-
-                    //    return false;
-
-                    //}
 
                     #endregion
 
@@ -600,7 +399,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS.WebAPI
                                    Date                       = Timestamp.Now,
                                    AccessControlAllowOrigin   = "*",
                                    AccessControlAllowMethods  = [ HTTPMethod.OPTIONS, HTTPMethod.GET ],
-//                                   AccessControlAllowHeaders  = [ "Authorization" ],
                                    ContentType                = HTTPContentType.Application.JSON_UTF8,
                                    Content                    = HTTPAPI.NTSServer.GetServerInfos(numberOfRequestedNTSCookies).First().ToJSON().ToUTF8Bytes(),
                                    Connection                 = ConnectionType.Close,

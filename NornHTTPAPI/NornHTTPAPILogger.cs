@@ -159,24 +159,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.HTTPAPI
 
                 this.HTTPAPI = HTTPAPI ?? throw new ArgumentNullException(nameof(HTTPAPI), "The given NTS HTTPAPI must not be null!");
 
-                #region OnGETServerInfos
-
-                RegisterEvent2("OnGETServerInfosHTTPRequest",
-                               handler => HTTPAPI.OnGETServerInfosHTTPRequest  += handler,
-                               handler => HTTPAPI.OnGETServerInfosHTTPRequest -= handler,
-                               "GETServerInfos", "Request",  "All").
-                    RegisterDefaultConsoleLogTargetX(this).
-                    RegisterDefaultDiscLogTargetX(this);
-
-                RegisterEvent2("OnGETServerInfosHTTPResponse",
-                               handler => HTTPAPI.OnGETServerInfosHTTPResponse += handler,
-                               handler => HTTPAPI.OnGETServerInfosHTTPResponse -= handler,
-                               "GETServerInfos", "Response", "All").
-                    RegisterDefaultConsoleLogTargetX(this).
-                    RegisterDefaultDiscLogTargetX(this);
-
-                #endregion
-
             }
 
             #endregion

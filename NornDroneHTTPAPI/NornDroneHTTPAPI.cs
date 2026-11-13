@@ -40,102 +40,6 @@ using org.GraphDefined.Vanaheimr.Norn.Monitoring;
 namespace org.GraphDefined.Vanaheimr.Norn.Drone.HTTPAPI
 {
 
-    /// <summary>
-    /// Norn HTTPAPI extention methods.
-    /// </summary>
-    public static class NornDroneHTTPAPIExtensions
-    {
-
-        #region ParseRoamingNetwork(this HTTPRequest, HTTPServer, out RoamingNetwork, out HTTPResponse)
-
-        ///// <summary>
-        ///// Parse the given HTTP request and return the roaming network
-        ///// for the given HTTP hostname and HTTP query parameter
-        ///// or an HTTP error response.
-        ///// </summary>
-        ///// <param name="HTTPRequest">A HTTP request.</param>
-        ///// <param name="HTTPServer">A HTTP server.</param>
-        ///// <param name="RoamingNetwork">The roaming network.</param>
-        ///// <param name="HTTPResponse">A HTTP error response.</param>
-        ///// <returns>True, when roaming network was found; false else.</returns>
-        //public static Boolean ParseRoamingNetwork(this HTTPRequest                             HTTPRequest,
-        //                                          HTTPServer<RoamingNetworks, RoamingNetwork>  HTTPServer,
-        //                                          out RoamingNetwork                           RoamingNetwork,
-        //                                          out HTTPResponse                             HTTPResponse)
-        //{
-
-        //    if (HTTPServer == null)
-        //        Console.WriteLine("HTTPServer == null!");
-
-        //    #region Initial checks
-
-        //    if (HTTPRequest == null)
-        //        throw new ArgumentNullException("HTTPRequest",  "The given HTTP request must not be null!");
-
-        //    if (HTTPServer == null)
-        //        throw new ArgumentNullException("HTTPServer",   "The given HTTP server must not be null!");
-
-        //    #endregion
-
-        //    RoamingNetwork_Id RoamingNetworkId;
-        //                      RoamingNetwork    = null;
-        //                      HTTPResponse      = null;
-
-        //    if (HTTPRequest.ParsedURLParameters.Length < 1)
-        //    {
-
-        //        HTTPResponse = new HTTPResponse.Builder(HTTPRequest) {
-        //            HTTPStatusCode  = HTTPStatusCode.BadRequest,
-        //            Server          = HTTPServer.DefaultServerName,
-        //            Date            = Timestamp.Now,
-        //        };
-
-        //        return false;
-
-        //    }
-
-        //    if (!RoamingNetwork_Id.TryParse(HTTPRequest.ParsedURLParameters[0], out RoamingNetworkId))
-        //    {
-
-        //        HTTPResponse = new HTTPResponse.Builder(HTTPRequest) {
-        //            HTTPStatusCode  = HTTPStatusCode.BadRequest,
-        //            Server          = HTTPServer.DefaultServerName,
-        //            Date            = Timestamp.Now,
-        //            ContentType     = HTTPContentType.Application.JSON_UTF8,
-        //            Content         = @"{ ""description"": ""Invalid RoamingNetworkId!"" }".ToUTF8Bytes()
-        //        };
-
-        //        return false;
-
-        //    }
-
-        //    RoamingNetwork  = HTTPServer.
-        //                          GetAllTenants(HTTPRequest.Host).
-        //                          FirstOrDefault(roamingnetwork => roamingnetwork.Id == RoamingNetworkId);
-
-        //    if (RoamingNetwork == null) {
-
-        //        HTTPResponse = new HTTPResponse.Builder(HTTPRequest) {
-        //            HTTPStatusCode  = HTTPStatusCode.NotFound,
-        //            Server          = HTTPServer.DefaultServerName,
-        //            Date            = Timestamp.Now,
-        //            ContentType     = HTTPContentType.Application.JSON_UTF8,
-        //            Content         = @"{ ""description"": ""Unknown RoamingNetworkId!"" }".ToUTF8Bytes()
-        //        };
-
-        //        return false;
-
-        //    }
-
-        //    return true;
-
-        //}
-
-        #endregion
-
-
-    }
-
 
     /// <summary>
     /// A HTTP API to configure and access a Norn drone.
@@ -156,27 +60,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.Drone.HTTPAPI
         public new const            String              DefaultHTTPServiceName    = $"Norn {Version.String} HTTPAPI";
 
         /// <summary>
-        /// The default HTTP realm, if HTTP Basic Authentication is used.
-        /// </summary>
-        public     const            String              DefaultHTTPRealm          = $"Norn {Version.String} HTTPAPI";
-
-        /// <summary>
         /// The HTTP root for embedded ressources.
         /// </summary>
         public     const            String              HTTPRoot                  = "org.graphdefined.vanaheimr.norn.HTTPAPI.HTTPRoot.";
-
-
-        //ToDo: http://www.iana.org/form/media-types
-
-        ///// <summary>
-        ///// The HTTP content type for serving Norn+ JSON data.
-        ///// </summary>
-        //public static readonly      HTTPContentType     NornPlusJSONContentType   = new ("application", "vnd.NornPlus+json", "utf-8", null, null);
-
-        ///// <summary>
-        ///// The HTTP content type for serving Norn+ HTML data.
-        ///// </summary>
-        //public static readonly      HTTPContentType     NornPlusHTMLContentType   = new ("application", "vnd.NornPlus+html", "utf-8", null, null);
 
 
         public static readonly      HTTPEventSource_Id  DebugLogId                = HTTPEventSource_Id.Parse($"Norn{Version.String}_debugLog");
@@ -187,16 +73,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.Drone.HTTPAPI
         #endregion
 
         #region Properties
-
-        /// <summary>
-        /// The HTTP realm, if HTTP Basic Authentication is used.
-        /// </summary>
-        public String                                     HTTPRealm               { get; }
-
-        /// <summary>
-        /// An enumeration of logins for an optional HTTP Basic Authentication.
-        /// </summary>
-        public IEnumerable<KeyValuePair<String, String>>  HTTPLogins              { get; }
 
         public HTTPAPILogger?                             Logger                  { get; set; }
 
@@ -354,8 +230,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.Drone.HTTPAPI
 
                                 Boolean?                       IsDevelopment             = null,
                                 IEnumerable<String>?           DevelopmentServers        = null,
-                                //Boolean?                       SkipURLTemplates          = false,
-                                String?                        DatabaseFileName          = null,//DefaultAssetsDBFileName,
                                 Boolean?                       DisableNotifications      = false,
 
                                 Boolean?                       DisableLogging            = null,
@@ -380,32 +254,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.Drone.HTTPAPI
                    DisableLogging,
                    LoggingPath,
                    LogfileName
-                   //LogfileCreator is not null
-                   //    ? (loggingPath, context, logfileName) => LogfileCreator(loggingPath, null, context, logfileName)
-                   //    : (loggingPath, context, logfileName) => String.Concat(
-                   //                                                 loggingPath + Path.DirectorySeparatorChar,
-                   //                                              //   remoteParty is not null
-                   //                                              //       ? remoteParty.Id.ToString() + Path.DirectorySeparatorChar
-                   //                                              //       : null,
-                   //                                                 context is not null ? context + "_" : "",
-                   //                                                 logfileName, "_",
-                   //                                                 Timestamp.Now.Year, "-",
-                   //                                                 Timestamp.Now.Month.ToString("D2"),
-                   //                                                 ".log"
-                   //                                             )
                    )
 
         {
 
-            this.HTTPRealm             = HTTPRealm.IsNotNullOrEmpty() ? HTTPRealm : DefaultHTTPRealm;
-            this.HTTPLogins            = HTTPLogins ?? [];
-
-            // Link HTTP events...
-        //    HTTPServer.RequestLog     += (HTTPProcessor, ServerTimestamp, Request)                                 => RequestLog. WhenAll(HTTPProcessor, ServerTimestamp, Request);
-        //    HTTPServer.ResponseLog    += (HTTPProcessor, ServerTimestamp, Request, Response)                       => ResponseLog.WhenAll(HTTPProcessor, ServerTimestamp, Request, Response);
-        //    HTTPServer.ErrorLog       += (HTTPProcessor, ServerTimestamp, Request, Response, Error, LastException) => ErrorLog.   WhenAll(HTTPProcessor, ServerTimestamp, Request, Response, Error, LastException);
-
-            //var LogfilePrefix          = "HTTPSSEs" + Path.DirectorySeparatorChar;
 
             RegisterURLTemplates();
 
@@ -446,7 +298,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.Drone.HTTPAPI
             return Task.CompletedTask;
 
         }
-
 
 
         #region (private) RegisterURLTemplates()
