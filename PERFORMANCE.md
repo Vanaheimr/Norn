@@ -16,6 +16,10 @@ The short version:
 - The 64 KB buffer is gone since (see [What was changed](#what-was-changed)):
   a query allocates 16 KB in the client now. The time is what it was, because
   the socket is still made for every query, and that is deliberate.
+- The socket was also in the measurement itself: the client read its transmit
+  timestamp before it made the socket, which put 0.1 ms onto the offset and
+  0.2 ms onto the delay. It binds the socket first now (see
+  [What the socket did to the measurement](#what-the-socket-did-to-the-measurement)).
 
 
 ## How it was measured
@@ -195,6 +199,55 @@ being built and serialised (5.0 KB), the receive with its timeout (1.8 KB) and
 a dozen smaller things.
 
 
+## What the socket did to the measurement
+
+Over loopback the client and the server read the same clock, so the offset a
+query reports is its own error: the true one is zero.
+
+A client that is not in the interleaved mode has its T1 in the request, so it
+reads the clock before it builds the request. It also did so before it made the
+socket, and a socket that is not bound binds itself in its first send. Some
+290 µs lay between T1 and the datagram: they looked like the way to the server,
+and half of the difference to the way back is what the offset is wrong by.
+
+The client binds the socket now before it reads T1, and resolves the address
+before that where it still has to. Nothing else was changed; the socket and the
+port are still new for every query.
+
+| Median of 20,000 queries, three runs each |   T1 before the socket | T1 after the bind |
+|--------------------------------------------|-----------------------:|------------------:|
+| Offset reported (true: 0)                  |          +104, +125 µs | +13, +13, +17 µs  |
+| 10th to 90th percentile of it              |           73 to 190 µs |     -9 to +43 µs  |
+| Delay reported                             |           390, 442 µs  | 221, 224, 253 µs  |
+| `StopwatchRoundTripTime`                   |           367, 419 µs  | 242, 243, 278 µs  |
+
+(The first column is two runs.)
+
+What is left has two parts, which the same runs show when the clock is read a
+second time right after the send:
+
+- **The client, about +40 µs.** Between T1 and the end of the send there are
+  77 to 89 µs: the request being built and sealed, and the first send on a new
+  socket, which is three to four times a later one even when the socket is
+  bound. With the clock read after the send instead, the offset is -25 to
+  -35 µs and the delay 107 to 133 µs.
+- **The server, about -30 µs.** It reads T3 before it builds, seals and sends
+  the response. That is what the basic mode is, and what the interleaved mode
+  of RFC 9769 is for.
+
+The two have opposite signs, which is why +13 µs is better than either part.
+In the interleaved mode, where both sides use a timestamp read after the send,
+the same loopback gives an offset of -0.5 µs (10th to 90th percentile -5 to
++4 µs) and a delay of 56 to 60 µs, which is the 45 to 65 µs a UDP round trip
+costs here at all.
+
+**T1 is still read before the send in the basic mode**, and not after it,
+although after is the more exact of the two here. A timestamp that is too early
+makes the delay too large, and an offset is never wrong by more than half the
+delay; one that is too late - a thread that is held up between the send and the
+clock - makes the delay too small and the sample look better than it is.
+
+
 ## What was not changed, and why
 
 **The socket is still made for every query.** That is where 300 µs of every
@@ -210,6 +263,8 @@ Also open:
 - Why binding a UDP socket takes 130 µs here.
 - The server's `SendToAsync`, at 36 to 50 µs three to four times a send on a
   quiet socket.
+- The first send on a new socket, which puts about 40 µs onto every offset of
+  the basic mode.
 - The 6 to 7 KB each that parsing and building cost on either side.
 - Anything but loopback, Windows and one query at a time.
 

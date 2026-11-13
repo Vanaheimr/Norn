@@ -1805,27 +1805,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                          ? nonceReceive
                                          : 0UL;
 
-            var transmitTimestamp  = interleaved is not null
-                                         ? nonceTransmit
-                                         : NTPPacket.GetCurrentNTPTimestamp(TimeProvider);
-
-            var requestPacket      = BuildNTSRequest(
-                                         NTSKEResponse,
-                                         cookie,
-                                         RandomNumberGenerator.GetBytes(32),
-                                          Plaintext:              null,
-                                          RequestSignedResponse:  SignedResponseMode,
-                                          SignedResponseKeyId:    SignedResponseKeyId,
-                                          TransmitTimestamp:      transmitTimestamp,
-                                          OriginateTimestamp:     requestOrigin,
-                                          ReceiveTimestamp:       requestReceive,
-                                          CookiePlaceholderCount: cookiePlaceholderCount,
-                                          CookiePlaceholderLength: (UInt16) Math.Min(UInt16.MaxValue, Math.Max(0, cookie?.Length ?? 100)),
-                                          TimeProvider:           TimeProvider
-                                      );
-
-            var requestData        = requestPacket.ToByteArray();
-
             // A socket of its own for every query, and with it a source port of its own
             // (RFC 9109). The socket and not a UdpClient around it, which is the same socket
             // and 64 kilobytes to receive into, made anew every time.
@@ -1840,40 +1819,60 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 try
                 {
 
+                    // Whatever is not the network is done before the clock is read: where to
+                    // send to, and the port to send from. A socket that is not bound binds
+                    // itself in its first send, and on Windows that is well over a hundred
+                    // microseconds between a transmit timestamp and the datagram it is in.
+                    // They were charged to the way there, and half of them to the offset.
+                    var destination        = remoteEndPoint ?? await ResolveBySystemAsync(
+                                                                         Hostname.ToString(),
+                                                                         NTP_Port.ToUInt16(),
+                                                                         CancellationToken
+                                                                     ).ConfigureAwait(false);
+
+                    udpSocket.Bind(
+                        udpSocket.AddressFamily == AddressFamily.InterNetworkV6
+                            ? anyIPv6EndPoint
+                            : anyIPv4EndPoint
+                    );
+
+                    // T1 of a plain client. Between it and the send there is the request being
+                    // built and sealed, and nothing else.
+                    var transmitTimestamp  = interleaved is not null
+                                                 ? nonceTransmit
+                                                 : NTPPacket.GetCurrentNTPTimestamp(TimeProvider);
+
+                    var requestPacket      = BuildNTSRequest(
+                                                 NTSKEResponse,
+                                                 cookie,
+                                                 RandomNumberGenerator.GetBytes(32),
+                                                 Plaintext:               null,
+                                                 RequestSignedResponse:   SignedResponseMode,
+                                                 SignedResponseKeyId:     SignedResponseKeyId,
+                                                 TransmitTimestamp:       transmitTimestamp,
+                                                 OriginateTimestamp:      requestOrigin,
+                                                 ReceiveTimestamp:        requestReceive,
+                                                 CookiePlaceholderCount:  cookiePlaceholderCount,
+                                                 CookiePlaceholderLength: (UInt16) Math.Min(UInt16.MaxValue, Math.Max(0, cookie?.Length ?? 100)),
+                                                 TimeProvider:            TimeProvider
+                                             );
+
+                    var requestData        = requestPacket.ToByteArray();
+
                     var sendStopwatchTimestamp = Stopwatch.GetTimestamp();
 
-                    if (remoteEndPoint is not null)
-                    {
+                    await udpSocket.SendToAsync(
+                              requestData,
+                              SocketFlags.None,
+                              destination,
+                              CancellationToken
+                          );
 
-                        await udpSocket.SendToAsync(
-                                  requestData,
-                                  SocketFlags.None,
-                                  remoteEndPoint,
-                                  CancellationToken
-                              );
-
-                    }
-                    else
-                    {
-
-                        await udpSocket.SendToAsync(
-                                  requestData,
-                                  SocketFlags.None,
-                                  await ResolveBySystemAsync(
-                                            Hostname.ToString(),
-                                            NTP_Port.ToUInt16(),
-                                            CancellationToken
-                                        ).ConfigureAwait(false),
-                                  CancellationToken
-                              );
-
-                    }
-
-                    // T1, and the client's half of what RFC 9769 is for: read after the send
-                    // rather than before, so the cost of building, sealing and writing the
-                    // packet is not charged to the network. In the interleaved mode this is
-                    // the value the *next* request will carry in its transmit field, and the
-                    // one the measurement completed by the next response will use.
+                    // T1 of the interleaved mode, and the client's half of what RFC 9769 is
+                    // for: read after the send rather than before, so the cost of building,
+                    // sealing and writing the packet is not charged to the network. It is the
+                    // value the *next* request will carry in its transmit field, and the one
+                    // the measurement completed by the next response will use.
                     var actualRequestTransmit       = NTPPacket.GetCurrentNTPTimestamp(TimeProvider);
 
                     // The first datagram that could not be accepted, and what to report
