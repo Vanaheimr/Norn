@@ -1805,6 +1805,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                          ? nonceReceive
                                          : 0UL;
 
+            // Whether the request has left, for whoever reads why a query failed: an
+            // exception before that is not one of receiving anything.
+            var requestSent = false;
+
             // A socket of its own for every query, and with it a source port of its own
             // (RFC 9109). The socket and not a UdpClient around it, which is the same socket
             // and 64 kilobytes to receive into, made anew every time.
@@ -1867,6 +1871,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                               destination,
                               CancellationToken
                           );
+
+                    requestSent = true;
 
                     // T1 of the interleaved mode, and the client's half of what RFC 9769 is
                     // for: read after the send rather than before, so the cost of building,
@@ -2377,8 +2383,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 }
                 catch (Exception e)
                 {
+                    // Until the request has left there is the address to send to, the
+                    // socket being bound, the request being built and the send itself.
                     return NTSQueryResult.FailedWithPacket(
-                               $"NTP receive exception from {remoteDescription}: {e.Message}",
+                               requestSent
+                                   ? $"NTP receive exception from {remoteDescription}: {e.Message}"
+                                   : $"NTP request to {remoteDescription} could not be sent: {e.Message}",
                                NTSQueryErrorCategory.Exception,
                                remoteEndPoint,
                                remoteDescription,
