@@ -148,6 +148,16 @@ is the one worth reading, because two implementations making the same mistake ag
 other perfectly, and no test with Norn on both ends could ever have found it.
 
 
+## Performance
+
+One NTS query over loopback takes about 500 µs and 16 KB in the client, and 70 to 105 µs and
+15.5 KB in the server. Most of the client's time is not NTS but the UDP socket it makes for
+every query, which is deliberate: a socket of its own is a source port of its own.
+**[PERFORMANCE.md](PERFORMANCE.md)** has it phase by phase for both sides, how it was measured,
+and what is still open. It is one machine and one query at a time: it says where the cost is,
+not what a server can carry.
+
+
 ## RFCs
 - [rfc4330 - Simple Network Time Protocol (SNTP) Version 4](https://datatracker.ietf.org/doc/html/rfc4330)
 - [rfc5297 - Synthetic Initialization Vector (SIV) Authenticated Encryption Using the Advanced Encryption Standard (AES)](https://datatracker.ietf.org/doc/html/rfc5297)
