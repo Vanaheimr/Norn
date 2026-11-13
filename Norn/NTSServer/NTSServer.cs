@@ -1805,10 +1805,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                 try
                 {
+
+                    // One buffer to receive into, for as long as the loop runs: a datagram
+                    // is received, looked at and - if it is to be answered - copied out in
+                    // its own length before the next one is received. There used to be a
+                    // new buffer of this size for every datagram, cut down to the datagram
+                    // by a second allocation and a copy.
+                    var buffer = new Byte[BufferSize];
+
                     while (!cts.Token.IsCancellationRequested)
                     {
 
-                        var buffer          = new Byte[BufferSize];
                         var remoteEP        = AnyRemoteEndPoint();
 
                         SocketReceiveFromResult udpPacket;
@@ -1926,14 +1933,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                             continue;
                         }
 
+                        // The datagram itself, and no more: the worker keeps it, and the
+                        // buffer is about to receive the next one.
+                        var datagram = buffer.AsSpan(0, udpPacketLocal.ReceivedBytes).ToArray();
+
                         _ = Task.Run(async () => {
 
                             try
                             {
 
-                                Array.Resize(ref buffer, udpPacketLocal.ReceivedBytes);
-
-                                if (NTPRequest.TryParse(buffer,
+                                if (NTPRequest.TryParse(datagram,
                                                         out var requestPacket,
                                                         out var errorResponse,
                                                         MasterKeys: masterKeys))
