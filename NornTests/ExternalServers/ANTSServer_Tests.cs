@@ -36,10 +36,24 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
     /// Test the NTS client against the given NTS server.
     /// </summary>
     /// <param name="ServerName">The NTS Server DNS Name.</param>
+    /// <param name="ExpectedReferenceIdentifier">The reference identifier the server gives, where it is always the same.</param>
+    /// <param name="ExpectedStratum">
+    /// The lowest stratum the server may give: 1 for a server with a clock of its own, 2 for
+    /// one that reads its time from others.
+    /// </param>
+    /// <param name="MaxExpectedStratum">
+    /// The highest stratum it may give, or null for that same value and no other.
+    ///
+    /// A server that reads its time from others is one stratum below whichever of them it
+    /// follows at the moment, and which one that is changes - after a restart, or when a
+    /// source is lost. Its stratum is a range, and holding it to one number has a test
+    /// fail for a server that is doing nothing wrong.
+    /// </param>
     /// <param name="Timeout">An optional timeout for NTS operations.</param>
     public abstract class ANTSServer_Tests(DomainName  ServerName,
                                            String?     ExpectedReferenceIdentifier   = null,
                                            Byte?       ExpectedStratum               = null,
+                                           Byte?       MaxExpectedStratum            = null,
                                            TimeSpan?   Timeout                       = null)
     {
 
@@ -85,7 +99,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                     Assert.That(ntpResponse.ReferenceIdentifier.AsASCII,   Is.EqualTo(ExpectedReferenceIdentifier));
 
                 if (ExpectedStratum             is not null)
-                    Assert.That(ntpResponse.Stratum,                       Is.EqualTo(ExpectedStratum));
+                    Assert.That(ntpResponse.Stratum,                       Is.InRange(ExpectedStratum.Value,
+                                                                                      MaxExpectedStratum ?? ExpectedStratum.Value));
 
             }
 

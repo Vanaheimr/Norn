@@ -38,7 +38,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         : ANTSServer_Tests(
               ServerName:                   DomainName.Parse("time.cloudflare.com"),
               ExpectedReferenceIdentifier:  null,
-              ExpectedStratum:              3,
+              ExpectedStratum:              2,
+              MaxExpectedStratum:           15,
               Timeout:                      TimeSpan.FromSeconds(15)
           )
 

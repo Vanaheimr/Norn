@@ -38,6 +38,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
               ServerName:                   DomainName.Parse("time1.charging.cloud"),
               ExpectedReferenceIdentifier:  null,
               ExpectedStratum:              2,
+              MaxExpectedStratum:           15,
               Timeout:                      TimeSpan.FromSeconds(15)
           )
     { }
