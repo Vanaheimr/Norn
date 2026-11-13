@@ -340,7 +340,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.HTTPAPI
 
                 HTTPMethod.GET,
                 HTTPPath.Root,
-                HTTPContentType.Text.HTML_UTF8,
+
+                // As what it is: plain text. It was registered as HTML, which is what
+                // the web API on top of this one registers its page as - and a second
+                // handler for one path and one content type is refused, so that the
+                // web API could not be made at all.
+                HTTPContentType.Text.PLAIN,
                 HTTPRequestLogger:   GetRootRequest,
                 HTTPResponseLogger:  GetRootResponse,
                 HTTPDelegate:        request =>
