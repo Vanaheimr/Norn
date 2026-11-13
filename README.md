@@ -150,7 +150,7 @@ other perfectly, and no test with Norn on both ends could ever have found it.
 
 ## Performance
 
-One NTS query over loopback takes about 500 µs and 16 KB in the client, and 70 to 105 µs and
+One NTS query over loopback takes 400 to 500 µs and 16 KB in the client, and 60 to 100 µs and
 15.5 KB in the server. Most of the client's time is not NTS but the UDP socket it makes for
 every query, which is deliberate: a socket of its own is a source port of its own.
 **[PERFORMANCE.md](PERFORMANCE.md)** has it phase by phase for both sides, how it was measured,
