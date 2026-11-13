@@ -268,4 +268,14 @@ Also open:
 - The 6 to 7 KB each that parsing and building cost on either side.
 - Anything but loopback, Windows and one query at a time.
 
-The harness is not part of this repository.
+## Measuring it again
+
+The program all of this was measured with is [NornTimings](NornTimings/README.md):
+
+```bash
+dotnet run -c Release --project NornTimings/Phases -- query --high-priority
+```
+
+The tables of phases above are from before the two changes. A run of today has
+the bind as a phase of its own, some 150 µs, and the send after it at some
+80 µs.

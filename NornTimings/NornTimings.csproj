@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net11.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>org.GraphDefined.Vanaheimr.Norn.Timings</RootNamespace>
+    <AssemblyName>norn-timings</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- A project of its own, which compiles the sources here a second time. -->
+    <Compile Remove="Phases\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Norn\Norn.csproj" />
+  </ItemGroup>
+
+</Project>

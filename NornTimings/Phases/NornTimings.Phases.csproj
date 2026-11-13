@@ -1,0 +1,71 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The measuring program once more, with Norn compiled into it and not referenced: all
+    of its sources as they are, but for NTSClient.cs and NTSServer.cs. Of those two a
+    copy is made that has marks in it, a time stamp between the phases of a query, and
+    the copy is compiled.
+
+    So the marks are in no file of Norn, and what is measured is still Norn's code. When
+    that code changes where a mark is, the build fails and says which one: the marks are
+    looked for by the lines they stand at, in InsertMarks.cs.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net11.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>org.GraphDefined.Vanaheimr.Norn.Timings</RootNamespace>
+    <AssemblyName>norn-timings-phases</AssemblyName>
+    <DefineConstants>$(DefineConstants);MARKS</DefineConstants>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <NornSources>$(MSBuildThisFileDirectory)..\..\Norn\</NornSources>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\*.cs" />
+    <Compile Include="$(NornSources)**\*.cs"
+             Exclude="$(NornSources)bin\**;$(NornSources)obj\**;$(NornSources)NTSClient\NTSClient.cs;$(NornSources)NTSServer\NTSServer.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- What Norn.csproj references. -->
+    <ProjectReference Include="..\..\..\Hermod\Hermod\Hermod.csproj" />
+  </ItemGroup>
+
+  <UsingTask TaskName="InsertMarks"
+             TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+    <Task>
+      <Code Type="Class" Language="cs" Source="$(MSBuildThisFileDirectory)InsertMarks.cs" />
+    </Task>
+  </UsingTask>
+
+  <Target Name="InsertMarks"
+          BeforeTargets="CoreCompile"
+          Inputs="$(NornSources)NTSClient\NTSClient.cs;$(NornSources)NTSServer\NTSServer.cs;$(MSBuildThisFileDirectory)InsertMarks.cs;$(MSBuildThisFileFullPath)"
+          Outputs="$(IntermediateOutputPath)Marked\NTSClient.cs;$(IntermediateOutputPath)Marked\NTSServer.cs">
+
+    <InsertMarks ClientSource="$(NornSources)NTSClient\NTSClient.cs"
+                 ServerSource="$(NornSources)NTSServer\NTSServer.cs"
+                 OutputDirectory="$(IntermediateOutputPath)Marked" />
+
+  </Target>
+
+  <!-- Apart from the one above, so that the copies are compiled as well when they were up to date and it did not run. -->
+  <Target Name="CompileMarkedSources"
+          BeforeTargets="CoreCompile"
+          DependsOnTargets="InsertMarks">
+
+    <ItemGroup>
+      <Compile    Include="$(IntermediateOutputPath)Marked\NTSClient.cs;$(IntermediateOutputPath)Marked\NTSServer.cs" />
+      <FileWrites Include="$(IntermediateOutputPath)Marked\NTSClient.cs;$(IntermediateOutputPath)Marked\NTSServer.cs" />
+    </ItemGroup>
+
+  </Target>
+
+</Project>
