@@ -60,6 +60,20 @@ jobs:
         working-directory: Norn
         run: dotnet build NornTests/NornTests.csproj --configuration Release
 
+      # The measuring program of PERFORMANCE.md is built and not run: its numbers mean
+      # nothing on a hosted runner. What the build checks is the marks. They are put into
+      # copies of NTSClient.cs and NTSServer.cs by the lines of code they stand at, and a
+      # line that has changed fails the build and names the mark - here, and not months
+      # later when somebody wants to measure again. NornTimings.csproj is the same sources
+      # against Norn as it is, without the marks.
+      - name: Build the timings
+        working-directory: Norn
+        run: dotnet build NornTimings/NornTimings.csproj --configuration Release
+
+      - name: Build the timings with the marks
+        working-directory: Norn
+        run: dotnet build NornTimings/Phases/NornTimings.Phases.csproj --configuration Release
+
       # A few seconds: AES-SIV and CMAC vectors, NTP and NTS-KE wire formats, cookie
       # sealing, client-side response validation, and an in-process NTS server on
       # loopback ports.
