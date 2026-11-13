@@ -17,6 +17,7 @@
 
 #region Usings
 
+using System.Buffers;
 using System.Diagnostics;
 using System.Net.Sockets;
 using System.Security.Cryptography;
@@ -1389,11 +1390,47 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         #endregion
 
 
-        #region (private static) ReceiveUdpResponseAsync(UDPClient, Timeout, CancellationToken)
+        #region (private) ReceiveBuffer
 
+        /// <summary>
+        /// The largest datagram there is, so that none is ever cut short on arrival.
+        /// </summary>
+        private const Int32 MaxUDPDatagramSize = 65536;
+
+        /// <summary>
+        /// A buffer to receive datagrams into, borrowed for one query and given back after it.
+        /// </summary>
+        /// <remarks>
+        /// A UdpClient made one of these 64 kilobytes for itself, and a query made a UdpClient:
+        /// four fifths of everything a query allocated was a buffer of which an NTP response
+        /// fills a few hundred bytes. It is still as large, because a smaller one would have
+        /// a datagram that does not fit fail the receive, and with it the query, for anyone
+        /// who can reach the socket.
+        /// </remarks>
+        private readonly struct ReceiveBuffer() : IDisposable
+        {
+
+            public Byte[] Bytes { get; } = ArrayPool<Byte>.Shared.Rent(MaxUDPDatagramSize);
+
+            public void Dispose()
+                => ArrayPool<Byte>.Shared.Return(Bytes);
+
+        }
+
+        #endregion
+
+        #region (private static) ReceiveUdpResponseAsync(UDPSocket, Buffer, Timeout, CancellationToken)
+
+        private static readonly System.Net.IPEndPoint anyIPv4EndPoint = new (System.Net.IPAddress.Any,     0);
+        private static readonly System.Net.IPEndPoint anyIPv6EndPoint = new (System.Net.IPAddress.IPv6Any, 0);
+
+        /// <summary>
+        /// Receive one datagram into the given buffer, and hand it out in its own length.
+        /// </summary>
         private static async Task<(UdpReceiveResult? Result, Boolean TimedOut)>
 
-            ReceiveUdpResponseAsync(UdpClient           UDPClient,
+            ReceiveUdpResponseAsync(Socket              UDPSocket,
+                                    Byte[]              Buffer,
                                     TimeSpan            Timeout,
                                     CancellationToken   CancellationToken)
 
@@ -1404,15 +1441,55 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             try
             {
+
+                var received = await UDPSocket.ReceiveFromAsync(
+                                         Buffer.AsMemory(),
+                                         SocketFlags.None,
+                                         UDPSocket.AddressFamily == AddressFamily.InterNetworkV6
+                                             ? anyIPv6EndPoint
+                                             : anyIPv4EndPoint,
+                                         timeoutCTS.Token
+                                     ).ConfigureAwait(false);
+
                 return (
-                    await UDPClient.ReceiveAsync(timeoutCTS.Token).AsTask().ConfigureAwait(false),
+                    new UdpReceiveResult(
+                        Buffer.AsSpan(0, received.ReceivedBytes).ToArray(),
+                        (System.Net.IPEndPoint) received.RemoteEndPoint
+                    ),
                     false
                 );
+
             }
             catch (OperationCanceledException) when (!CancellationToken.IsCancellationRequested)
             {
                 return (null, true);
             }
+
+        }
+
+        #endregion
+
+        #region (private static) ResolveBySystemAsync(Hostname, Port, CancellationToken)
+
+        /// <summary>
+        /// The first IPv4 address the resolver of the operating system has for a host:
+        /// where a request goes when this client's own resolver found none.
+        /// </summary>
+        private static async Task<System.Net.IPEndPoint> ResolveBySystemAsync(String             Hostname,
+                                                                              UInt16             Port,
+                                                                              CancellationToken  CancellationToken)
+        {
+
+            var ipAddresses = await System.Net.Dns.GetHostAddressesAsync(
+                                        Hostname,
+                                        AddressFamily.InterNetwork,
+                                        CancellationToken
+                                    ).ConfigureAwait(false);
+
+            if (ipAddresses.Length == 0)
+                throw new SocketException((Int32) SocketError.HostNotFound);
+
+            return new System.Net.IPEndPoint(ipAddresses[0], Port);
 
         }
 
@@ -1749,9 +1826,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             var requestData        = requestPacket.ToByteArray();
 
-            using (var udpClient = remoteEndPoint is not null
-                                       ? new UdpClient(remoteEndPoint.AddressFamily)
-                                       : new UdpClient())
+            // A socket of its own for every query, and with it a source port of its own
+            // (RFC 9109). The socket and not a UdpClient around it, which is the same socket
+            // and 64 kilobytes to receive into, made anew every time.
+            using (var receiveBuffer = new ReceiveBuffer())
+            using (var udpSocket     = new Socket(
+                                           remoteEndPoint?.AddressFamily ?? AddressFamily.InterNetwork,
+                                           SocketType.Dgram,
+                                           ProtocolType.Udp
+                                       ))
             {
 
                 try
@@ -1762,8 +1845,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     if (remoteEndPoint is not null)
                     {
 
-                        await udpClient.SendAsync(
+                        await udpSocket.SendToAsync(
                                   requestData,
+                                  SocketFlags.None,
                                   remoteEndPoint,
                                   CancellationToken
                               );
@@ -1772,10 +1856,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     else
                     {
 
-                        await udpClient.SendAsync(
+                        await udpSocket.SendToAsync(
                                   requestData,
-                                  Hostname.ToString(),
-                                  NTP_Port.ToUInt16(),
+                                  SocketFlags.None,
+                                  await ResolveBySystemAsync(
+                                            Hostname.ToString(),
+                                            NTP_Port.ToUInt16(),
+                                            CancellationToken
+                                        ).ConfigureAwait(false),
                                   CancellationToken
                               );
 
@@ -1802,7 +1890,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                         (UdpReceiveResult? Result, Boolean TimedOut) receiveResult1WithTimeout = remainingTime > TimeSpan.Zero
                                                               ? await ReceiveUdpResponseAsync(
-                                                                          udpClient,
+                                                                          udpSocket,
+                                                                          receiveBuffer.Bytes,
                                                                           remainingTime,
                                                                           CancellationToken
                                                                       ).ConfigureAwait(false)
@@ -1968,7 +2057,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                                     receiveResult2WithTimeout = remainingTime2 > TimeSpan.Zero
                                                                     ? await ReceiveUdpResponseAsync(
-                                                                                udpClient,
+                                                                                udpSocket,
+                                                                                receiveBuffer.Bytes,
                                                                                 remainingTime2,
                                                                                 CancellationToken
                                                                             ).ConfigureAwait(false)
