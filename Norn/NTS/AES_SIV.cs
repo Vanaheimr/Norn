@@ -19,12 +19,8 @@
 
 using System.Security.Cryptography;
 
-using Org.BouncyCastle.Crypto.Macs;
-using Org.BouncyCastle.Crypto.Modes;
-using Org.BouncyCastle.Crypto.Engines;
+using Org.BouncyCastle.Crypto;
 using Org.BouncyCastle.Crypto.Parameters;
-
-using org.GraphDefined.Vanaheimr.Illias;
 
 #endregion
 
@@ -34,8 +30,40 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
     /// <summary>
     /// AES Synthetic Initialization Vector Encryption (AES-SIV-CMAC-256)
     /// </summary>
+    /// <remarks>
+    /// Four of these run for every NTS request a server answers - the cookie is opened,
+    /// the request verified, a new cookie sealed and the response authenticated - so what
+    /// one costs is what a request costs. It used to be seven microseconds and eight
+    /// kilobytes of garbage: every CMAC of S2V made its own cipher and expanded the key
+    /// again, AES was done in tables although the processor has an instruction for it,
+    /// and every intermediate value was an array of its own.
+    ///
+    /// Now the two keys are expanded once per operation, AES is the processor's where it
+    /// has it (<see cref="AesUtilities.CreateEngine"/>), and CMAC and the counter mode
+    /// are done here, over that one block cipher, on the stack. What depends on the key
+    /// alone - the two CMAC subkeys and CMAC(K, 0), which S2V starts from - is computed
+    /// when the key is given and kept.
+    ///
+    /// An instance may be used by several threads at once: it keeps bytes, and no cipher.
+    /// </remarks>
     public class AES_SIV
     {
+
+        #region Data
+
+        private const    Int32   BlockSize = 16;
+
+        /// <summary>
+        /// The two subkeys of CMAC under Key1, RFC 4493 § 2.3: K1 and K2, 16 bytes each.
+        /// </summary>
+        private readonly Byte[]  cmacSubkeys;
+
+        /// <summary>
+        /// CMAC(Key1, 0^128): what S2V starts from, RFC 5297 § 2.4.
+        /// </summary>
+        private readonly Byte[]  cmacOfZero;
+
+        #endregion
 
         #region Properties
 
@@ -70,19 +98,29 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             Array.Copy(Key,    0, Key1_CMAC,   0, half);
             Array.Copy(Key, half, Key2_AESCTR, 0, half);
 
-//            Key1_CMAC = Key1_CMAC.Reverse();
+            var aes      = Keyed(Key1_CMAC);
+
+            cmacSubkeys  = new Byte[2 * BlockSize];
+            cmacOfZero   = new Byte[BlockSize];
+
+            Subkeys(aes, cmacSubkeys);
+
+            Span<Byte> zero = stackalloc Byte[BlockSize];
+            zero.Clear();
+
+            CMAC(aes, cmacSubkeys, zero, [], cmacOfZero);
 
         }
 
         #endregion
 
 
-        #region Encrypt (AssociatedData, Plaintext)
+        #region Encrypt (AssociatedData, Nonce, Plaintext)
 
         /// <summary>
         /// Encrypts the given plaintext message considering the associated data using AES Counter Mode (AES-CTR)
         /// with a synthetic initialization vector based on plaintext and associated data, and the second part of the key.
-        /// 
+        ///
         /// It will return the synthetic initialization vector (SIV) concatenated with the ciphertext: SIV|Ciphertext
         /// </summary>
         public Byte[] Encrypt(IEnumerable<Byte[]>  AssociatedData,
@@ -90,16 +128,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                               Byte[]               Plaintext)
         {
 
-            var syntheticIV  = String2InitializationVector(AssociatedData, Nonce, Plaintext);
-            var ciphertext   = AES_CTR_Encrypt(Plaintext, syntheticIV, Key2_AESCTR);
-            var result       = new Byte[syntheticIV.Length + ciphertext.Length];
-
             // Nothing is logged here on purpose: this runs for every NTS request and every NTS
             // response, and both halves of the split key pass through it. Logging them once is
             // enough to compromise every association the process has served.
 
-            Array.Copy(syntheticIV, 0, result,                  0, syntheticIV.Length);
-            Array.Copy(ciphertext,  0, result, syntheticIV.Length, ciphertext. Length);
+            var result       = new Byte[BlockSize + Plaintext.Length];
+            var syntheticIV  = result.AsSpan(0, BlockSize);
+
+            String2InitializationVector(AssociatedData, Nonce, Plaintext, syntheticIV);
+
+            CTR(Keyed(Key2_AESCTR), syntheticIV, Plaintext, result.AsSpan(BlockSize));
 
             return result;
 
@@ -120,26 +158,32 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                               Byte[]               SyntheticIVAndCiphertext)
         {
 
-            var sivLen = 16; // Assume synthetic IV is 16 bytes.
-            if (SyntheticIVAndCiphertext.Length < sivLen)
+            if (SyntheticIVAndCiphertext.Length < BlockSize)
                 throw new ArgumentException("Encrypted message too short.");
 
-            var syntheticIV  = new Byte[sivLen];
-            Array.Copy(SyntheticIVAndCiphertext, 0, syntheticIV, 0, sivLen);
-
-            var ciphertext   = new Byte[SyntheticIVAndCiphertext.Length - sivLen];
-            Array.Copy(SyntheticIVAndCiphertext, sivLen, ciphertext, 0, SyntheticIVAndCiphertext.Length - sivLen);
+            var syntheticIV  = SyntheticIVAndCiphertext.AsSpan(0, BlockSize);
+            var plaintext    = new Byte[SyntheticIVAndCiphertext.Length - BlockSize];
 
             // AES-CTR decryption is the same as encryption:
-            var plaintext    = AES_CTR_Encrypt(ciphertext, syntheticIV, Key2_AESCTR);
+            CTR(Keyed(Key2_AESCTR), syntheticIV, SyntheticIVAndCiphertext.AsSpan(BlockSize), plaintext);
 
             // Recompute the synthetic IV from associated data, nonce, and the decrypted plaintext:
-            var computedSIV  = String2InitializationVector(AssociatedData, Nonce, plaintext);
+            Span<Byte> computedSIV = stackalloc Byte[BlockSize];
+
+            String2InitializationVector(AssociatedData, Nonce, plaintext, computedSIV);
 
             // Compared in constant time: a data-dependent early exit would leak how much of a
             // forged synthetic IV was correct, letting an attacker construct one byte at a time.
             if (!CryptographicOperations.FixedTimeEquals(syntheticIV, computedSIV))
+            {
+
+                // What was decrypted with a synthetic IV that is not this message's is not
+                // this message, and is nobody's business.
+                CryptographicOperations.ZeroMemory(plaintext);
+
                 throw new CryptographicException("Authentication failed: SIV mismatch!");
+
+            }
 
             return plaintext;
 
@@ -148,15 +192,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         #endregion
 
 
-        #region (private) String2InitializationVector (AssociatedData, Nonce, Plaintext)
+        #region (private) String2InitializationVector (AssociatedData, Nonce, Plaintext, SyntheticIV)
 
         /// <summary>
         /// Implements the "String to Initialization Vector" (S2V) function according to RFC 5297.
         /// https://www.rfc-editor.org/rfc/rfc5297.html#section-2.4
         /// </summary>
-        private Byte[] String2InitializationVector(IEnumerable<Byte[]>  AssociatedData,
-                                                   Byte[]               Nonce,
-                                                   Byte[]               Plaintext)
+        private void String2InitializationVector(IEnumerable<Byte[]>  AssociatedData,
+                                                 Byte[]               Nonce,
+                                                 ReadOnlySpan<Byte>   Plaintext,
+                                                 Span<Byte>           SyntheticIV)
         {
 
             // There is deliberately no "empty vector" special case here.
@@ -172,57 +217,295 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             // CMAC(<one>) on "no associated data and no plaintext" produced a different
             // synthetic IV than any conformant implementation.
 
-            // Step 1: Initialize D with CMAC(K, <zero>), meaning 0^128
-            var D          = CMAC(Key1_CMAC, new Byte[16]);
+            var aes = Keyed(Key1_CMAC);
 
+            // Step 1: D = CMAC(K, <zero>), which the constructor has computed.
+            Span<Byte> D    = stackalloc Byte[BlockSize];
+            Span<Byte> cmac = stackalloc Byte[BlockSize];
 
-            #region Build byte blocks
+            cmacOfZero.CopyTo(D);
 
-            var byteBlocks = new List<Byte[]>();
-
+            // Step 2: every element but the last - the associated data, and the nonce
+            // where there is one. The plaintext is always the last, even when it is empty.
             foreach (var associatedData in AssociatedData)
-                byteBlocks.Add(associatedData);
-
-            if (Nonce.    Length > 0)
-                byteBlocks.Add(Nonce);
-
-            //if (Plaintext.Length > 0)
-                byteBlocks.Add(Plaintext);
-
-            #endregion
-
-            foreach (var byteBlock in byteBlocks.Take(byteBlocks.Count - 1))
             {
-                D = DoubleBlock(D);
-                var cmacX = CMAC(Key1_CMAC, byteBlock);
-                D = XOR_Blocks(D, cmacX);
+                DoubleBlock(D);
+                CMAC(aes, cmacSubkeys, associatedData, [], cmac);
+                XOR(D, cmac);
             }
 
-            Byte[] T;
-            var lastBlock = byteBlocks.Last();
-            if (lastBlock.Length >= 16)
+            if (Nonce.Length > 0)
+            {
+                DoubleBlock(D);
+                CMAC(aes, cmacSubkeys, Nonce, [], cmac);
+                XOR(D, cmac);
+            }
+
+            // Step 3 and 4: V = CMAC(K, T)
+            if (Plaintext.Length >= BlockSize)
             {
 
-                // Take the last 16 bytes of the last block
-                var lastBytesOfTheBlock = new Byte[16];
-                Buffer.BlockCopy(lastBlock, lastBlock.Length - 16, lastBytesOfTheBlock, 0, 16);
-                var T1 = AES_SIV.XOR_Blocks(lastBytesOfTheBlock, D);
+                // T = Sn xorend D: the plaintext, its last 16 bytes XORed with D. CMAC
+                // takes it in two parts, so that it need not be put together anywhere.
+                Span<Byte> end = stackalloc Byte[BlockSize];
 
-                T = new Byte[lastBlock.Length];
-                Buffer.BlockCopy(lastBlock, 0, T,                     0, lastBlock.Length);
-                Buffer.BlockCopy(T1,        0, T, lastBlock.Length - 16,               16);
+                Plaintext[^BlockSize..].CopyTo(end);
+                XOR(end, D);
+
+                CMAC(aes, cmacSubkeys, Plaintext[..^BlockSize], end, SyntheticIV);
 
             }
             else
             {
-                D = AES_SIV.DoubleBlock(D);
-                var padded = Pad(lastBlock);
-                T = XOR_Blocks(D, padded);
+
+                // T = dbl(D) xor pad(Sn)
+                Span<Byte> padded = stackalloc Byte[BlockSize];
+
+                padded.Clear();
+                Plaintext.CopyTo(padded);
+                padded[Plaintext.Length] = 0x80;
+
+                DoubleBlock(D);
+                XOR(padded, D);
+
+                CMAC(aes, cmacSubkeys, padded, [], SyntheticIV);
+
             }
 
-            // 4. Final: V = CMAC(K, T)
-            return CMAC(Key1_CMAC, T);
+        }
 
+        #endregion
+
+
+        #region (private static) Keyed      (Key)
+
+        /// <summary>
+        /// AES under the given key, for encrypting single blocks: the processor's own
+        /// where it has one, tables otherwise.
+        /// </summary>
+        /// <remarks>
+        /// One per operation, and never kept: a cipher is not promised to be safe for two
+        /// threads at once, and expanding a key is a small part of what it used to cost
+        /// to do so for every CMAC.
+        /// </remarks>
+        private static IBlockCipher Keyed(Byte[] Key)
+        {
+
+            var aes = AesUtilities.CreateEngine();
+
+            aes.Init(true, new KeyParameter(Key));
+
+            return aes;
+
+        }
+
+        #endregion
+
+        #region (private static) Subkeys    (AES, Subkeys)
+
+        /// <summary>
+        /// The subkeys of CMAC, RFC 4493 § 2.3: K1 = dbl(AES(K, 0)), K2 = dbl(K1).
+        /// </summary>
+        /// <param name="AES">AES under the CMAC key.</param>
+        /// <param name="Subkeys">32 bytes: K1, then K2.</param>
+        private static void Subkeys(IBlockCipher AES, Span<Byte> Subkeys)
+        {
+
+            var k1 = Subkeys[..BlockSize];
+            var k2 = Subkeys[BlockSize..];
+
+            k1.Clear();
+            AES.ProcessBlock(k1, k1);
+            DoubleBlock(k1);
+
+            k1.CopyTo(k2);
+            DoubleBlock(k2);
+
+        }
+
+        #endregion
+
+        #region (private static) CMAC       (AES, Subkeys, Message, MessageEnd, MAC)
+
+        /// <summary>
+        /// AES-CMAC, RFC 4493 § 2.4, over a message that comes in two parts.
+        /// </summary>
+        /// <param name="AES">AES under the CMAC key.</param>
+        /// <param name="Subkeys">The subkeys of that key: K1, then K2.</param>
+        /// <param name="Message">The message, or its beginning.</param>
+        /// <param name="MessageEnd">What follows it: nothing, or exactly one block.</param>
+        /// <param name="MAC">Where the 16 bytes of the MAC go.</param>
+        private static void CMAC(IBlockCipher        AES,
+                                 ReadOnlySpan<Byte>  Subkeys,
+                                 ReadOnlySpan<Byte>  Message,
+                                 ReadOnlySpan<Byte>  MessageEnd,
+                                 Span<Byte>          MAC)
+        {
+
+            Span<Byte> x     = stackalloc Byte[BlockSize];
+            Span<Byte> last  = stackalloc Byte[BlockSize];
+
+            x.Clear();
+
+            var length = Message.Length + MessageEnd.Length;
+
+            // Every block but the last one. The last one is kept back even when it is a
+            // whole block, because it is treated differently.
+            var before = length == 0
+                             ? 0
+                             : (length - 1) / BlockSize * BlockSize;
+
+            // MessageEnd is nothing or one whole block, so the blocks before the last
+            // one lie in Message entirely, unless MessageEnd is the last block itself.
+            var inMessage = Math.Min(before, Message.Length / BlockSize * BlockSize);
+
+            for (var offset = 0; offset < inMessage; offset += BlockSize)
+            {
+                XOR(x, Message.Slice(offset, BlockSize));
+                AES.ProcessBlock(x, x);
+            }
+
+            // A block that lies across the two parts: the rest of Message and the
+            // beginning of MessageEnd. With MessageEnd being one block, there is at most
+            // one such block before the last.
+            var done = inMessage;
+
+            if (done < before)
+            {
+
+                Span<Byte> across = stackalloc Byte[BlockSize];
+
+                Take(Message, MessageEnd, done, across);
+
+                XOR(x, across);
+                AES.ProcessBlock(x, x);
+
+                done += BlockSize;
+
+            }
+
+            var remaining = length - done;
+
+            if (remaining == BlockSize)
+            {
+                Take(Message, MessageEnd, done, last);
+                XOR(last, Subkeys[..BlockSize]);
+            }
+            else
+            {
+
+                last.Clear();
+                Take(Message, MessageEnd, done, last[..remaining]);
+                last[remaining] = 0x80;
+
+                XOR(last, Subkeys[BlockSize..]);
+
+            }
+
+            XOR(x, last);
+            AES.ProcessBlock(x, MAC);
+
+        }
+
+        /// <summary>
+        /// Copy from the two parts of a message, as if they were one.
+        /// </summary>
+        private static void Take(ReadOnlySpan<Byte>  Message,
+                                 ReadOnlySpan<Byte>  MessageEnd,
+                                 Int32               Offset,
+                                 Span<Byte>          Destination)
+        {
+
+            var fromMessage = Math.Clamp(Message.Length - Offset, 0, Destination.Length);
+
+            if (fromMessage > 0)
+                Message.Slice(Offset, fromMessage).CopyTo(Destination);
+
+            if (fromMessage < Destination.Length)
+                MessageEnd.Slice(Offset + fromMessage - Message.Length, Destination.Length - fromMessage).
+                           CopyTo(Destination[fromMessage..]);
+
+        }
+
+        #endregion
+
+        #region (private static) CTR        (AES, SyntheticIV, Input, Output)
+
+        /// <summary>
+        /// AES in counter mode as RFC 5297 § 2.6 has it: the counter starts at the
+        /// synthetic IV with two of its bits cleared, and is one 128 bit number.
+        /// </summary>
+        /// <param name="AES">AES under the encryption key.</param>
+        /// <param name="SyntheticIV">The synthetic IV, which is left as it is.</param>
+        /// <param name="Input">What to encrypt, or to decrypt.</param>
+        /// <param name="Output">Where it goes: as long as the input.</param>
+        private static void CTR(IBlockCipher        AES,
+                                ReadOnlySpan<Byte>  SyntheticIV,
+                                ReadOnlySpan<Byte>  Input,
+                                Span<Byte>          Output)
+        {
+
+            Span<Byte> counter    = stackalloc Byte[BlockSize];
+            Span<Byte> keystream  = stackalloc Byte[BlockSize];
+
+            SyntheticIV.CopyTo(counter);
+
+            // rfc5297 Section 2.5: Clear the 31st and 63rd bit (rightmost bit = 0th)
+            counter[ 8] &= 0x7F;
+            counter[12] &= 0x7F;
+
+            for (var offset = 0; offset < Input.Length; offset += BlockSize)
+            {
+
+                AES.ProcessBlock(counter, keystream);
+
+                var count = Math.Min(BlockSize, Input.Length - offset);
+
+                for (var i = 0; i < count; i++)
+                    Output[offset + i] = (Byte) (Input[offset + i] ^ keystream[i]);
+
+                // The next counter: one more, as a big-endian number of 128 bits.
+                for (var i = BlockSize - 1; i >= 0 && ++counter[i] == 0; i--)
+                { }
+
+            }
+
+            CryptographicOperations.ZeroMemory(keystream);
+
+        }
+
+        #endregion
+
+        #region (private static) DoubleBlock(Block), XOR(Block, With)
+
+        /// <summary>
+        /// Double a 16 byte block in GF(2^128), in place: dbl() of RFC 5297 § 2.3.
+        /// </summary>
+        private static void DoubleBlock(Span<Byte> Block)
+        {
+
+            var carry = 0;
+
+            for (var i = BlockSize - 1; i >= 0; i--)
+            {
+                var b     = Block[i];
+                Block[i]  = (Byte) ((b << 1) | carry);
+                carry     = b >> 7;
+            }
+
+            // The polynomial x^128 + x^7 + x^2 + x + 1, R = 0x87 - and without a branch
+            // on the bit that fell out, which is a bit of a secret.
+            Block[BlockSize - 1] ^= (Byte) (0x87 & -carry);
+
+        }
+
+        /// <summary>
+        /// XOR a block into another, in place.
+        /// </summary>
+        private static void XOR(Span<Byte> Block, ReadOnlySpan<Byte> With)
+        {
+            for (var i = 0; i < Block.Length; i++)
+                Block[i] ^= With[i];
         }
 
         #endregion
@@ -240,12 +523,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                   Byte[] Message)
         {
 
-            var cmac   = new CMac(new AesEngine());
-            cmac.Init(new KeyParameter(Key));
-            cmac.BlockUpdate(Message, 0, Message.Length);
+            var aes = Keyed(Key);
 
-            var output = new Byte[cmac.GetMacSize()];
-            cmac.DoFinal(output, 0);
+            Span<Byte> subkeys = stackalloc Byte[2 * BlockSize];
+            Subkeys(aes, subkeys);
+
+            var output = new Byte[BlockSize];
+            CMAC(aes, subkeys, Message, [], output);
 
             return output;
 
@@ -256,29 +540,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         #region (static)  DoubleBlock                 (Block)
 
         /// <summary>
-        /// Verdoppelt einen 16-Byte Block in GF(2^128) gemäß RFC 5297 (dbl()-Funktion).
+        /// Double a 16 byte block in GF(2^128): dbl() of RFC 5297 § 2.3.
         /// </summary>
         /// <param name="Block">A 16-Byte block.</param>
         public static Byte[] DoubleBlock(Byte[] Block)
         {
 
-            if (Block.Length != 16)
+            if (Block.Length != BlockSize)
                 throw new ArgumentException("Block must be 16 Bytes", nameof(Block));
 
-            var output = new Byte[16];
-            Byte carry = 0;
+            var output = (Byte[]) Block.Clone();
 
-            for (var i = 15; i >= 0; i--)
-            {
-                var b        = Block[i];
-                var shifted  = (b << 1) | carry;
-                output[i]    = (Byte) (shifted & 0xFF);
-                carry        = (Byte) ((b & 0x80) != 0 ? 1 : 0);
-            }
-
-            // Polynom: x^128 + x^7 + x^2 + x + 1  -> R = 0x87
-            if (carry != 0)
-                output[15] ^= 0x87;
+            DoubleBlock(output.AsSpan());
 
             return output;
 
@@ -300,10 +573,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             if (BlockA.Length != BlockB.Length)
                 throw new ArgumentException("Arrays must have same length");
 
-            var result = new Byte[BlockA.Length];
+            var result = (Byte[]) BlockA.Clone();
 
-            for (var i = 0; i < BlockA.Length; i++)
-                result[i] = (Byte) (BlockA[i] ^ BlockB[i]);
+            XOR(result, BlockB);
 
             return result;
 
@@ -329,11 +601,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             // The RFC defines pad() only for len(X) < 128 bits. A full or overlong block has
             // nothing to pad, and writing the 0x80 marker at Data.Length would run past the
             // end of the block.
-            if (Data.Length >= 16)
+            if (Data.Length >= BlockSize)
                 throw new ArgumentException($"pad() is defined for inputs shorter than 16 bytes; got {Data.Length}!",
                                             nameof(Data));
 
-            var padded = new Byte[16];
+            var padded = new Byte[BlockSize];
             Buffer.BlockCopy(Data, 0, padded, 0, Data.Length);
             padded[Data.Length] = 0x80;
 
@@ -354,54 +626,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                              Byte[] SharedKey)
         {
 
-            var ivCTR       = new Byte[InitializationVector.Length];
-            Buffer.BlockCopy(InitializationVector, 0, ivCTR, 0, InitializationVector.Length);
+            if (InitializationVector.Length != BlockSize)
+                throw new ArgumentException("The initialization vector must be 16 Bytes", nameof(InitializationVector));
 
-            // rfc5297 Section 2.5: Clear the 31st and 63rd bit (rightmost bit = 0th)
-            ivCTR[ 8] &= 0x7F;
-            ivCTR[12] &= 0x7F;
+            var ciphertext = new Byte[Plaintext.Length];
 
-            var cipher      = new SicBlockCipher  (new AesEngine());
-            var parameters  = new ParametersWithIV(new KeyParameter(SharedKey), ivCTR);
-            cipher.Init(true, parameters);
+            CTR(Keyed(SharedKey), InitializationVector, Plaintext, ciphertext);
 
-            var blockSize        = cipher.GetBlockSize();
-            var paddedLength     = ((Plaintext.Length + blockSize - 1) / blockSize) * blockSize;
-            var paddedPlaintext  = new Byte[paddedLength];
-            Array.Copy(Plaintext, paddedPlaintext, Plaintext.Length);
-
-            var paddedCiphertext = new Byte[paddedLength];
-
-            for (var i = 0; i < paddedPlaintext.Length; i += blockSize)
-                cipher.ProcessBlock(paddedPlaintext, i, paddedCiphertext, i);
-
-            var actualCiphertext = new Byte[Plaintext.Length];
-            Array.Copy(paddedCiphertext, actualCiphertext, Plaintext.Length);
-
-            //var output      = new Byte[Plaintext.Length];
-
-            //var blockIn     = new Byte[blockSize];
-            //var blockOut    = new Byte[blockSize];
-
-            //for (var i = 0; i < Plaintext.Length; i += blockSize)
-            //{
-
-            //    var chunk = Math.Min(blockSize, Plaintext.Length - i);
-
-            //    if (chunk == blockSize)
-            //        cipher.ProcessBlock(Plaintext, i, output, i);
-
-            //    else
-            //    {
-            //        Array.Clear(blockIn,   0, blockSize);
-            //        Array.Copy (Plaintext, i, blockIn, 0, chunk);
-            //        cipher.ProcessBlock(blockIn, 0, blockOut, 0);
-            //        Array.Copy (blockOut,  0, output,  i, chunk);
-            //    }
-
-            //}
-
-            return actualCiphertext;
+            return ciphertext;
 
         }
 
