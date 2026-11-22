@@ -141,12 +141,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.Timings
 
         #region Server process
 
-        private static NTSServer StartEchoAndServer(Int32 KEPort, Int32 NTPPort, Int32 EchoSyncPort, Int32 EchoAsyncPort)
+        private static NTSServer StartEchoAndServer(IPPort KEPort, IPPort NTPPort, IPPort EchoSyncPort, IPPort EchoAsyncPort)
         {
 
             var server = new NTSServer(
-                             NTSKEPort:           IPPort.Parse(KEPort),
-                             NTSPort:             IPPort.Parse(NTPPort),
+                             NTSKEPort:           KEPort,
+                             NTSPort:             NTPPort,
                              MasterKeysFilePath:  null
                          );
 
@@ -154,7 +154,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Timings
 
             // The floor: a thread that blocks in recvfrom and answers with sendto.
             var echoSync = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-            echoSync.Bind(new IPEndPoint(IPAddress.Loopback, EchoSyncPort));
+            echoSync.Bind(new IPEndPoint(IPAddress.Loopback, EchoSyncPort.ToInt32()));
 
             new Thread(() => {
                 var buffer = new Byte[4096];
@@ -172,7 +172,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Timings
 
             // The same I/O pattern as the NTS server's UDP loop, with no work in it.
             var echoAsync = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-            echoAsync.Bind(new IPEndPoint(IPAddress.Loopback, EchoAsyncPort));
+            echoAsync.Bind(new IPEndPoint(IPAddress.Loopback, EchoAsyncPort.ToInt32()));
 
             _ = Task.Run(async () => {
                 var buffer = new Byte[4096];
@@ -198,10 +198,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.Timings
         {
 
             StartEchoAndServer(
-                Int32.Parse(Arguments[1]),
-                Int32.Parse(Arguments[2]),
-                Int32.Parse(Arguments[3]),
-                Int32.Parse(Arguments[4])
+                IPPort.Parse(Arguments[1]),
+                IPPort.Parse(Arguments[2]),
+                IPPort.Parse(Arguments[3]),
+                IPPort.Parse(Arguments[4])
             );
 
             Console.WriteLine("ok ready");
@@ -250,17 +250,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.Timings
 
         #region Client process
 
-        private static Int32 FreeTCPPort()
+        private static IPPort FreeTCPPort()
         {
             using var listener = new TcpListener(IPAddress.Loopback, 0);
             listener.Start();
-            return ((IPEndPoint) listener.LocalEndpoint).Port;
+            return IPPort.Parse(((IPEndPoint) listener.LocalEndpoint).Port);
         }
 
-        private static Int32 FreeUDPPort()
+        private static IPPort FreeUDPPort()
         {
             using var udpClient = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
-            return ((IPEndPoint) udpClient.Client.LocalEndPoint!).Port;
+            return IPPort.Parse(((IPEndPoint) udpClient.Client.LocalEndPoint!).Port);
         }
 
         private static async Task<Int32> RunClient(String[] Arguments)
@@ -395,8 +395,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Timings
 
             var ntsClient = new NTSClient(
                                 DomainName.Localhost,
-                                NTSKE_Port:                  IPPort.Parse(kePort),
-                                NTP_Port:                    IPPort.Parse(ntpPort),
+                                NTSKE_Port:                  kePort,
+                                NTP_Port:                    ntpPort,
                                 IPVersionPreference:         IPVersionPreference.IPv4Only,
                                 InterleavedMode:             interleaved,
                                 RemoteCertificateValidator:  (sender, certificate, chain, tlsClient, errors) => TLSValidationResult.Success()
@@ -798,14 +798,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.Timings
 
         #region Echo: what the I/O pattern alone costs
 
-        private static async Task Echo(Int32 EchoSyncPort, Int32 EchoAsyncPort, Int32 Size)
+        private static async Task Echo(IPPort EchoSyncPort, IPPort EchoAsyncPort, Int32 Size)
         {
 
             const Int32 rounds = 20000;
 
             var payload    = new Byte[Size];
-            var syncEcho   = new IPEndPoint(IPAddress.Loopback, EchoSyncPort);
-            var asyncEcho  = new IPEndPoint(IPAddress.Loopback, EchoAsyncPort);
+            var syncEcho   = new IPEndPoint(IPAddress.Loopback, EchoSyncPort.ToInt32());
+            var asyncEcho  = new IPEndPoint(IPAddress.Loopback, EchoAsyncPort.ToInt32());
 
             Console.WriteLine($"## UDP alone — {Size} bytes to an echo in the server process and back, {rounds} rounds each");
             Console.WriteLine();

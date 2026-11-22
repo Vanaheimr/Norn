@@ -504,7 +504,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                 for (var i = 0; i < 6; i++)
                 {
                     var tcpClient = new TcpClient();
-                    await tcpClient.ConnectAsync(System.Net.IPAddress.Loopback, server.NTSKEPort);
+                    await tcpClient.ConnectAsync(System.Net.IPAddress.Loopback, server.NTSKEPort.ToInt32());
                     silent.Add(tcpClient);
                 }
 
@@ -634,9 +634,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         {
 
             public NTSServer  Server      { get; }
-            public Int32      NTSKEPort   { get; }
+            public IPPort      NTSKEPort   { get; }
 
-            private RunningServer(NTSServer Server, Int32 NTSKEPort)
+            private RunningServer(NTSServer Server, IPPort NTSKEPort)
             {
                 this.Server     = Server;
                 this.NTSKEPort  = NTSKEPort;
@@ -649,8 +649,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                 var ntsKEPort = FindFreePort(SocketType.Stream, ProtocolType.Tcp);
 
                 var server    = new NTSServer(
-                                    NTSKEPort:                     IPPort.Parse(ntsKEPort),
-                                    NTSPort:                       IPPort.Parse(FindFreePort(SocketType.Dgram, ProtocolType.Udp)),
+                                    NTSKEPort:                     ntsKEPort,
+                                    NTSPort:                       FindFreePort(SocketType.Dgram, ProtocolType.Udp),
                                     MasterKeysFilePath:            null,
                                     MaxNTSKEConnectionsPerClient:  MaxNTSKEConnectionsPerClient,
                                     NTSKERequestTimeout:           NTSKERequestTimeout
@@ -667,7 +667,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
                 var tcpClient = new TcpClient();
 
-                await tcpClient.ConnectAsync(System.Net.IPAddress.Loopback, NTSKEPort);
+                await tcpClient.ConnectAsync(System.Net.IPAddress.Loopback, NTSKEPort.ToInt32());
 
                 var tls       = new SslStream(tcpClient.GetStream(), false, (_, _, _, _) => true);
 
@@ -698,14 +698,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                 await Server.ShutdownAsync();
             }
 
-            private static Int32 FindFreePort(SocketType SocketType, ProtocolType ProtocolType)
+            private static IPPort FindFreePort(SocketType SocketType, ProtocolType ProtocolType)
             {
 
                 using var socket = new Socket(AddressFamily.InterNetwork, SocketType, ProtocolType);
 
                 socket.Bind(new IPEndPoint(System.Net.IPAddress.Loopback, 0));
 
-                return ((IPEndPoint) socket.LocalEndPoint!).Port;
+                return IPPort.Parse(((IPEndPoint) socket.LocalEndPoint!).Port);
 
             }
 

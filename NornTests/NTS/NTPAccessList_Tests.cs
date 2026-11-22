@@ -22,6 +22,7 @@ using System.Net.Sockets;
 
 using NUnit.Framework;
 
+using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Hermod;
 using org.GraphDefined.Vanaheimr.Hermod.SSH;
 using org.GraphDefined.Vanaheimr.Hermod.SSH.Client;
@@ -432,17 +433,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
         #region (private static) ConnectAsync(Server, SSHPort)
 
-        private static Task<SshClient> ConnectAsync(NTSServer  Server,
+        private static Task<SSHClient> ConnectAsync(NTSServer  Server,
                                                     IPPort     SSHPort)
         {
 
             var hostKey = Server.SSHHostKeys[0].PublicKeyBlob;
 
-            return SshClient.ConnectAsync(
+            return SSHClient.Connect(
                        "127.0.0.1",
-                       SSHPort.ToUInt16(),
-                       new SshClientOptions {
-                           Username       = "ntske",
+                       SSHPort,
+                       new SSHClientOptions {
+                           Username       = User_Id.Parse("ntske"),
                            Credentials    = [ clientKey ],
                            VerifyHostKey  = blob => blob.AsSpan().SequenceEqual(hostKey)
                        }
@@ -460,10 +461,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
             var listener = new TcpListener(IPAddress.Loopback, 0);
             listener.Start();
 
-            var port = ((IPEndPoint) listener.LocalEndpoint).Port;
+            var port = IPPort.Parse(((IPEndPoint) listener.LocalEndpoint).Port);
             listener.Stop();
 
-            return IPPort.Parse(port);
+            return port;
 
         }
 

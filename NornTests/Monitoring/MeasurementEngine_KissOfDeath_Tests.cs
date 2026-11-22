@@ -151,7 +151,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.Monitoring
             var forged = new NTSServerEndpoint(
                              loopback,
                              endpoint.NTSKEPort,
-                             IPPort.Parse(forger.Port),
+                             forger.Port,
                              RemoteCertificateValidator: (sender, certificate, chain, client, errors) => TLSValidationResult.Success()
                          );
 
@@ -256,8 +256,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.Monitoring
                                                                               TimeProvider?    TimeProvider   = null)
         {
 
-            var ntsKEPort = IPPort.Parse(FindFreePort(SocketType.Stream, ProtocolType.Tcp));
-            var ntpPort   = IPPort.Parse(FindFreePort(SocketType.Dgram,  ProtocolType.Udp));
+            var ntsKEPort = FindFreePort(SocketType.Stream, ProtocolType.Tcp);
+            var ntpPort   = FindFreePort(SocketType.Dgram,  ProtocolType.Udp);
 
             var ntsServer = new NTSServer(
                                 NTSKEPort:           ntsKEPort,
@@ -300,14 +300,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.Monitoring
             => new (SearchForIPv4DNSServers: false,
                     SearchForIPv6DNSServers: false);
 
-        private static Int32 FindFreePort(SocketType SocketType, ProtocolType ProtocolType)
+        private static IPPort FindFreePort(SocketType SocketType, ProtocolType ProtocolType)
         {
 
             using var socket = new Socket(AddressFamily.InterNetwork, SocketType, ProtocolType);
 
             socket.Bind(new IPEndPoint(System.Net.IPAddress.Loopback, 0));
 
-            return ((IPEndPoint) socket.LocalEndPoint!).Port;
+            return IPPort.Parse(((IPEndPoint) socket.LocalEndPoint!).Port);
 
         }
 
@@ -345,8 +345,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.Monitoring
 
             private          Int32                    kissesSent;
 
-            public Int32 Port
-                => ((IPEndPoint) socket.Client.LocalEndPoint!).Port;
+            public IPPort Port
+                => IPPort.Parse(((IPEndPoint) socket.Client.LocalEndPoint!).Port);
 
             public Int32 KissesSent
                 => Volatile.Read(ref kissesSent);

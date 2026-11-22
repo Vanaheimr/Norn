@@ -15,6 +15,8 @@
  * limitations under the License.
  */
 
+using org.GraphDefined.Vanaheimr.Hermod;
+
 namespace org.GraphDefined.Vanaheimr.Norn.CLI
 {
 
@@ -184,7 +186,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.CLI
         /// <summary>
         /// The value of an option as a port number.
         /// </summary>
-        public UInt16? PortValue(String Name)
+        public IPPort? PortValue(String Name)
         {
 
             var text = Value(Name);
@@ -193,7 +195,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.CLI
                 return null;
 
             return UInt16.TryParse(text, out var port) && port > 0
-                       ? port
+                       ? IPPort.Parse(port)
                        : throw new UsageException($"Option '{Name}' needs a port number between 1 and 65535, but was '{text}'.");
 
         }

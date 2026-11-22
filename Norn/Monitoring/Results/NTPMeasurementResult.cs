@@ -114,7 +114,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         /// <summary>
         /// The concrete remote IP address used for the NTP/NTS UDP query, when known.
         /// </summary>
-        public IIPAddress?              RemoteAddress                 { get; init; }
+        public IPAddress?              RemoteAddress                 { get; init; }
 
         /// <summary>
         /// The UDP port used for the NTP/NTS query.
@@ -243,7 +243,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         //                            Boolean                  KissOfDeath,
         //                            String?                  KissOfDeathCode,
         //                            DomainName?              RemoteHost      = null,
-        //                            IIPAddress?              RemoteAddress   = null,
+        //                            IPAddress?              RemoteAddress   = null,
         //                            IPPort?                  RemotePort      = null,
         //                            Error?                   ErrorMessage    = null,
         //                            MonitoringErrorCategory  ErrorCategory   = MonitoringErrorCategory.None)

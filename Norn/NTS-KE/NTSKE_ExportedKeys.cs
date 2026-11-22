@@ -248,7 +248,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         /// <summary>
         /// Option A of NTS-KE over SSH: the exporter of an SSH connection of Hermod — on the client
-        /// <see cref="SshClient.Exporter"/>, on the server <see cref="SshSessionInfo.Exporter"/> —
+        /// <see cref="SSHClient.Exporter"/>, on the server <see cref="SshSessionInfo.Exporter"/> —
         /// with the nonce of one key exchange.
         /// </summary>
         /// <remarks>

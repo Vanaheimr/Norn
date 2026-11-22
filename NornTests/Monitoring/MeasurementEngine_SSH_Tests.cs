@@ -22,6 +22,7 @@ using System.Net.Sockets;
 
 using NUnit.Framework;
 
+using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Hermod;
 using org.GraphDefined.Vanaheimr.Hermod.DNS;
 using org.GraphDefined.Vanaheimr.Hermod.SSH;
@@ -115,11 +116,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.Monitoring
             var hostKey = ntsServer!.SSHHostKeys[0].PublicKeyBlob;
 
             return new NTSServerEndpoint(loopback, nobodysPort, ntpPort) {
-                       ConnectOverSSH = cancellationToken => SshClient.ConnectAsync(
+                       ConnectOverSSH = cancellationToken => SSHClient.Connect(
                                                                  "127.0.0.1",
-                                                                 sshPort.ToUInt16(),
-                                                                 new SshClientOptions {
-                                                                     Username       = "ntske",
+                                                                 sshPort,
+                                                                 new SSHClientOptions {
+                                                                     Username       = User_Id.Parse("ntske"),
                                                                      Credentials    = [ Key ],
                                                                      VerifyHostKey  = blob => HostKeyBelieved && blob.AsSpan().SequenceEqual(hostKey)
                                                                  },
@@ -194,11 +195,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.Monitoring
 
             var hostKey         = ntsServer!.SSHHostKeys[0].PublicKeyBlob;
 
-            await using var shared = await SshClient.ConnectAsync(
+            await using var shared = await SSHClient.Connect(
                                                "127.0.0.1",
-                                               sshPort.ToUInt16(),
-                                               new SshClientOptions {
-                                                   Username       = "ntske",
+                                               sshPort,
+                                               new SSHClientOptions {
+                                                   Username       = User_Id.Parse("ntske"),
                                                    Credentials    = [ clientKey ],
                                                    VerifyHostKey  = blob => blob.AsSpan().SequenceEqual(hostKey)
                                                }
@@ -216,7 +217,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.Monitoring
             engine.ForgetKeyExchange(loopback);
             var second          = await engine.MeasureSingleServer(endpoint, Guid.NewGuid(), NoNameServers());
 
-            SshClient? own      = null;
+            SSHClient? own      = null;
             var ownEndpoint     = Endpoint(clientKey);
             var connect         = ownEndpoint.ConnectOverSSH!;
             ownEndpoint.ConnectOverSSH = async cancellationToken => own = await connect(cancellationToken);

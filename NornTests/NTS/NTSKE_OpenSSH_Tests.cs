@@ -395,10 +395,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
             var listener = new TcpListener(System.Net.IPAddress.Loopback, 0);
             listener.Start();
 
-            var port = ((IPEndPoint) listener.LocalEndpoint).Port;
+            var port = IPPort.Parse(((IPEndPoint) listener.LocalEndpoint).Port);
             listener.Stop();
 
-            return IPPort.Parse(port);
+            return port;
 
         }
 

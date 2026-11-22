@@ -129,8 +129,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.CLI
             var ntpPort   = FindFreePort(SocketType.Dgram,  ProtocolType.Udp);
 
             var ntsServer = new NTSServer(
-                                NTSKEPort:           IPPort.Parse(ntsKEPort),
-                                NTSPort:             IPPort.Parse(ntpPort),
+                                NTSKEPort:           ntsKEPort,
+                                NTSPort:             ntpPort,
                                 MasterKeysFilePath:  null
                             );
 
@@ -199,14 +199,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.CLI
 
         #region (private) FindFreePort(SocketType, ProtocolType)
 
-        private static Int32 FindFreePort(SocketType SocketType, ProtocolType ProtocolType)
+        private static IPPort FindFreePort(SocketType SocketType, ProtocolType ProtocolType)
         {
 
             using var socket = new Socket(AddressFamily.InterNetwork, SocketType, ProtocolType);
 
             socket.Bind(new IPEndPoint(System.Net.IPAddress.Loopback, 0));
 
-            return ((IPEndPoint) socket.LocalEndPoint!).Port;
+            return IPPort.Parse(((IPEndPoint) socket.LocalEndPoint!).Port);
 
         }
 

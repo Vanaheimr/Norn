@@ -122,10 +122,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.CLI.Commands
             if (refid.Length is 0 or > 4)
                 throw new UsageException($"--refid is at most four characters, but was '{refid}'.");
 
-            IIPAddress? listenAddress = null;
+            IPAddress? listenAddress = null;
 
             if (listen is not null &&
-                !IPAddress.TryParse(listen, out listenAddress))
+                (listenAddress = IPAddress.TryParse(listen)) is null)
             {
                 throw new UsageException($"--listen needs an IP address, but was '{listen}'.");
             }
@@ -180,8 +180,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.CLI.Commands
 
             var server = new NTSServer(
 
-                             NTSKEPort:            kePort  is not null ? IPPort.Parse(kePort.Value)  : null,
-                             NTSPort:              ntpPort is not null ? IPPort.Parse(ntpPort.Value) : null,
+                             NTSKEPort:            kePort,
+                             NTSPort:              ntpPort,
                              ListenIPAddress:      listenAddress,
 
                              // Null unless asked for. The default writes rotating cookie master
@@ -191,7 +191,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.CLI.Commands
                              MasterKeysFilePath:   masterKeys,
 
                              ExternalURLs:         advertise is not null
-                                                       ? [ URL.Parse($"udp://{advertise}:{ntpPort ?? 123}") ]
+                                                       ? [ URL.Parse($"udp://{advertise}:{ntpPort ?? IPPort.NTP}") ]
                                                        : null,
 
                              TLSCertificate:       certificate,

@@ -61,12 +61,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
             var ntpPort = FindFreePort(SocketType.Dgram, ProtocolType.Udp);
 
-            ntsKEPort   = IPPort.Parse(FindFreePort(SocketType.Stream, ProtocolType.Tcp));
-            ntpEndPoint = new IPEndPoint(System.Net.IPAddress.Loopback, ntpPort);
+            ntsKEPort   = FindFreePort(SocketType.Stream, ProtocolType.Tcp);
+            ntpEndPoint = new IPEndPoint(System.Net.IPAddress.Loopback, ntpPort.ToInt32());
 
             ntsServer   = new NTSServer(
                               NTSKEPort:           ntsKEPort,
-                              NTSPort:             IPPort.Parse(ntpPort),
+                              NTSPort:             ntpPort,
                               MasterKeysFilePath:  null
                           );
 
@@ -186,25 +186,25 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
         #region (private) Helpers
 
-        private NTSClient ClientFor(Int32 NTPPort)
+        private NTSClient ClientFor(IPPort NTPPort)
 
             => new (
                    Hermod.DNS.DomainName.Localhost,
                    NTSKE_Port:                  ntsKEPort,
-                   NTP_Port:                    IPPort.Parse(NTPPort),
+                   NTP_Port:                    NTPPort,
                    IPVersionPreference:         IPVersionPreference.IPv4Only,
                    RemoteCertificateValidator:  (sender, serverCertificate, certificateChain, ntsKETLSClient, sslPolicyErrors)
                                                     => TLSValidationResult.Success()
                );
 
-        private static Int32 FindFreePort(SocketType SocketType, ProtocolType ProtocolType)
+        private static IPPort FindFreePort(SocketType SocketType, ProtocolType ProtocolType)
         {
 
             using var socket = new Socket(AddressFamily.InterNetwork, SocketType, ProtocolType);
 
             socket.Bind(new IPEndPoint(System.Net.IPAddress.Loopback, 0));
 
-            return ((IPEndPoint) socket.LocalEndPoint!).Port;
+            return IPPort.Parse(((IPEndPoint) socket.LocalEndPoint!).Port);
 
         }
 
@@ -222,8 +222,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
             private          Int32                    forgedDatagramsSent;
 
-            public Int32 Port
-                => ((IPEndPoint) clientSide.Client.LocalEndPoint!).Port;
+            public IPPort Port
+                => IPPort.Parse(((IPEndPoint) clientSide.Client.LocalEndPoint!).Port);
 
             public Int32 ForgedDatagramsSent
                 => Volatile.Read(ref forgedDatagramsSent);

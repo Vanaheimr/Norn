@@ -238,7 +238,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <see cref="IPvXAddress.Any"/> asks for both address families at once; an
         /// <see cref="IPv4Address"/> or <see cref="IPv6Address"/> pins the listener to one.
         /// </summary>
-        public IIPAddress            ListenIPAddress               { get; }
+        public Hermod.IPAddress     ListenIPAddress               { get; }
 
         /// <summary>
         /// Whether an IPv6 listener socket should also accept IPv4 traffic.
@@ -490,7 +490,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                          KeyPair?           KeyPair        = null,
                          IEnumerable<URL>?  ExternalURLs   = null,
                          DNSClient?         DNSClient      = null,
-                         IIPAddress?        ListenIPAddress               = null,
+                         Hermod.IPAddress? ListenIPAddress               = null,
                          Boolean            EnableDualStack               = true,
                          String?            MasterKeysFilePath            = "masterKeys.json",
                          TimeSpan?          MasterKeyLifetime             = null,

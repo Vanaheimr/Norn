@@ -595,7 +595,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                 Assert.Multiple(() => {
 
                     Assert.That(exchanges[0].Succeeded,         Is.True);
-                    Assert.That(exchanges[0].Session.Username,  Is.EqualTo("ntske"));
+                    Assert.That(exchanges[0].Session.Username,  Is.EqualTo(User_Id.Parse("ntske")));
                     Assert.That(exchanges[0].Session.PublicKeyBlob, Is.EqualTo(clientKey.PublicKeyBlob));
                     Assert.That(exchanges[0].Method,            Is.EqualTo(SSHKeyBindingMethods.Exporter));
                     Assert.That(exchanges[0].AEADAlgorithm,     Is.EqualTo(served.Response!.AEADAlgorithm));
@@ -666,7 +666,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
             await using var sshClient = await ConnectAsync(clientKey);
 
-            Assert.That(async () => await sshClient.OpenSubsystemAsync("ntske/2@open.charging.cloud"),
+            Assert.That(async () => await sshClient.OpenSubsystem("ntske/2@open.charging.cloud"),
                         Throws.InstanceOf<SshWireException>());
 
         }
@@ -881,16 +881,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
         #region (private static) ConnectAsync(Key)
 
-        private Task<SshClient> ConnectAsync(ISshHostKey Key)
+        private Task<SSHClient> ConnectAsync(ISshHostKey Key)
         {
 
             var hostKey = ntsServer!.SSHHostKeys[0].PublicKeyBlob;
 
-            return SshClient.ConnectAsync(
+            return SSHClient.Connect(
                        "127.0.0.1",
-                       testSSHPort.ToUInt16(),
-                       new SshClientOptions {
-                           Username       = "ntske",
+                       testSSHPort,
+                       new SSHClientOptions {
+                           Username       = User_Id.Parse("ntske"),
                            Credentials    = [ Key ],
                            // Pinned, as section 6.1 of the white paper has it: the host key is the
                            // whole of the server's authentication.
@@ -931,10 +931,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         /// Send the given records in the NTS-KE subsystem of the given connection, as they are, and
         /// return the answer.
         /// </summary>
-        private static async Task<NTSKE_Record[]> ExchangeOverSSHAsync(SshClient SSHClient, params NTSKE_Record[] Request)
+        private static async Task<NTSKE_Record[]> ExchangeOverSSHAsync(SSHClient SSHClient, params NTSKE_Record[] Request)
         {
 
-            var channel = await SSHClient.OpenSubsystemAsync(NTSKE_SSH.SubsystemName);
+            var channel = await SSHClient.OpenSubsystem(NTSKE_SSH.SubsystemName);
 
             await channel.SendDataAsync(Request.ToByteArray());
 
@@ -1009,10 +1009,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
             var listener = new TcpListener(System.Net.IPAddress.Loopback, 0);
             listener.Start();
 
-            var port = ((IPEndPoint) listener.LocalEndpoint).Port;
+            var port = IPPort.Parse(((IPEndPoint) listener.LocalEndpoint).Port);
             listener.Stop();
 
-            return IPPort.Parse(port);
+            return port;
 
         }
 

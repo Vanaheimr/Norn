@@ -441,8 +441,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                 return new DNSResolutionResult(
                            Success:        true,
                            Duration:       sw.Elapsed,
-                           IPv4Addresses:  itself.OfType<IPv4Address>(),
-                           IPv6Addresses:  itself.OfType<IPv6Address>()
+                           IPv4Addresses:  itself.Select(address => address.Value).OfType<IPv4Address>(),
+                           IPv6Addresses:  itself.Select(address => address.Value).OfType<IPv6Address>()
                        );
 
             }
@@ -664,7 +664,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         /// showed is.
         /// </remarks>
         private async Task<NTSKEMeasurementResult> MeasureNTSKEOverSSH(NTSServerEndpoint                                Server,
-                                                                       Func<CancellationToken, ValueTask<SshClient>>   Connect,
+                                                                       Func<CancellationToken, ValueTask<SSHClient>>   Connect,
                                                                        DNSClient                                        DNSClient,
                                                                        CancellationToken                                CancellationToken)
         {
@@ -1508,7 +1508,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         /// would be worse than nothing.
         /// </remarks>
         private static (DomainName?  Host,
-                        IIPAddress?  Address,
+                        IPAddress?  Address,
                         IPPort       Port)
 
             GetNTPRemoteInfo(NTSServerEndpoint  Server,
@@ -1530,8 +1530,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
             var port           = NTPRemoteEndPointResolver.GetRemotePort    (ntskeResponse, Server.NTPPort);
             var normalized     = hostText.Trim('[', ']').TrimEnd('.');
 
-            if (IPAddress.TryParse(normalized, out var ipAddress))
-            { }
+            // Null where it is no address and none was connected to - not an empty IP address.
+            IPAddress? ipAddress = null;
+
+            if (IPAddress.TryParse(normalized, out var parsedIPAddress))
+                ipAddress = parsedIPAddress;
 
             // NTPv4ServerNames and not NTPv4Servers: the latter is the former
             // without the addresses, so an exchange that redirected to one was

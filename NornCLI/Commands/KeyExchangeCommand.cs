@@ -95,7 +95,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.CLI.Commands
 
             var client   = new NTSClient(
                                hostname,
-                               NTSKE_Port:                  kePort is not null ? IPPort.Parse(kePort.Value) : null,
+                               NTSKE_Port:                  kePort,
                                IPVersionPreference:         ipv4 ? IPVersionPreference.IPv4Only
                                                                 : ipv6 ? IPVersionPreference.IPv6Only
                                                                        : null,

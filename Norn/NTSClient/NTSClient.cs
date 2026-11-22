@@ -443,8 +443,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             var timeout                  = Timeout ?? this.Timeout ?? DefaultTimeout;
             var totalStopwatch           = Stopwatch.StartNew();
-            var resolvedIPAddresses      = Array.Empty<IIPAddress>();
-            var connectedIPAddress       = default(IIPAddress);
+            var resolvedIPAddresses      = Array.Empty<IPAddress>();
+            var connectedIPAddress       = default(IPAddress);
             var dnsLookupDuration        = default(TimeSpan?);
             var tcpConnectDuration       = default(TimeSpan?);
             var tlsHandshakeDuration     = default(TimeSpan?);
@@ -473,7 +473,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 // resolver for it would fail. NTPRemoteEndPointResolver already handles
                 // literals for the UDP leg; this keeps the two legs consistent, so a server
                 // can be addressed by IP throughout.
-                IEnumerable<IIPAddress> ipAddresses;
+                IEnumerable<IPAddress> ipAddresses;
 
                 // DomainName renders as an FQDN, so the trailing root dot has to come off
                 // before this can look like an address literal.
@@ -851,7 +851,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <param name="OfferSSHExporter">Whether to offer the exporter of the connection (option A) before the transport (option B).</param>
         /// <param name="Timeout">An optional timeout.</param>
         /// <param name="CancellationToken">An optional cancellation token.</param>
-        public async Task<NTSKEResult> GetNTSKERecordsOverSSH(SshClient          SSHClient,
+        public async Task<NTSKEResult> GetNTSKERecordsOverSSH(SSHClient          SSHClient,
                                                               Boolean            RequestNTSPublicKeys   = false,
                                                               Boolean            OfferSSHExporter       = true,
                                                               TimeSpan?          Timeout                = null,
@@ -881,7 +881,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                 try
                 {
-                    channel = await SSHClient.OpenSubsystemAsync(
+                    channel = await SSHClient.OpenSubsystem(
                                         NTSKE_SSH.SubsystemName,
                                         timeoutCTS.Token
                                     ).ConfigureAwait(false);
@@ -1476,7 +1476,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// where a request goes when this client's own resolver found none.
         /// </summary>
         private static async Task<System.Net.IPEndPoint> ResolveBySystemAsync(String             Hostname,
-                                                                              UInt16             Port,
+                                                                              IPPort             Port,
                                                                               CancellationToken  CancellationToken)
         {
 
@@ -1489,7 +1489,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             if (ipAddresses.Length == 0)
                 throw new SocketException((Int32) SocketError.HostNotFound);
 
-            return new System.Net.IPEndPoint(ipAddresses[0], Port);
+            return new System.Net.IPEndPoint(ipAddresses[0], Port.ToInt32());
 
         }
 
@@ -1830,7 +1830,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     // They were charged to the way there, and half of them to the offset.
                     var destination        = remoteEndPoint ?? await ResolveBySystemAsync(
                                                                          Hostname.ToString(),
-                                                                         NTP_Port.ToUInt16(),
+                                                                         NTP_Port,
                                                                          CancellationToken
                                                                      ).ConfigureAwait(false);
 

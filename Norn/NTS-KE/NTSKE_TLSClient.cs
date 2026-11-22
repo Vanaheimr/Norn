@@ -459,7 +459,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                   or X509ChainStatusFlags.OfflineRevocation));
 
         /// <summary>
-        /// Whether the server's certificate was issued for the host this client dialled —
+        /// Whether the server's certificate was issued for the host this client connected to —
         /// RFC 9525 § 6.3, matching the reference identifier against the presented ones.
         /// </summary>
         /// <remarks>

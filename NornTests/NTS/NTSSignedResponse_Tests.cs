@@ -960,14 +960,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
             var ntsKEPort = FindFreePort(SocketType.Stream, ProtocolType.Tcp);
             var ntpPort   = FindFreePort(SocketType.Dgram,  ProtocolType.Udp);
 
-            var ntsServer = Create(IPPort.Parse(ntsKEPort), IPPort.Parse(ntpPort));
+            var ntsServer = Create(ntsKEPort, ntpPort);
 
             await ntsServer.Start();
 
             var ntsClient = new NTSClient(
                                 Hermod.DNS.DomainName.Localhost,
-                                NTSKE_Port:                  IPPort.Parse(ntsKEPort),
-                                NTP_Port:                    IPPort.Parse(ntpPort),
+                                NTSKE_Port:                  ntsKEPort,
+                                NTP_Port:                    ntpPort,
                                 IPVersionPreference:         IPVersionPreference.IPv4Only,
                                 RemoteCertificateValidator:  (sender, serverCertificate, certificateChain, ntsKETLSClient, sslPolicyErrors)
                                                                  => TLSValidationResult.Success()
@@ -977,14 +977,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
         }
 
-        private static Int32 FindFreePort(SocketType SocketType, ProtocolType ProtocolType)
+        private static IPPort FindFreePort(SocketType SocketType, ProtocolType ProtocolType)
         {
 
             using var socket = new Socket(AddressFamily.InterNetwork, SocketType, ProtocolType);
 
             socket.Bind(new IPEndPoint(System.Net.IPAddress.Loopback, 0));
 
-            return ((IPEndPoint) socket.LocalEndPoint!).Port;
+            return IPPort.Parse(((IPEndPoint) socket.LocalEndPoint!).Port);
 
         }
 

@@ -200,7 +200,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <param name="IPVersionPreference">Which address families will do, and which is preferred.</param>
         /// <param name="Timeout">The timeout of each query.</param>
         /// <param name="CancellationToken">A cancellation token.</param>
-        public static async Task<IEnumerable<IIPAddress>> QueryIPAddressesToConnect(DNSClient            DNSClient,
+        public static async Task<IEnumerable<IPAddress>> QueryIPAddressesToConnect(DNSClient            DNSClient,
                                                                                    DomainName           Hostname,
                                                                                    IPVersionPreference  IPVersionPreference,
                                                                                    TimeSpan             Timeout,
@@ -210,11 +210,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                    IPVersionPreference.IPv6Only  => (await DNSClient.Query_IPv6Addresses(Hostname,
                                                                                          Timeout,
-                                                                                         CancellationToken: CancellationToken).ConfigureAwait(false)).Cast<IIPAddress>(),
+                                                                                         CancellationToken: CancellationToken).ConfigureAwait(false)).Select(address => (IPAddress) address),
 
                    IPVersionPreference.IPv4Only  => (await DNSClient.Query_IPv4Addresses(Hostname,
                                                                                          Timeout,
-                                                                                         CancellationToken: CancellationToken).ConfigureAwait(false)).Cast<IIPAddress>(),
+                                                                                         CancellationToken: CancellationToken).ConfigureAwait(false)).Select(address => (IPAddress) address),
 
                    _                             =>  await DNSClient.Query_IPAddressesToConnect(Hostname,
                                                                                                 Timeout:            Timeout,
@@ -273,7 +273,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 NTSKEResponse?.TimingInfo?.ConnectedIPAddress is not null)
             {
                 return new System.Net.IPEndPoint(
-                           NTSKEResponse.TimingInfo.ConnectedIPAddress.ToDotNet(),
+                           NTSKEResponse.TimingInfo.ConnectedIPAddress.Value.ToDotNet(),
                            candidates[0].Port.ToUInt16()
                        );
             }
@@ -296,7 +296,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     continue;
                 }
 
-                IEnumerable<IIPAddress> ipAddresses;
+                IEnumerable<IPAddress> ipAddresses;
 
                 try
                 {

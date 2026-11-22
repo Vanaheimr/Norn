@@ -32,8 +32,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                   TimeSpan?                 TLSHandshakeDuration    = null,
                                   TimeSpan?                 NTSKEProtocolDuration   = null,
                                   TimeSpan?                 TotalDuration           = null,
-                                  IEnumerable<IIPAddress>?  ResolvedIPAddresses     = null,
-                                  IIPAddress?               ConnectedIPAddress      = null)
+                                  IEnumerable<IPAddress>?  ResolvedIPAddresses     = null,
+                                  IPAddress?               ConnectedIPAddress      = null)
     {
 
         #region Properties
@@ -66,12 +66,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <summary>
         /// The resolved IP addresses used for the TCP connect attempts.
         /// </summary>
-        public IEnumerable<IIPAddress>   ResolvedIPAddresses      { get; } = ResolvedIPAddresses ?? [];
+        public IEnumerable<IPAddress>   ResolvedIPAddresses      { get; } = ResolvedIPAddresses ?? [];
 
         /// <summary>
         /// The IP address used by the successful TCP connection.
         /// </summary>
-        public IIPAddress?               ConnectedIPAddress       { get; } = ConnectedIPAddress;
+        public IPAddress?               ConnectedIPAddress       { get; } = ConnectedIPAddress;
 
         #endregion
 

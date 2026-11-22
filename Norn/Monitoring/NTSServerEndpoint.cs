@@ -201,7 +201,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         /// Never written into a configuration file: it is code, not a setting.
         /// </remarks>
         [JsonIgnore]
-        public Func<CancellationToken, ValueTask<SshClient>>?  ConnectOverSSH  { get; set; }
+        public Func<CancellationToken, ValueTask<SSHClient>>?  ConnectOverSSH  { get; set; }
 
         /// <summary>
         /// Whether the connection <see cref="ConnectOverSSH"/> hands out is

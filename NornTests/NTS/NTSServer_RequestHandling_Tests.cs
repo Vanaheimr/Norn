@@ -60,12 +60,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
             var ntpPort = FindFreePort(SocketType.Dgram,  ProtocolType.Udp);
 
             ntsServer   = new NTSServer(
-                              NTSKEPort:           IPPort.Parse(FindFreePort(SocketType.Stream, ProtocolType.Tcp)),
-                              NTSPort:             IPPort.Parse(ntpPort),
+                              NTSKEPort:           FindFreePort(SocketType.Stream, ProtocolType.Tcp),
+                              NTSPort:             ntpPort,
                               MasterKeysFilePath:  null
                           );
 
-            ntpEndPoint = new IPEndPoint(System.Net.IPAddress.Loopback, ntpPort);
+            ntpEndPoint = new IPEndPoint(System.Net.IPAddress.Loopback, ntpPort.ToInt32());
 
             await ntsServer.Start();
 
@@ -327,14 +327,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
         }
 
-        private static Int32 FindFreePort(SocketType SocketType, ProtocolType ProtocolType)
+        private static IPPort FindFreePort(SocketType SocketType, ProtocolType ProtocolType)
         {
 
             using var socket = new Socket(AddressFamily.InterNetwork, SocketType, ProtocolType);
 
             socket.Bind(new IPEndPoint(System.Net.IPAddress.Loopback, 0));
 
-            return ((IPEndPoint) socket.LocalEndPoint!).Port;
+            return IPPort.Parse(((IPEndPoint) socket.LocalEndPoint!).Port);
 
         }
 
