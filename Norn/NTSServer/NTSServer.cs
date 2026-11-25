@@ -203,6 +203,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public IPPort            TCPPort         { get; }      = IPPort.NTSKE;
 
         /// <summary>
+        /// Whether NTS-KE is served over TLS on <see cref="TCPPort"/>, as RFC 8915 has it. A server
+        /// whose key exchange goes over SSH alone - on somebody else's SSH server, see
+        /// <see cref="ServeSSHSubsystemAsync"/> - says no, and binds no TCP port and needs no
+        /// certificate at all.
+        /// </summary>
+        public Boolean           NTSKEOverTLS    { get; }
+
+        /// <summary>
         /// The NTP UDP port.
         /// </summary>
         public IPPort            UDPPort         { get; }      = IPPort.NTP;
@@ -502,6 +510,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <param name="SSHHostKeys">The host keys of that listener (default: a fresh Ed25519 key, which no client can have pinned yet).</param>
         /// <param name="SSHAuthenticator">Who may log in to that listener; required with <paramref name="SSHPort"/>.</param>
         /// <param name="AccessList">Who may query this server at all, RFC 8633 § 5.1 (default: everyone).</param>
+        /// <param name="NTSKEOverTLS">Whether NTS-KE is served over TLS on <paramref name="NTSKEPort"/> (default: yes); no where the key exchange goes over SSH alone.</param>
         public NTSServer(I18NString?        Description    = null,
                          IPPort?            NTSKEPort      = null,
                          IPPort?            NTSPort        = null,
@@ -537,7 +546,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                          NTPAccessList?            AccessList             = null,
                          Int32?                    MaxNTSKEConnectionsPerClient = null,
                          IEnumerable<KeyPair>?     KeyPairs               = null,
-                         TimeSpan?                 PublicKeyLeadTime      = null)
+                         TimeSpan?                 PublicKeyLeadTime      = null,
+                         Boolean                   NTSKEOverTLS           = true)
         {
 
             // An SSH listener hands out cookies to whoever logs in, so who that may be is never a
@@ -557,6 +567,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             this.TimeProvider                 = TimeProvider                 ?? System.TimeProvider.System;
             this.Description                  = Description                  ?? I18NString.Empty;
             this.TCPPort                      = NTSKEPort                    ?? IPPort.NTSKE;
+            this.NTSKEOverTLS                 = NTSKEOverTLS;
             this.UDPPort                      = NTSPort                      ?? IPPort.NTP;
             this.ExternalURLs                 = ExternalURLs                 ?? [ URL.Parse($"udp://localhost:{this.UDPPort}") ];
             this.DNSClient                    = DNSClient                    ?? new DNSClient();
@@ -2089,232 +2100,238 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             #region Start NTS-KE TCP server
 
-            tcpSocket = CreateSocket(SocketType.Stream, ProtocolType.Tcp);
+            // Not where the key exchange goes over SSH alone: no port, no certificate.
+            if (NTSKEOverTLS)
+            {
 
-            tcpSocket.Bind(
-                new IPEndPoint(
-                    listenIPAddress,
-                    TCPPort.ToUInt16()
-                )
-            );
+                tcpSocket = CreateSocket(SocketType.Stream, ProtocolType.Tcp);
 
-            tcpSocket.Listen(backlog: 20);
+                tcpSocket.Bind(
+                    new IPEndPoint(
+                        listenIPAddress,
+                        TCPPort.ToUInt16()
+                    )
+                );
 
-            DebugX.Log($"NTP/NTS-KE Server started on port {TCPPort}/TCP");
+                tcpSocket.Listen(backlog: 20);
 
-            // telnet 127.0.0.1:4460
-            // openssl s_client -connect 127.0.0.1:4460
-            // openssl s_client -connect 127.0.0.1:4460 -showcerts
-            // openssl s_client -connect 127.0.0.1:4460 -verify 0
+                DebugX.Log($"NTP/NTS-KE Server started on port {TCPPort}/TCP");
 
-            // Fire-and-forget loop that Accepts new sockets
-            tcpLoopTask = Task.Run(async () => {
+                // telnet 127.0.0.1:4460
+                // openssl s_client -connect 127.0.0.1:4460
+                // openssl s_client -connect 127.0.0.1:4460 -showcerts
+                // openssl s_client -connect 127.0.0.1:4460 -verify 0
 
-                try
-                {
-                    while (!cts.Token.IsCancellationRequested)
+                // Fire-and-forget loop that Accepts new sockets
+                tcpLoopTask = Task.Run(async () => {
+
+                    try
                     {
-
-                        Socket clientSocket;
-
-                        try
+                        while (!cts.Token.IsCancellationRequested)
                         {
-                            clientSocket = await tcpSocket.AcceptAsync(cts.Token);
-                        }
-                        catch (SocketException e) when (!cts.Token.IsCancellationRequested)
-                        {
-                            // A connection that was reset while it waited in the backlog is
-                            // reported here, and is no reason to stop accepting the next one.
-                            DebugX.Log($"Accepting an NTS-KE connection failed: {e.SocketErrorCode}");
-                            continue;
-                        }
 
-                        if (clientSocket == null)
-                            continue;
-
-                        System.Threading.Interlocked.Increment(ref ntskeConnectionsAccepted);
-
-                        // RFC 8633 § 5.1, before the TLS handshake: an address that may not query
-                        // this server is not shown its certificate either.
-                        if (!AccessList.IsEveryone &&
-                            !AccessList.Allows((clientSocket.RemoteEndPoint as IPEndPoint)?.Address))
-                        {
-                            System.Threading.Interlocked.Increment(ref ntskeConnectionsDenied);
-                            clientSocket.Close();
-                            continue;
-                        }
-
-                        // Before the shared limit, so that one client at its own limit
-                        // does not take a slot from everybody else on top of it.
-                        var ntskeClient = (clientSocket.RemoteEndPoint as IPEndPoint)?.Address is System.Net.IPAddress remoteAddress
-                                              ? NTPRateLimiter.ClientOf(remoteAddress, NTPRateLimiter.DefaultIPv6PrefixLength)
-                                              : null;
-
-                        if (ntskeClient is not null &&
-                            ntskeConnectionsPerClient.AddOrUpdate(ntskeClient, 1, (_, open) => open + 1) > MaxNTSKEConnectionsPerClient)
-                        {
-                            ReleaseNTSKEClient(ntskeClient);
-                            System.Threading.Interlocked.Increment(ref ntskeConnectionsRejected);
-                            DebugX.Log($"Closing NTS-KE connection from {clientSocket.RemoteEndPoint}: too many concurrent connections from this client.");
-                            clientSocket.Close();
-                            continue;
-                        }
-
-                        if (!await ntskeConnectionSemaphore.WaitAsync(0, cts.Token).ConfigureAwait(false))
-                        {
-                            ReleaseNTSKEClient(ntskeClient);
-                            System.Threading.Interlocked.Increment(ref ntskeConnectionsRejected);
-                            DebugX.Log($"Closing NTS-KE connection from {clientSocket.RemoteEndPoint}: too many concurrent connections.");
-                            clientSocket.Close();
-                            continue;
-                        }
-
-                        _ = Task.Run(async () => {
+                            Socket clientSocket;
 
                             try
                             {
+                                clientSocket = await tcpSocket.AcceptAsync(cts.Token);
+                            }
+                            catch (SocketException e) when (!cts.Token.IsCancellationRequested)
+                            {
+                                // A connection that was reset while it waited in the backlog is
+                                // reported here, and is no reason to stop accepting the next one.
+                                DebugX.Log($"Accepting an NTS-KE connection failed: {e.SocketErrorCode}");
+                                continue;
+                            }
 
-                                using var networkStream  = new NetworkStream    (clientSocket, ownsSocket: false);
-                                using var requestCTS     = CancellationTokenSource.CreateLinkedTokenSource(cts.Token);
-                                requestCTS.CancelAfter(NTSKEHandshakeTimeout + NTSKERequestTimeout);
-                                var tlsServerProtocol    = new TlsServerProtocol(networkStream);
-                                var tlsServer            = new NTSKE_TLSService (
-                                                               tlsCertificate,
-                                                               tlsPrivateKey,
-                                                               tlsServerSubjectName,
-                                                               TimeProvider
-                                                           );
+                            if (clientSocket == null)
+                                continue;
 
-                                // The handshake of this TLS library blocks its thread until the
-                                // client has said everything it has to say. On a thread of its
-                                // own, then, and not on one borrowed from the pool: the pool is
-                                // what answers NTP requests, and it grows by a thread or two a
-                                // second, so a few dozen clients stalling here would otherwise
-                                // delay every NTP answer, and with it the timestamps in them.
-                                await Task.Factory.StartNew(
-                                          () => tlsServerProtocol.Accept(tlsServer),
-                                          requestCTS.Token,
-                                          TaskCreationOptions.LongRunning,
-                                          TaskScheduler.Default
-                                      ).WaitAsync(NTSKEHandshakeTimeout, requestCTS.Token).
-                                        ConfigureAwait(false);
+                            System.Threading.Interlocked.Increment(ref ntskeConnectionsAccepted);
 
+                            // RFC 8633 § 5.1, before the TLS handshake: an address that may not query
+                            // this server is not shown its certificate either.
+                            if (!AccessList.IsEveryone &&
+                                !AccessList.Allows((clientSocket.RemoteEndPoint as IPEndPoint)?.Address))
+                            {
+                                System.Threading.Interlocked.Increment(ref ntskeConnectionsDenied);
+                                clientSocket.Close();
+                                continue;
+                            }
 
+                            // Before the shared limit, so that one client at its own limit
+                            // does not take a slot from everybody else on top of it.
+                            var ntskeClient = (clientSocket.RemoteEndPoint as IPEndPoint)?.Address is System.Net.IPAddress remoteAddress
+                                                  ? NTPRateLimiter.ClientOf(remoteAddress, NTPRateLimiter.DefaultIPv6PrefixLength)
+                                                  : null;
 
-                                // A generous socket-level backstop, so a client that stalls
-                                // mid-TLS-record cannot hold this connection and its semaphore
-                                // slot indefinitely. Passing the socket to the reader means the
-                                // normal case never reaches it: the reader waits for the socket
-                                // to become readable and only then descends into the TLS stream,
-                                // so a truncated request expires with the TLS connection still
-                                // healthy and the Error record below can actually be written.
-                                clientSocket.ReceiveTimeout = (Int32) (NTSKERequestTimeout + TimeSpan.FromSeconds(5)).TotalMilliseconds;
+                            if (ntskeClient is not null &&
+                                ntskeConnectionsPerClient.AddOrUpdate(ntskeClient, 1, (_, open) => open + 1) > MaxNTSKEConnectionsPerClient)
+                            {
+                                ReleaseNTSKEClient(ntskeClient);
+                                System.Threading.Interlocked.Increment(ref ntskeConnectionsRejected);
+                                DebugX.Log($"Closing NTS-KE connection from {clientSocket.RemoteEndPoint}: too many concurrent connections from this client.");
+                                clientSocket.Close();
+                                continue;
+                            }
 
-                                var (requestBytes, errorMessage) = await NTSKEMessageReader.ReadAsync(
-                                                                        tlsServerProtocol.Stream,
-                                                                        NTSKERequestTimeout,
-                                                                        MaxNTSKERequestSize,
-                                                                        requestCTS.Token,
-                                                                        clientSocket,
-                                                                        BlockingReadsOnOwnThread: true
-                                                                    ).ConfigureAwait(false);
+                            if (!await ntskeConnectionSemaphore.WaitAsync(0, cts.Token).ConfigureAwait(false))
+                            {
+                                ReleaseNTSKEClient(ntskeClient);
+                                System.Threading.Interlocked.Increment(ref ntskeConnectionsRejected);
+                                DebugX.Log($"Closing NTS-KE connection from {clientSocket.RemoteEndPoint}: too many concurrent connections.");
+                                clientSocket.Close();
+                                continue;
+                            }
 
-                                // Whatever happens from here, the client is told why. RFC 8915
-                                // § 4.1.3 requires an Error record; closing the connection in
-                                // silence leaves a client unable to tell a rejected request
-                                // from a network fault, and unable to learn what to change.
-                                IEnumerable<NTSKE_Record> ntsKERecords;
+                            _ = Task.Run(async () => {
 
-                                if (requestBytes is null)
-                                {
-                                    // § 4.1.3 code 1 covers both a malformed request and one
-                                    // that never arrived complete before the timeout.
-                                    System.Threading.Interlocked.Increment(ref ntskeRequestsInvalid);
-                                    DebugX.Log($"Invalid NTS-KE request: {errorMessage}");
-                                    ntsKERecords = BuildNTSKEErrorRecords(NTSKEErrorCodes.BadRequest);
-                                }
-
-                                else if (!NTSKE_Record.TryParse(requestBytes, out var ntsKERequest, out var errorResponse))
-                                {
-                                    System.Threading.Interlocked.Increment(ref ntskeRequestsInvalid);
-                                    DebugX.Log($"Invalid NTS-KE request: {errorResponse}");
-                                    ntsKERecords = BuildNTSKEErrorRecords(NTSKEErrorCodes.BadRequest);
-                                }
-
-                                else
+                                try
                                 {
 
-                                    var negotiation = NegotiateNTSKE(ntsKERequest);
+                                    using var networkStream  = new NetworkStream    (clientSocket, ownsSocket: false);
+                                    using var requestCTS     = CancellationTokenSource.CreateLinkedTokenSource(cts.Token);
+                                    requestCTS.CancelAfter(NTSKEHandshakeTimeout + NTSKERequestTimeout);
+                                    var tlsServerProtocol    = new TlsServerProtocol(networkStream);
+                                    var tlsServer            = new NTSKE_TLSService (
+                                                                   tlsCertificate,
+                                                                   tlsPrivateKey,
+                                                                   tlsServerSubjectName,
+                                                                   TimeProvider
+                                                               );
 
-                                    if (negotiation.ErrorCode.HasValue)
+                                    // The handshake of this TLS library blocks its thread until the
+                                    // client has said everything it has to say. On a thread of its
+                                    // own, then, and not on one borrowed from the pool: the pool is
+                                    // what answers NTP requests, and it grows by a thread or two a
+                                    // second, so a few dozen clients stalling here would otherwise
+                                    // delay every NTP answer, and with it the timestamps in them.
+                                    await Task.Factory.StartNew(
+                                              () => tlsServerProtocol.Accept(tlsServer),
+                                              requestCTS.Token,
+                                              TaskCreationOptions.LongRunning,
+                                              TaskScheduler.Default
+                                          ).WaitAsync(NTSKEHandshakeTimeout, requestCTS.Token).
+                                            ConfigureAwait(false);
+
+
+
+                                    // A generous socket-level backstop, so a client that stalls
+                                    // mid-TLS-record cannot hold this connection and its semaphore
+                                    // slot indefinitely. Passing the socket to the reader means the
+                                    // normal case never reaches it: the reader waits for the socket
+                                    // to become readable and only then descends into the TLS stream,
+                                    // so a truncated request expires with the TLS connection still
+                                    // healthy and the Error record below can actually be written.
+                                    clientSocket.ReceiveTimeout = (Int32) (NTSKERequestTimeout + TimeSpan.FromSeconds(5)).TotalMilliseconds;
+
+                                    var (requestBytes, errorMessage) = await NTSKEMessageReader.ReadAsync(
+                                                                            tlsServerProtocol.Stream,
+                                                                            NTSKERequestTimeout,
+                                                                            MaxNTSKERequestSize,
+                                                                            requestCTS.Token,
+                                                                            clientSocket,
+                                                                            BlockingReadsOnOwnThread: true
+                                                                        ).ConfigureAwait(false);
+
+                                    // Whatever happens from here, the client is told why. RFC 8915
+                                    // § 4.1.3 requires an Error record; closing the connection in
+                                    // silence leaves a client unable to tell a rejected request
+                                    // from a network fault, and unable to learn what to change.
+                                    IEnumerable<NTSKE_Record> ntsKERecords;
+
+                                    if (requestBytes is null)
+                                    {
+                                        // § 4.1.3 code 1 covers both a malformed request and one
+                                        // that never arrived complete before the timeout.
+                                        System.Threading.Interlocked.Increment(ref ntskeRequestsInvalid);
+                                        DebugX.Log($"Invalid NTS-KE request: {errorMessage}");
+                                        ntsKERecords = BuildNTSKEErrorRecords(NTSKEErrorCodes.BadRequest);
+                                    }
+
+                                    else if (!NTSKE_Record.TryParse(requestBytes, out var ntsKERequest, out var errorResponse))
                                     {
                                         System.Threading.Interlocked.Increment(ref ntskeRequestsInvalid);
-                                        DebugX.Log($"Refusing NTS-KE request with error {(UInt16) negotiation.ErrorCode.Value}: {negotiation.Reason}");
-                                        ntsKERecords = BuildNTSKEErrorRecords(negotiation.ErrorCode.Value);
+                                        DebugX.Log($"Invalid NTS-KE request: {errorResponse}");
+                                        ntsKERecords = BuildNTSKEErrorRecords(NTSKEErrorCodes.BadRequest);
                                     }
 
                                     else
                                     {
 
-                                        // Derived here rather than at handshake time, because
-                                        // RFC 8915 § 5.1 puts the negotiated algorithm into the
-                                        // exporter context and its key length decides how much
-                                        // to ask for — neither is known until the line above.
-                                        var (c2sKey, s2cKey) = tlsServer.KeysFor(
-                                                                   negotiation.AEADAlgorithm ?? NTSAEAD.Default,
-                                                                   negotiation.CompliantAES128GCMSIVExporterContext
-                                                               );
+                                        var negotiation = NegotiateNTSKE(ntsKERequest);
 
-                                        ntsKERecords = BuildNTSKEResponseRecords(
-                                                           negotiation,
-                                                           ntsKERequest,
-                                                           c2sKey,
-                                                           s2cKey
-                                                       );
+                                        if (negotiation.ErrorCode.HasValue)
+                                        {
+                                            System.Threading.Interlocked.Increment(ref ntskeRequestsInvalid);
+                                            DebugX.Log($"Refusing NTS-KE request with error {(UInt16) negotiation.ErrorCode.Value}: {negotiation.Reason}");
+                                            ntsKERecords = BuildNTSKEErrorRecords(negotiation.ErrorCode.Value);
+                                        }
+
+                                        else
+                                        {
+
+                                            // Derived here rather than at handshake time, because
+                                            // RFC 8915 § 5.1 puts the negotiated algorithm into the
+                                            // exporter context and its key length decides how much
+                                            // to ask for — neither is known until the line above.
+                                            var (c2sKey, s2cKey) = tlsServer.KeysFor(
+                                                                       negotiation.AEADAlgorithm ?? NTSAEAD.Default,
+                                                                       negotiation.CompliantAES128GCMSIVExporterContext
+                                                                   );
+
+                                            ntsKERecords = BuildNTSKEResponseRecords(
+                                                               negotiation,
+                                                               ntsKERequest,
+                                                               c2sKey,
+                                                               s2cKey
+                                                           );
+
+                                        }
 
                                     }
 
+                                    await tlsServerProtocol.Stream.WriteAsync(ntsKERecords.ToByteArray(), requestCTS.Token).
+                                                                      ConfigureAwait(false);
+                                    await tlsServerProtocol.Stream.FlushAsync(requestCTS.Token).
+                                                                      ConfigureAwait(false);
+                                    System.Threading.Interlocked.Increment(ref ntskeResponsesSent);
+
+                                    tlsServerProtocol.Close();
+
+                                }
+                                catch (Exception ex)
+                                {
+                                    System.Threading.Interlocked.Increment(ref ntskeHandshakeFailures);
+                                    DebugX.Log($"TLS handshake/IO failed: {ex.Message}");
+                                }
+                                finally
+                                {
+                                    try { clientSocket.Shutdown(SocketShutdown.Both); } catch { }
+                                    clientSocket.Close();
+                                    ntskeConnectionSemaphore.Release();
+                                    ReleaseNTSKEClient(ntskeClient);
                                 }
 
-                                await tlsServerProtocol.Stream.WriteAsync(ntsKERecords.ToByteArray(), requestCTS.Token).
-                                                                  ConfigureAwait(false);
-                                await tlsServerProtocol.Stream.FlushAsync(requestCTS.Token).
-                                                                  ConfigureAwait(false);
-                                System.Threading.Interlocked.Increment(ref ntskeResponsesSent);
+                            });
 
-                                tlsServerProtocol.Close();
-
-                            }
-                            catch (Exception ex)
-                            {
-                                System.Threading.Interlocked.Increment(ref ntskeHandshakeFailures);
-                                DebugX.Log($"TLS handshake/IO failed: {ex.Message}");
-                            }
-                            finally
-                            {
-                                try { clientSocket.Shutdown(SocketShutdown.Both); } catch { }
-                                clientSocket.Close();
-                                ntskeConnectionSemaphore.Release();
-                                ReleaseNTSKEClient(ntskeClient);
-                            }
-
-                        });
-
+                        }
                     }
-                }
-                catch (ObjectDisposedException)
-                {
-                    // normal on shutdown
-                }
-                catch (Exception ex)
-                {
-                    DebugX.Log($"Exception in TLS Accept loop: {ex}");
-                }
+                    catch (ObjectDisposedException)
+                    {
+                        // normal on shutdown
+                    }
+                    catch (Exception ex)
+                    {
+                        DebugX.Log($"Exception in TLS Accept loop: {ex}");
+                    }
 
-                try { tcpSocket?.Close(); } catch { }
-                tcpSocket = null;
+                    try { tcpSocket?.Close(); } catch { }
+                    tcpSocket = null;
 
-            }, cts.Token);
+                }, cts.Token);
+
+            }
 
             #endregion
 
