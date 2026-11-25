@@ -2417,6 +2417,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 {
                     DebugX.Log("Timed out while waiting for NTS server listener loops to stop.");
                 }
+                catch (OperationCanceledException)
+                {
+                    // A loop that had not begun yet when it was stopped: Task.Run never runs
+                    // a delegate whose token is cancelled first, and the task ends as
+                    // cancelled - which is what was asked for here. On a busy machine a
+                    // server stopped right after its start did that, and its shutdown threw.
+                    // A loop that failed otherwise still throws: WhenAll reports a fault
+                    // before a cancellation.
+                }
             }
 
             cts?.Dispose();
