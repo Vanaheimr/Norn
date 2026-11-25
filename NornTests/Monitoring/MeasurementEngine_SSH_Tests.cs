@@ -53,17 +53,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.Monitoring
 
         #region Data
 
-        private static readonly IPPort       tlsPort      = FindFreeTCPPort();
-        private static readonly IPPort       sshPort      = FindFreeTCPPort();
-        private static readonly IPPort       ntpPort      = FindFreeUDPPort();
-        private static readonly IPPort       nobodysPort  = FindFreeTCPPort();
+        private static readonly IPPort       nobodysPort  = FreePorts.TCP();
 
         private static readonly DomainName   loopback     = DomainName.Parse("127.0.0.1");
 
         private static readonly ISshHostKey  clientKey    = SshHostKey.GenerateEd25519();
         private static readonly ISshHostKey  strangerKey  = SshHostKey.GenerateEd25519();
 
-        private NTSServer? ntsServer;
+        private NTSServer?                   ntsServer;
+        private IPPort                       sshPort;
+        private IPPort                       ntpPort;
 
         #endregion
 
@@ -73,15 +72,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.Monitoring
         public async Task StartNTSServer()
         {
 
-            ntsServer = new NTSServer(
-                            NTSKEPort:           tlsPort,
-                            NTSPort:             ntpPort,
-                            MasterKeysFilePath:  null,
-                            SSHPort:             sshPort,
-                            SSHAuthenticator:    SshUserAuthenticator.ForAuthorizedKeys(clientKey.PublicKeyBlob)
-                        );
+            ntsServer = await FreePorts.Start(() => new NTSServer(
+                                                        NTSKEPort:           FreePorts.TCP(),
+                                                        NTSPort:             FreePorts.UDP(),
+                                                        MasterKeysFilePath:  null,
+                                                        SSHPort:             FreePorts.TCP(),
+                                                        SSHAuthenticator:    SshUserAuthenticator.ForAuthorizedKeys(clientKey.PublicKeyBlob)
+                                                    ));
 
-            await ntsServer.Start();
+            sshPort   = ntsServer.SSHPort!.Value;
+            ntpPort   = ntsServer.UDPPort;
 
         }
 
@@ -286,31 +286,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.Monitoring
                 Assert.That(result.NTSKE?.ErrorCategory,                Is.EqualTo(MonitoringErrorCategory.SSH));
                 Assert.That(engine.KeyExchanges.ContainsKey(loopback),  Is.False);
             });
-
-        }
-
-        #endregion
-
-
-        #region (private static) FindFreeTCPPort() / FindFreeUDPPort()
-
-        private static IPPort FindFreeTCPPort()
-        {
-
-            using var listener = new TcpListener(System.Net.IPAddress.Loopback, 0);
-
-            listener.Start();
-
-            return IPPort.Parse(((IPEndPoint) listener.LocalEndpoint).Port);
-
-        }
-
-        private static IPPort FindFreeUDPPort()
-        {
-
-            using var udpClient = new UdpClient(new IPEndPoint(System.Net.IPAddress.Loopback, 0));
-
-            return IPPort.Parse(((IPEndPoint) udpClient.Client.LocalEndPoint!).Port);
 
         }
 

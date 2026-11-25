@@ -233,39 +233,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
                 var clientKeyBlob = Convert.FromBase64String(File.ReadAllText(keyFile + ".pub").Split(' ')[1]);
 
-                // A port found free is let go again before the server binds it, and on a
-                // machine running other test suites at the same time somebody else may take it
-                // in between: the server is then made again, on ports found free anew. Only
-                // the port taken is tried again - any other reason not to start is the test's.
-                IPPort     sshPort;
-                IPPort     ntpPort;
-                NTSServer  server;
+                var server  = await FreePorts.Start(() => new NTSServer(
+                                                              NTSKEPort:           FreePorts.TCP(),
+                                                              NTSPort:             FreePorts.UDP(),
+                                                              MasterKeysFilePath:  null,
+                                                              SSHPort:             FreePorts.TCP(),
+                                                              SSHAuthenticator:    SshUserAuthenticator.ForAuthorizedKeys(clientKeyBlob)
+                                                          ));
 
-                for (var attempt = 1; ; attempt++)
-                {
-
-                    sshPort = FindFreeTCPPort();
-                    ntpPort = FindFreeUDPPort();
-
-                    server  = new NTSServer(
-                                  NTSKEPort:           FindFreeTCPPort(),
-                                  NTSPort:             ntpPort,
-                                  MasterKeysFilePath:  null,
-                                  SSHPort:             sshPort,
-                                  SSHAuthenticator:    SshUserAuthenticator.ForAuthorizedKeys(clientKeyBlob)
-                              );
-
-                    try
-                    {
-                        await server.Start();
-                        break;
-                    }
-                    catch (Exception e) when (attempt < 5 && IsAPortTaken(e))
-                    {
-                        await server.ShutdownAsync();
-                    }
-
-                }
+                var sshPort = server.SSHPort!.Value;
+                var ntpPort = server.UDPPort;
 
                 // The host key, pinned under the name OpenSSH looks it up by for a port other
                 // than 22.
@@ -382,58 +359,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
             }
 
             return (process.ExitCode, stdOut.ToArray(), await stdErrTask);
-
-        }
-
-        #endregion
-
-        #region (private static) FindFreeTCPPort() / FindFreeUDPPort()
-
-        private static IPPort FindFreeTCPPort()
-        {
-
-            var listener = new TcpListener(System.Net.IPAddress.Loopback, 0);
-            listener.Start();
-
-            var port = IPPort.Parse(((IPEndPoint) listener.LocalEndpoint).Port);
-            listener.Stop();
-
-            return port;
-
-        }
-
-        private static IPPort FindFreeUDPPort()
-        {
-
-            using var udpClient = new UdpClient(new IPEndPoint(System.Net.IPAddress.Loopback, 0));
-
-            return IPPort.Parse(((IPEndPoint) udpClient.Client.LocalEndPoint!).Port);
-
-        }
-
-        #endregion
-
-        #region (private static) IsAPortTaken(Exception)
-
-        /// <summary>
-        /// Whether the given exception, or one it was thrown for, says that a port to be bound
-        /// was taken - however many layers between the socket and the server wrapped it.
-        /// </summary>
-        private static Boolean IsAPortTaken(Exception? Exception)
-        {
-
-            for (var e = Exception; e is not null; e = e.InnerException)
-            {
-
-                if (e is SocketException { SocketErrorCode: SocketError.AddressAlreadyInUse })
-                    return true;
-
-                if (e is AggregateException aggregate && aggregate.InnerExceptions.Any(IsAPortTaken))
-                    return true;
-
-            }
-
-            return false;
 
         }
 

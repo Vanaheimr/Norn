@@ -54,8 +54,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.Monitoring
 
         #region Data
 
-        private static readonly IPPort      ntsKEPort  = FindFreeTCPPort();
-        private static readonly IPPort      ntpPort    = FindFreeUDPPort();
+        private static          IPPort      ntsKEPort;
+        private static          IPPort      ntpPort;
 
         private static readonly DomainName  loopback   = DomainName.Parse("127.0.0.1");
 
@@ -69,23 +69,24 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.Monitoring
         public async Task StartNTSServer()
         {
 
-            ntsServer = new NTSServer(
-                            NTSKEPort:           ntsKEPort,
-                            NTSPort:             ntpPort,
-                            MasterKeysFilePath:  null,
-                            KeyPair:             new KeyPair(
-                                                     Id:                  1,
-                                                     PrivateKey:          "2bs8BuOqUr5I9b8ksVdW3xTu8KmDr1fHLvusDxI34J4=".FromBASE64(),
-                                                     PublicKey:           "BNJ9BLZTcAeuPMHDDDXA0RiVNse8WH4b+/r/bA9HhDsDtTSBsrvmjbnA3w3JlC7ipvhHEkdGbFEIH+ZT0ZEekTA=".FromBASE64(),
-                                                     Description:         I18NString.Create(Languages.en, "Test public key"),
-                                                     EllipticCurve:       "secp256r1",
-                                                     SignatureAlgorithm:  "SHA256withECDSA",
-                                                     NotBefore:           Timestamp.Now,
-                                                     NotAfter:            Timestamp.Now.AddMonths(1)
-                                                 )
-                        );
+            ntsServer = await FreePorts.Start(() => new NTSServer(
+                                                        NTSKEPort:           FreePorts.TCP(),
+                                                        NTSPort:             FreePorts.UDP(),
+                                                        MasterKeysFilePath:  null,
+                                                        KeyPair:             new KeyPair(
+                                                                                 Id:                  1,
+                                                                                 PrivateKey:          "2bs8BuOqUr5I9b8ksVdW3xTu8KmDr1fHLvusDxI34J4=".FromBASE64(),
+                                                                                 PublicKey:           "BNJ9BLZTcAeuPMHDDDXA0RiVNse8WH4b+/r/bA9HhDsDtTSBsrvmjbnA3w3JlC7ipvhHEkdGbFEIH+ZT0ZEekTA=".FromBASE64(),
+                                                                                 Description:         I18NString.Create(Languages.en, "Test public key"),
+                                                                                 EllipticCurve:       "secp256r1",
+                                                                                 SignatureAlgorithm:  "SHA256withECDSA",
+                                                                                 NotBefore:           Timestamp.Now,
+                                                                                 NotAfter:            Timestamp.Now.AddMonths(1)
+                                                                             )
+                                                    ));
 
-            await ntsServer.Start();
+            ntsKEPort = ntsServer.TCPPort;
+            ntpPort   = ntsServer.UDPPort;
 
         }
 
@@ -971,31 +972,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.Monitoring
                 Assert.That(second.NTSKEFromCache,   Is.True,   "made again within the engine's interval");
                 Assert.That(third. NTSKEFromCache,   Is.False,  "reused beyond the engine's interval");
             });
-
-        }
-
-        #endregion
-
-
-        #region (private static) FindFreeTCPPort() / FindFreeUDPPort()
-
-        private static IPPort FindFreeTCPPort()
-        {
-
-            using var listener = new TcpListener(System.Net.IPAddress.Loopback, 0);
-
-            listener.Start();
-
-            return IPPort.Parse(((IPEndPoint) listener.LocalEndpoint).Port);
-
-        }
-
-        private static IPPort FindFreeUDPPort()
-        {
-
-            using var udpClient = new UdpClient(new IPEndPoint(System.Net.IPAddress.Loopback, 0));
-
-            return IPPort.Parse(((IPEndPoint) udpClient.Client.LocalEndPoint!).Port);
 
         }
 

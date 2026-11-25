@@ -365,20 +365,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
         {
 
-            var kePort   = FindFreeTCPPort();
-            var ntpPort  = FindFreeUDPPort();
-            var sshPort  = FindFreeTCPPort();
+            var server   = await FreePorts.Start(() => new NTSServer(
+                                                           NTSKEPort:           FreePorts.TCP(),
+                                                           NTSPort:             FreePorts.UDP(),
+                                                           MasterKeysFilePath:  null,
+                                                           SSHPort:             WithSSH ? FreePorts.TCP() : null,
+                                                           SSHAuthenticator:    WithSSH ? SshUserAuthenticator.ForAuthorizedKeys(clientKey.PublicKeyBlob) : null,
+                                                           AccessList:          AccessList
+                                                       ));
 
-            var server   = new NTSServer(
-                               NTSKEPort:           kePort,
-                               NTSPort:             ntpPort,
-                               MasterKeysFilePath:  null,
-                               SSHPort:             WithSSH ? sshPort : null,
-                               SSHAuthenticator:    WithSSH ? SshUserAuthenticator.ForAuthorizedKeys(clientKey.PublicKeyBlob) : null,
-                               AccessList:          AccessList
-                           );
-
-            await server.Start();
+            var kePort   = server.TCPPort;
+            var ntpPort  = server.UDPPort;
+            var sshPort  = server.SSHPort ?? FreePorts.TCP();
 
             return (server, kePort, ntpPort, sshPort);
 
@@ -448,32 +446,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                            VerifyHostKey  = blob => blob.AsSpan().SequenceEqual(hostKey)
                        }
                    ).AsTask();
-
-        }
-
-        #endregion
-
-        #region (private static) FindFreeTCPPort() / FindFreeUDPPort()
-
-        private static IPPort FindFreeTCPPort()
-        {
-
-            var listener = new TcpListener(IPAddress.Loopback, 0);
-            listener.Start();
-
-            var port = IPPort.Parse(((IPEndPoint) listener.LocalEndpoint).Port);
-            listener.Stop();
-
-            return port;
-
-        }
-
-        private static IPPort FindFreeUDPPort()
-        {
-
-            using var udpClient = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
-
-            return IPPort.Parse(((IPEndPoint) udpClient.Client.LocalEndPoint!).Port);
 
         }
 

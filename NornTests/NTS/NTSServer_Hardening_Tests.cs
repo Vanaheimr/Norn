@@ -646,17 +646,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                                                           TimeSpan?  NTSKERequestTimeout            = null)
             {
 
-                var ntsKEPort = FindFreePort(SocketType.Stream, ProtocolType.Tcp);
+                var server    = await FreePorts.Start(() => new NTSServer(
+                                                                NTSKEPort:                     FreePorts.TCP(),
+                                                                NTSPort:                       FreePorts.UDP(),
+                                                                MasterKeysFilePath:            null,
+                                                                MaxNTSKEConnectionsPerClient:  MaxNTSKEConnectionsPerClient,
+                                                                NTSKERequestTimeout:           NTSKERequestTimeout
+                                                            ));
 
-                var server    = new NTSServer(
-                                    NTSKEPort:                     ntsKEPort,
-                                    NTSPort:                       FindFreePort(SocketType.Dgram, ProtocolType.Udp),
-                                    MasterKeysFilePath:            null,
-                                    MaxNTSKEConnectionsPerClient:  MaxNTSKEConnectionsPerClient,
-                                    NTSKERequestTimeout:           NTSKERequestTimeout
-                                );
-
-                await server.Start();
+                var ntsKEPort = server.TCPPort;
 
                 return new RunningServer(server, ntsKEPort);
 
@@ -696,17 +694,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
             public async ValueTask DisposeAsync()
             {
                 await Server.ShutdownAsync();
-            }
-
-            private static IPPort FindFreePort(SocketType SocketType, ProtocolType ProtocolType)
-            {
-
-                using var socket = new Socket(AddressFamily.InterNetwork, SocketType, ProtocolType);
-
-                socket.Bind(new IPEndPoint(System.Net.IPAddress.Loopback, 0));
-
-                return IPPort.Parse(((IPEndPoint) socket.LocalEndPoint!).Port);
-
             }
 
         }

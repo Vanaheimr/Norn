@@ -125,16 +125,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.CLI
         public async Task AnInterruptedQueryIsNotASuccess()
         {
 
-            var ntsKEPort = FindFreePort(SocketType.Stream, ProtocolType.Tcp);
-            var ntpPort   = FindFreePort(SocketType.Dgram,  ProtocolType.Udp);
+            var ntsServer = await FreePorts.Start(() => new NTSServer(
+                                                            NTSKEPort:           FreePorts.TCP(),
+                                                            NTSPort:             FreePorts.UDP(),
+                                                            MasterKeysFilePath:  null
+                                                        ));
 
-            var ntsServer = new NTSServer(
-                                NTSKEPort:           ntsKEPort,
-                                NTSPort:             ntpPort,
-                                MasterKeysFilePath:  null
-                            );
-
-            await ntsServer.Start();
+            var ntsKEPort = ntsServer.TCPPort;
+            var ntpPort   = ntsServer.UDPPort;
 
             try
             {
@@ -185,28 +183,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.CLI
             var exitCode = await Program.Run(
                                      [ "serve",
                                        "--listen",   "127.0.0.1",
-                                       "--port",     FindFreePort(SocketType.Dgram,  ProtocolType.Udp).ToString(),
-                                       "--ke-port",  FindFreePort(SocketType.Stream, ProtocolType.Tcp).ToString() ],
+                                       "--port",     FreePorts.UDP().ToString(),
+                                       "--ke-port",  FreePorts.TCP().ToString() ],
                                      ctrlC.Token
                                  );
 
             Assert.That(exitCode,                                                   Is.EqualTo(0));
-
-        }
-
-        #endregion
-
-
-        #region (private) FindFreePort(SocketType, ProtocolType)
-
-        private static IPPort FindFreePort(SocketType SocketType, ProtocolType ProtocolType)
-        {
-
-            using var socket = new Socket(AddressFamily.InterNetwork, SocketType, ProtocolType);
-
-            socket.Bind(new IPEndPoint(System.Net.IPAddress.Loopback, 0));
-
-            return IPPort.Parse(((IPEndPoint) socket.LocalEndPoint!).Port);
 
         }
 

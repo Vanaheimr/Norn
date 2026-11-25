@@ -57,17 +57,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         public async Task StartNTSServer()
         {
 
-            var ntpPort = FindFreePort(SocketType.Dgram,  ProtocolType.Udp);
+            ntsServer   = await FreePorts.Start(() => new NTSServer(
+                                                          NTSKEPort:           FreePorts.TCP(),
+                                                          NTSPort:             FreePorts.UDP(),
+                                                          MasterKeysFilePath:  null
+                                                      ));
 
-            ntsServer   = new NTSServer(
-                              NTSKEPort:           FindFreePort(SocketType.Stream, ProtocolType.Tcp),
-                              NTSPort:             ntpPort,
-                              MasterKeysFilePath:  null
-                          );
-
-            ntpEndPoint = new IPEndPoint(System.Net.IPAddress.Loopback, ntpPort.ToInt32());
-
-            await ntsServer.Start();
+            ntpEndPoint = new IPEndPoint(System.Net.IPAddress.Loopback, ntsServer.UDPPort.ToInt32());
 
         }
 
@@ -324,17 +320,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
             // Unique Identifier only: no authenticator, and so no cookies.
             Assert.That(Answer.Length,                             Is.EqualTo(48 + 36));
-
-        }
-
-        private static IPPort FindFreePort(SocketType SocketType, ProtocolType ProtocolType)
-        {
-
-            using var socket = new Socket(AddressFamily.InterNetwork, SocketType, ProtocolType);
-
-            socket.Bind(new IPEndPoint(System.Net.IPAddress.Loopback, 0));
-
-            return IPPort.Parse(((IPEndPoint) socket.LocalEndPoint!).Port);
 
         }
 

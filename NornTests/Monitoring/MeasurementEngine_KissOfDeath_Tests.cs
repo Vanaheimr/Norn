@@ -256,24 +256,22 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.Monitoring
                                                                               TimeProvider?    TimeProvider   = null)
         {
 
-            var ntsKEPort = FindFreePort(SocketType.Stream, ProtocolType.Tcp);
-            var ntpPort   = FindFreePort(SocketType.Dgram,  ProtocolType.Udp);
+            var ntsServer = await FreePorts.Start(() => new NTSServer(
+                                                            NTSKEPort:           FreePorts.TCP(),
+                                                            NTSPort:             FreePorts.UDP(),
+                                                            MasterKeysFilePath:  null,
+                                                            RateLimiter:         RateLimiter,
+                                                            TimeProvider:        TimeProvider,
 
-            var ntsServer = new NTSServer(
-                                NTSKEPort:           ntsKEPort,
-                                NTSPort:             ntpPort,
-                                MasterKeysFilePath:  null,
-                                RateLimiter:         RateLimiter,
-                                TimeProvider:        TimeProvider,
+                                                            // Stated, where the clock is not the machine's: measured on a
+                                                            // clock that jumps, the resolution would come out as its jumps,
+                                                            // and a root dispersion of ten seconds is refused by the client.
+                                                            ClockResolution:     TimeProvider is not null ? TimeSpan.FromMilliseconds(1) : null,
+                                                            RootDispersion:      TimeProvider is not null ? TimeSpan.FromMilliseconds(2) : null
+                                                        ));
 
-                                // Stated, where the clock is not the machine's: measured on a
-                                // clock that jumps, the resolution would come out as its jumps,
-                                // and a root dispersion of ten seconds is refused by the client.
-                                ClockResolution:     TimeProvider is not null ? TimeSpan.FromMilliseconds(1) : null,
-                                RootDispersion:      TimeProvider is not null ? TimeSpan.FromMilliseconds(2) : null
-                            );
-
-            await ntsServer.Start();
+            var ntsKEPort = ntsServer.TCPPort;
+            var ntpPort   = ntsServer.UDPPort;
 
             return (ntsServer,
                     new NTSServerEndpoint(
@@ -299,17 +297,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.Monitoring
 
             => new (SearchForIPv4DNSServers: false,
                     SearchForIPv6DNSServers: false);
-
-        private static IPPort FindFreePort(SocketType SocketType, ProtocolType ProtocolType)
-        {
-
-            using var socket = new Socket(AddressFamily.InterNetwork, SocketType, ProtocolType);
-
-            socket.Bind(new IPEndPoint(System.Net.IPAddress.Loopback, 0));
-
-            return IPPort.Parse(((IPEndPoint) socket.LocalEndPoint!).Port);
-
-        }
 
         /// <summary>
         /// The machine's clock, moved on by whatever a test says.

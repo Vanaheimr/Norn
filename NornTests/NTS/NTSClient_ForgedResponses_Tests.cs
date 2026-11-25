@@ -59,18 +59,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         public async Task StartNTSServer()
         {
 
-            var ntpPort = FindFreePort(SocketType.Dgram, ProtocolType.Udp);
+            ntsServer   = await FreePorts.Start(() => new NTSServer(
+                                                          NTSKEPort:           FreePorts.TCP(),
+                                                          NTSPort:             FreePorts.UDP(),
+                                                          MasterKeysFilePath:  null
+                                                      ));
 
-            ntsKEPort   = FindFreePort(SocketType.Stream, ProtocolType.Tcp);
-            ntpEndPoint = new IPEndPoint(System.Net.IPAddress.Loopback, ntpPort.ToInt32());
-
-            ntsServer   = new NTSServer(
-                              NTSKEPort:           ntsKEPort,
-                              NTSPort:             ntpPort,
-                              MasterKeysFilePath:  null
-                          );
-
-            await ntsServer.Start();
+            ntsKEPort   = ntsServer.TCPPort;
+            ntpEndPoint = new IPEndPoint(System.Net.IPAddress.Loopback, ntsServer.UDPPort.ToInt32());
 
         }
 
@@ -196,17 +192,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                    RemoteCertificateValidator:  (sender, serverCertificate, certificateChain, ntsKETLSClient, sslPolicyErrors)
                                                     => TLSValidationResult.Success()
                );
-
-        private static IPPort FindFreePort(SocketType SocketType, ProtocolType ProtocolType)
-        {
-
-            using var socket = new Socket(AddressFamily.InterNetwork, SocketType, ProtocolType);
-
-            socket.Bind(new IPEndPoint(System.Net.IPAddress.Loopback, 0));
-
-            return IPPort.Parse(((IPEndPoint) socket.LocalEndPoint!).Port);
-
-        }
 
         /// <summary>
         /// Stands in for the NTP server. Each request is answered with a forged NTS NAK,

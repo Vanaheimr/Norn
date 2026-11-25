@@ -293,12 +293,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         public async Task ARotatedKey_StillOpensItsCookies_AForgottenOneDoesNot()
         {
 
-            var ntpPort  = FindFreeUDPPort();
-            var server   = new NTSServer(NTSKEPort:           FindFreeTCPPort(),
-                                         NTSPort:             ntpPort,
-                                         MasterKeysFilePath:  KeyFile);
+            var server   = await FreePorts.Start(() => new NTSServer(NTSKEPort:           FreePorts.TCP(),
+                                                                     NTSPort:             FreePorts.UDP(),
+                                                                     MasterKeysFilePath:  KeyFile));
 
-            await server.Start();
+            var ntpPort  = server.UDPPort;
 
             try
             {
@@ -361,15 +360,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         public async Task ACookieOutlivesARestart()
         {
 
-            var ntpPort        = FindFreeUDPPort();
+            var first          = await FreePorts.Start(() => new NTSServer(NTSKEPort:           FreePorts.TCP(),
+                                                                           NTSPort:             FreePorts.UDP(),
+                                                                           MasterKeysFilePath:  KeyFile));
 
-            var first          = new NTSServer(NTSKEPort:           FindFreeTCPPort(),
-                                               NTSPort:             ntpPort,
-                                               MasterKeysFilePath:  KeyFile);
-
+            var ntpPort        = first.UDPPort;
             var ntsKEPort      = first.TCPPort;
-
-            await first.Start();
 
             NTSKE_Response ntsKEResponse;
 
@@ -389,11 +385,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
             }
 
 
-            var stranger       = new NTSServer(NTSKEPort:           FindFreeTCPPort(),
-                                               NTSPort:             ntpPort,
-                                               MasterKeysFilePath:  Path.Combine(directory, "otherKeys.json"));
-
-            await stranger.Start();
+            var stranger       = await FreePorts.Start(() => new NTSServer(NTSKEPort:           FreePorts.TCP(),
+                                                                           NTSPort:             ntpPort,
+                                                                           MasterKeysFilePath:  Path.Combine(directory, "otherKeys.json")));
 
             try
             {
@@ -410,11 +404,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
             }
 
 
-            var second         = new NTSServer(NTSKEPort:           FindFreeTCPPort(),
-                                               NTSPort:             ntpPort,
-                                               MasterKeysFilePath:  KeyFile);
-
-            await second.Start();
+            var second         = await FreePorts.Start(() => new NTSServer(NTSKEPort:           FreePorts.TCP(),
+                                                                           NTSPort:             ntpPort,
+                                                                           MasterKeysFilePath:  KeyFile));
 
             try
             {
@@ -489,30 +481,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                     NTP_Port:                    NTPPort,
                     IPVersionPreference:         IPVersionPreference.IPv4Only,
                     RemoteCertificateValidator:  (sender, serverCertificate, certificateChain, ntsKETLSClient, sslPolicyErrors) => TLSValidationResult.Success());
-
-        #endregion
-
-        #region (private static) FindFreeTCPPort() / FindFreeUDPPort()
-
-        private static IPPort FindFreeTCPPort()
-        {
-
-            using var listener = new TcpListener(System.Net.IPAddress.Loopback, 0);
-
-            listener.Start();
-
-            return IPPort.Parse(((IPEndPoint) listener.LocalEndpoint).Port);
-
-        }
-
-        private static IPPort FindFreeUDPPort()
-        {
-
-            using var udpClient = new UdpClient(new IPEndPoint(System.Net.IPAddress.Loopback, 0));
-
-            return IPPort.Parse(((IPEndPoint) udpClient.Client.LocalEndPoint!).Port);
-
-        }
 
         #endregion
 

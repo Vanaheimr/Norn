@@ -957,12 +957,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         private static async Task<(NTSServer, NTSClient)> Start(Func<IPPort, IPPort, NTSServer> Create)
         {
 
-            var ntsKEPort = FindFreePort(SocketType.Stream, ProtocolType.Tcp);
-            var ntpPort   = FindFreePort(SocketType.Dgram,  ProtocolType.Udp);
+            var ntsServer = await FreePorts.Start(() => Create(FreePorts.TCP(), FreePorts.UDP()));
 
-            var ntsServer = Create(ntsKEPort, ntpPort);
-
-            await ntsServer.Start();
+            var ntsKEPort = ntsServer.TCPPort;
+            var ntpPort   = ntsServer.UDPPort;
 
             var ntsClient = new NTSClient(
                                 Hermod.DNS.DomainName.Localhost,
@@ -974,17 +972,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                             );
 
             return (ntsServer, ntsClient);
-
-        }
-
-        private static IPPort FindFreePort(SocketType SocketType, ProtocolType ProtocolType)
-        {
-
-            using var socket = new Socket(AddressFamily.InterNetwork, SocketType, ProtocolType);
-
-            socket.Bind(new IPEndPoint(System.Net.IPAddress.Loopback, 0));
-
-            return IPPort.Parse(((IPEndPoint) socket.LocalEndPoint!).Port);
 
         }
 

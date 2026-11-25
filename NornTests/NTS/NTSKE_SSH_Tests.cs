@@ -68,9 +68,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
         #region Data
 
-        private static readonly IPPort       testTLSPort  = FindFreeTCPPort();
-        private static readonly IPPort       testSSHPort  = FindFreeTCPPort();
-        private static readonly IPPort       testNTPPort  = FindFreeUDPPort();
+        private static          IPPort       testTLSPort;
+        private static          IPPort       testSSHPort;
+        private static          IPPort       testNTPPort;
 
         private static readonly ISshHostKey  clientKey    = SshHostKey.GenerateEd25519();
         private static readonly ISshHostKey  strangerKey  = SshHostKey.GenerateEd25519();
@@ -86,15 +86,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         public async Task StartNTSServer()
         {
 
-            ntsServer = new NTSServer(
-                            NTSKEPort:           testTLSPort,
-                            NTSPort:             testNTPPort,
-                            MasterKeysFilePath:  null,
-                            SSHPort:             testSSHPort,
-                            SSHAuthenticator:    SshUserAuthenticator.ForAuthorizedKeys(clientKey.PublicKeyBlob)
-                        );
+            ntsServer = await FreePorts.Start(() => new NTSServer(
+                                                        NTSKEPort:           FreePorts.TCP(),
+                                                        NTSPort:             FreePorts.UDP(),
+                                                        MasterKeysFilePath:  null,
+                                                        SSHPort:             FreePorts.TCP(),
+                                                        SSHAuthenticator:    SshUserAuthenticator.ForAuthorizedKeys(clientKey.PublicKeyBlob)
+                                                    ));
 
-            await ntsServer.Start();
+            testTLSPort = ntsServer.TCPPort;
+            testSSHPort = ntsServer.SSHPort!.Value;
+            testNTPPort = ntsServer.UDPPort;
 
         }
 
@@ -996,32 +998,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                         selectionError);
 
             return methodData!;
-
-        }
-
-        #endregion
-
-        #region (private static) FindFreeTCPPort() / FindFreeUDPPort()
-
-        private static IPPort FindFreeTCPPort()
-        {
-
-            var listener = new TcpListener(System.Net.IPAddress.Loopback, 0);
-            listener.Start();
-
-            var port = IPPort.Parse(((IPEndPoint) listener.LocalEndpoint).Port);
-            listener.Stop();
-
-            return port;
-
-        }
-
-        private static IPPort FindFreeUDPPort()
-        {
-
-            using var udpClient = new UdpClient(new IPEndPoint(System.Net.IPAddress.Loopback, 0));
-
-            return IPPort.Parse(((IPEndPoint) udpClient.Client.LocalEndPoint!).Port);
 
         }
 

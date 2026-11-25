@@ -44,53 +44,43 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
         #region Data
 
-        private static readonly IPPort testNTSKEPort = FindFreeTCPPort();
-        private static readonly IPPort testNTPPort   = FindFreeUDPPort();
+        private static IPPort    testNTSKEPort;
+        private static IPPort    testNTPPort;
 
-        private readonly NTSServer ntsServer;
-
-        #endregion
-
-        #region Constructor(s)
-
-        /// <summary>
-        /// Create a new NTS server.
-        /// </summary>
-        public NTSServer_Tests()
-        {
-
-            ntsServer = new NTSServer(
-                            NTSKEPort: testNTSKEPort,
-                            NTSPort:   testNTPPort,
-                            MasterKeysFilePath: null,
-                            KeyPair:   new KeyPair(
-                                           Id:                   1,
-                                           // The very same key as before, now without the two's
-                                           // complement sign byte that used to precede it.
-                                           PrivateKey:          "2bs8BuOqUr5I9b8ksVdW3xTu8KmDr1fHLvusDxI34J4=".FromBASE64(),
-                                           PublicKey:           "BNJ9BLZTcAeuPMHDDDXA0RiVNse8WH4b+/r/bA9HhDsDtTSBsrvmjbnA3w3JlC7ipvhHEkdGbFEIH+ZT0ZEekTA=".FromBASE64(),
-                                           Description:          I18NString.Create(Languages.en, "Test public key"),
-                                           EllipticCurve:       "secp256r1",
-                                           SignatureAlgorithm:  "SHA256withECDSA",
-                                           NotBefore:            Timestamp.Now,
-                                           NotAfter:             Timestamp.Now.AddMonths(1)
-                                       )
-                        );
-
-        }
+        private        NTSServer ntsServer = null!;
 
         #endregion
-
 
         #region StartNTSServer()
 
         /// <summary>
-        /// Start the NTS server.
+        /// Make the NTS server, on ports found free, and start it.
         /// </summary>
         [OneTimeSetUp]
         public async Task StartNTSServer()
         {
-            await ntsServer.Start();
+
+            ntsServer = await FreePorts.Start(() => new NTSServer(
+                                                        NTSKEPort: FreePorts.TCP(),
+                                                        NTSPort:   FreePorts.UDP(),
+                                                        MasterKeysFilePath: null,
+                                                        KeyPair:   new KeyPair(
+                                                                       Id:                   1,
+                                                                       // The very same key as before, now without the two's
+                                                                       // complement sign byte that used to precede it.
+                                                                       PrivateKey:          "2bs8BuOqUr5I9b8ksVdW3xTu8KmDr1fHLvusDxI34J4=".FromBASE64(),
+                                                                       PublicKey:           "BNJ9BLZTcAeuPMHDDDXA0RiVNse8WH4b+/r/bA9HhDsDtTSBsrvmjbnA3w3JlC7ipvhHEkdGbFEIH+ZT0ZEekTA=".FromBASE64(),
+                                                                       Description:          I18NString.Create(Languages.en, "Test public key"),
+                                                                       EllipticCurve:       "secp256r1",
+                                                                       SignatureAlgorithm:  "SHA256withECDSA",
+                                                                       NotBefore:            Timestamp.Now,
+                                                                       NotAfter:             Timestamp.Now.AddMonths(1)
+                                                                   )
+                                                    ));
+
+            testNTSKEPort = ntsServer.TCPPort;
+            testNTPPort   = ntsServer.UDPPort;
+
         }
 
         #endregion
@@ -275,17 +265,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         public async Task TestNTSKE_Advertises_Explicit_ExternalURLs()
         {
 
-            var ntsKEPort = FindFreeTCPPort();
-            var ntpPort   = FindFreeUDPPort();
+            var server    = await FreePorts.Start(() => {
+                                var udpPort = FreePorts.UDP();
+                                return new NTSServer(
+                                           NTSKEPort:          FreePorts.TCP(),
+                                           NTSPort:            udpPort,
+                                           ExternalURLs:       [ URL.Parse($"udp://localhost:{udpPort}") ],
+                                           MasterKeysFilePath: null
+                                       );
+                            });
 
-            var server    = new NTSServer(
-                                NTSKEPort:          ntsKEPort,
-                                NTSPort:            ntpPort,
-                                ExternalURLs:       [ URL.Parse($"udp://localhost:{ntpPort}") ],
-                                MasterKeysFilePath: null
-                            );
-
-            await server.Start();
+            var ntsKEPort = server.TCPPort;
+            var ntpPort   = server.UDPPort;
 
             try
             {
@@ -599,45 +590,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         }
 
         #endregion
-
-
-        #region (private static) FindFreeTCPPort()
-
-        private static IPPort FindFreeTCPPort()
-        {
-
-            using var listener = new TcpListener(System.Net.IPAddress.Loopback, 0);
-
-            listener.Start();
-
-            return IPPort.Parse(
-                       ((IPEndPoint) listener.LocalEndpoint).Port
-                   );
-
-        }
-
-        #endregion
-
-        #region (private static) FindFreeUDPPort()
-
-        private static IPPort FindFreeUDPPort()
-        {
-
-            using var udpClient = new UdpClient(
-                                      new IPEndPoint(
-                                          System.Net.IPAddress.Loopback,
-                                          0
-                                      )
-                                  );
-
-            return IPPort.Parse(
-                       ((IPEndPoint) udpClient.Client.LocalEndPoint!).Port
-                   );
-
-        }
-
-        #endregion
-
 
     }
 
