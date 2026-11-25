@@ -260,32 +260,50 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <summary>
         /// The stratum this server reports. Default 1: it serves the local clock directly.
         /// </summary>
-        public Byte                  Stratum                       { get; }
+        public Byte                  Stratum
+            => clockDescription.Stratum;
 
         /// <summary>
         /// What this server's time comes from. At stratum 1 this is a four-character source
         /// identifier from RFC 5905 § 7.3 ("LOCL" for an uncalibrated local clock); at stratum 2
         /// or above it identifies the upstream server, so clients can detect a timing loop.
         /// </summary>
-        public ReferenceIdentifier   ReferenceIdentifier           { get; }
+        public ReferenceIdentifier   ReferenceIdentifier
+            => clockDescription.ReferenceIdentifier;
 
         /// <summary>
         /// Total round-trip delay to the reference clock. Zero when the reference *is* the local
         /// clock, since there is no network path to traverse.
         /// </summary>
-        public TimeSpan              RootDelay                     { get; }
+        public TimeSpan              RootDelay
+            => clockDescription.RootDelay;
 
         /// <summary>
         /// Maximum error relative to the reference clock. Never zero — that would claim a
         /// perfect clock, and a client's root-distance calculation (§ 11.3) would then
         /// understate its true uncertainty.
         /// </summary>
-        public TimeSpan              RootDispersion                { get; }
+        public TimeSpan              RootDispersion
+            => clockDescription.RootDispersion;
 
         /// <summary>
         /// The leap indicator to report. 3 announces that this server is not synchronized.
         /// </summary>
-        public Byte                  LeapIndicator                 { get; }
+        public Byte                  LeapIndicator
+            => clockDescription.LeapIndicator;
+
+        /// <summary>
+        /// The five values above, as one: <see cref="Redescribe"/> replaces them at once, so
+        /// that a response never takes the stratum of one description and the reference of
+        /// another.
+        /// </summary>
+        private sealed record ClockDescription(Byte                 Stratum,
+                                               ReferenceIdentifier  ReferenceIdentifier,
+                                               TimeSpan             RootDelay,
+                                               TimeSpan             RootDispersion,
+                                               Byte                 LeapIndicator);
+
+        private volatile ClockDescription clockDescription;
 
         /// <summary>
         /// How finely <see cref="TimeProvider"/> advances, reported in the Precision field of
@@ -579,11 +597,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             // say so.
             this.ClockResolution              = ClockResolution              ?? MeasureClockResolution(this.TimeProvider)
                                                                               ?? UnknownClockResolution;
-            this.Stratum                      = Stratum                      ?? 1;
-            this.ReferenceIdentifier          = ReferenceIdentifier          ?? NTP.ReferenceIdentifier.From("LOCL");
-            this.RootDelay                    = RootDelay                    ?? TimeSpan.Zero;
-            this.RootDispersion               = RootDispersion               ?? this.ClockResolution + TimeSpan.FromMilliseconds(1);
-            this.LeapIndicator                = LeapIndicator                ?? 0;
+            this.clockDescription             = Described(Stratum,
+                                                          ReferenceIdentifier,
+                                                          RootDelay,
+                                                          RootDispersion,
+                                                          LeapIndicator);
             this.ClockLastSynchronized        = this.TimeProvider.GetUtcNow();
 
             // Everyone by default, as in chrony: a client that does not ask for the mode cannot
@@ -2420,17 +2438,22 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         private NTPPacket BuildResponseHeader(NTPPacket                  RequestPacket,
                                               IEnumerable<NTPExtension>  Extensions,
                                               InterleavedExchange        Exchange)
+        {
 
-            => new (
+            // Read once: a Redescribe in between must not leave this response with the stratum
+            // of one description and the reference of the next.
+            var described = clockDescription;
 
-                   LI:                   LeapIndicator,
+            return new (
+
+                   LI:                   described.LeapIndicator,
                    // RFC 5905 § 9.2: the answer carries the version of the request, so an
                    // NTPv3 client is not handed a version it did not ask for.
                    VN:                   RequestPacket.VN is >= 1 and <= 4
                                              ? RequestPacket.VN
                                              : (Byte) 4,
                    Mode:                 4, // Server
-                   Stratum:              Stratum,
+                   Stratum:              described.Stratum,
                    Poll:                 RequestPacket.Poll,
 
                    // This server's own clock resolution, not the client's. Echoing the
@@ -2438,9 +2461,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                    // described the server's.
                    Precision:            ClockPrecisionExponent,
 
-                   RootDelay:            ToShortFormat(RootDelay),
-                   RootDispersion:       ToShortFormat(RootDispersion),
-                   ReferenceIdentifier:  ReferenceIdentifier,
+                   RootDelay:            ToShortFormat(described.RootDelay),
+                   RootDispersion:       ToShortFormat(described.RootDispersion),
+                   ReferenceIdentifier:  described.ReferenceIdentifier,
 
                    // When the clock was last set, per § 7.3 — not the moment of this reply,
                    // which said nothing about synchronization at all.
@@ -2458,6 +2481,75 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                    Request:              RequestPacket
 
                );
+
+        }
+
+        #endregion
+
+        #region Redescribe(Stratum = null, ReferenceIdentifier = null, RootDelay = null, RootDispersion = null, LeapIndicator = null)
+
+        /// <summary>
+        /// Describe this server's clock anew, while it runs: every response from now on reports
+        /// the values given. A value left out is its default, as in the constructor - not the
+        /// value it had - so that a call says the whole description and nothing of the one
+        /// before it lingers.
+        /// </summary>
+        /// <remarks>
+        /// A process that follows upstream servers learns a better stratum, reference, root
+        /// delay and dispersion with every round, and a leap second to announce. Before this, a
+        /// server took them only when it was made, and such a process made it anew for every
+        /// change, and its listeners went down for a moment each time. The cookies a client
+        /// holds stay valid either way, since they are sealed by the master keys, not by the
+        /// description of the clock.
+        /// </remarks>
+        /// <param name="Stratum">The stratum, 1 by default.</param>
+        /// <param name="ReferenceIdentifier">The reference, "LOCL" by default.</param>
+        /// <param name="RootDelay">The round trip to the reference, zero by default.</param>
+        /// <param name="RootDispersion">The largest error relative to the reference, by default the clock resolution and a millisecond.</param>
+        /// <param name="LeapIndicator">The leap indicator, 0 by default.</param>
+        public void Redescribe(Byte?                 Stratum              = null,
+                               ReferenceIdentifier?  ReferenceIdentifier  = null,
+                               TimeSpan?             RootDelay            = null,
+                               TimeSpan?             RootDispersion       = null,
+                               Byte?                 LeapIndicator        = null)
+        {
+
+            clockDescription = Described(Stratum,
+                                         ReferenceIdentifier,
+                                         RootDelay,
+                                         RootDispersion,
+                                         LeapIndicator);
+
+        }
+
+        #endregion
+
+        #region (private) Described(Stratum, ReferenceIdentifier, RootDelay, RootDispersion, LeapIndicator)
+
+        /// <summary>
+        /// The description of the clock with the given values, and the defaults for those not
+        /// given: what Norn is when nothing else is said - a server handing out the clock of its
+        /// own machine, with no upstream of its own (see the constructor).
+        /// </summary>
+        private ClockDescription Described(Byte?                 Stratum,
+                                           ReferenceIdentifier?  ReferenceIdentifier,
+                                           TimeSpan?             RootDelay,
+                                           TimeSpan?             RootDispersion,
+                                           Byte?                 LeapIndicator)
+        {
+
+            // Two bits in the header: a larger value would not be reported as given, but as
+            // whatever its lower bits are next to the version number.
+            if (LeapIndicator > 3)
+                throw new ArgumentOutOfRangeException(nameof(LeapIndicator), LeapIndicator, "A leap indicator is 0, 1, 2 or 3.");
+
+            return new (Stratum              ?? 1,
+                        ReferenceIdentifier  ?? NTP.ReferenceIdentifier.From("LOCL"),
+                        RootDelay            ?? TimeSpan.Zero,
+                        RootDispersion       ?? ClockResolution + TimeSpan.FromMilliseconds(1),
+                        LeapIndicator        ?? 0);
+
+        }
 
         #endregion
 
