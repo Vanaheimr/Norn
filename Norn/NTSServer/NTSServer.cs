@@ -2938,20 +2938,24 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         /// <summary>
         /// Convert to the 32-bit 16.16 fixed-point "short format" of RFC 5905 § 6, used by the
-        /// Root Delay and Root Dispersion fields. Saturates rather than wrapping: a value too
-        /// large to express should read as "very uncertain", not as a small one.
+        /// Root Delay and Root Dispersion fields. Rounded up, never down: both go into the root
+        /// distance, a bound of the error a client may expect, and a bound made smaller on the
+        /// way is no bound - 30 ms are 1967 of 65536, not 1966, and 100 ns are 1, not none.
+        /// Counted in ticks, so that a value of whole units stays exactly that. Saturates rather
+        /// than wrapping: a value too large to express should read as "very uncertain", not as
+        /// a small one.
         /// </summary>
-        private static UInt32 ToShortFormat(TimeSpan Value)
+        internal static UInt32 ToShortFormat(TimeSpan Value)
         {
 
             if (Value <= TimeSpan.Zero)
                 return 0;
 
-            var scaled = Value.TotalSeconds * 65536.0;
+            // 65536 s are 2^32 units, one more than the field holds.
+            if (Value.Ticks >= 65536L * TimeSpan.TicksPerSecond)
+                return UInt32.MaxValue;
 
-            return scaled >= UInt32.MaxValue
-                       ? UInt32.MaxValue
-                       : (UInt32) Math.Round(scaled);
+            return (UInt32) ((Value.Ticks * 65536L + TimeSpan.TicksPerSecond - 1) / TimeSpan.TicksPerSecond);
 
         }
 

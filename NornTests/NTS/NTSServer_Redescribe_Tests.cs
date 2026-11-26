@@ -129,6 +129,35 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
         #endregion
 
+        #region RootDelayAndDispersion_AreRoundedUp()
+
+        /// <summary>
+        /// The 16.16 fixed point of RFC 5905 § 6 rounds up: what goes into the root distance
+        /// is never made smaller on the way - 30 ms are 1967 of 65536, where rounding to the
+        /// nearest gave 1966, a little under 30 ms; 100 ns are one unit, not none. Whole units
+        /// stay exact, nothing below zero is negative, and what is too large saturates.
+        /// </summary>
+        [Test]
+        public void RootDelayAndDispersion_AreRoundedUp()
+        {
+
+            Assert.Multiple(() => {
+                Assert.That(NTSServer.ToShortFormat(TimeSpan.FromMilliseconds(30)),   Is.EqualTo(1967u), "30 ms rounded down");
+                Assert.That(NTSServer.ToShortFormat(TimeSpan.FromTicks(1)),           Is.EqualTo(1u),    "100 ns made none");
+                Assert.That(NTSServer.ToShortFormat(TimeSpan.FromMilliseconds(20)),   Is.EqualTo(1311u));
+                Assert.That(NTSServer.ToShortFormat(TimeSpan.FromSeconds(1)),         Is.EqualTo(65536u), "a whole second is not exactly one");
+                Assert.That(NTSServer.ToShortFormat(TimeSpan.FromSeconds(0.5)),       Is.EqualTo(32768u));
+                Assert.That(NTSServer.ToShortFormat(TimeSpan.Zero),                   Is.EqualTo(0u));
+                Assert.That(NTSServer.ToShortFormat(TimeSpan.FromSeconds(-1)),        Is.EqualTo(0u));
+                Assert.That(NTSServer.ToShortFormat(TimeSpan.FromTicks(655_359_900_000)), Is.EqualTo(4294966641u));
+                Assert.That(NTSServer.ToShortFormat(TimeSpan.FromSeconds(65536)),     Is.EqualTo(UInt32.MaxValue), "too large wraps");
+                Assert.That(NTSServer.ToShortFormat(TimeSpan.FromDays(10)),           Is.EqualTo(UInt32.MaxValue), "too large wraps");
+            });
+
+        }
+
+        #endregion
+
         #region ALeapIndicatorBeyondTwoBitsIsRefused()
 
         /// <summary>
