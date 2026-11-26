@@ -71,7 +71,7 @@ public sealed class InsertMarks : Microsoft.Build.Utilities.Task
                     C(2)),
 
         // 3: the nonces drawn, the receive buffer rented, the socket made
-        Edit.Before("var destination        = remoteEndPoint ?? await ResolveBySystemAsync(",
+        Edit.Before("udpSocket.Bind(",
                     C(3)),
 
         // 4: the socket bound
@@ -130,13 +130,13 @@ public sealed class InsertMarks : Microsoft.Build.Utilities.Task
         // The counter-experiment --keep-socket: one socket for all queries.
         Edit.Replace("using (var receiveBuffer = new ReceiveBuffer())\n" +
                      "using (var udpSocket     = new Socket(\n" +
-                     "remoteEndPoint?.AddressFamily ?? AddressFamily.InterNetwork,\n" +
+                     "destination.AddressFamily,\n" +
                      "SocketType.Dgram,\n" +
                      "ProtocolType.Udp\n" +
                      "))",
 
                      "var udpSocket = " + Marks + ".KeptSocket ?? new Socket(\n" +
-                     "                    remoteEndPoint?.AddressFamily ?? AddressFamily.InterNetwork,\n" +
+                     "                    destination.AddressFamily,\n" +
                      "                    SocketType.Dgram,\n" +
                      "                    ProtocolType.Udp\n" +
                      "                );\n" +
@@ -176,6 +176,9 @@ public sealed class InsertMarks : Microsoft.Build.Utilities.Task
                     "try\n" +
                     "{\n" +
                     "\n" +
+                    "if (activeSocket is null)\n" +
+                    "return;\n" +
+                    "\n" +
                     "if (NTPRequest.TryParse(datagram,",
                     S(1)),
 
@@ -184,7 +187,7 @@ public sealed class InsertMarks : Microsoft.Build.Utilities.Task
                     S(2)),
 
         // 3: the request parsed, the cookie unsealed, the request opened
-        Edit.Before("var signingKeyPair   = requestPacket.NTSRequestSignedResponse() is { Authenticated: true } signatureRequest",
+        Edit.Before("var isNtsRequest       = requestPacket.Extensions.Any(",
                     S(3)),
 
         // 4: the signing key chosen, the interleaved exchange begun
@@ -192,17 +195,18 @@ public sealed class InsertMarks : Microsoft.Build.Utilities.Task
                     S(4)),
 
         // 5: the response built and sealed; 6: serialised, about to send
-        Edit.Replace("await udpSocket.SendToAsync(\n" +
+        Edit.Replace("await activeSocket.SendToAsync(\n" +
                      "new ArraySegment<Byte>(responsePacket1.ToByteArray()),",
 
                      S(5) + "\n" +
                      "var markedResponse = responsePacket1.ToByteArray();\n" +
                      S(6) + "\n" +
-                     "await udpSocket.SendToAsync(\n" +
+                     "await activeSocket.SendToAsync(\n" +
                      "new ArraySegment<Byte>(markedResponse),"),
 
         // 7: sent
-        Edit.Before("exchange.RecordTransmission(NTPPacket.GetCurrentNTPTimestamp(TimeProvider));",
+        Edit.Before("if (!isNtsFailure)\n" +
+                    "exchange.RecordTransmission(NTPPacket.GetCurrentNTPTimestamp(TimeProvider));",
                     S(7)),
 
         // 8: the transmission recorded, the counters counted
