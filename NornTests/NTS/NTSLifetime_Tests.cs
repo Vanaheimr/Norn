@@ -62,23 +62,20 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
         }
 
-        private static NTSServer CreateLoopbackServer(out IPPort   TCPPort,
-                                                      out IPPort   UDPPort,
-                                                      DNSClient?   DNSClient = null)
-        {
+        /// <summary>
+        /// A server on the loopback interface, started. Through FreePorts.Start, so that a port
+        /// a parallel test took between being found free and being bound costs a retry rather
+        /// than the test; its ports are read from the server it returns.
+        /// </summary>
+        private static Task<NTSServer> StartLoopbackServer(DNSClient? DNSClient = null)
 
-            TCPPort = FreePorts.TCP();
-            UDPPort = FreePorts.UDP();
-
-            return new NTSServer(
-                       NTSKEPort:          TCPPort,
-                       NTSPort:            UDPPort,
-                       ListenIPAddress:    IPv4Address.Localhost,
-                       MasterKeysFilePath: null,
-                       DNSClient:          DNSClient
-                   );
-
-        }
+            => FreePorts.Start(() => new NTSServer(
+                                         NTSKEPort:          FreePorts.TCP(),
+                                         NTSPort:            FreePorts.UDP(),
+                                         ListenIPAddress:    IPv4Address.Localhost,
+                                         MasterKeysFilePath: null,
+                                         DNSClient:          DNSClient
+                                     ));
 
         private static Boolean IsCertificateDisposed(X509Certificate2 Certificate)
         {
@@ -107,13 +104,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         public async Task NTSServer_DisposeAsync_StopsServer_IsIdempotent_AndPreventsRestart()
         {
 
-            var server = CreateLoopbackServer(out var tcpPort, out var udpPort);
-            await server.Start();
+            var server = await StartLoopbackServer();
 
             using (var client = new NTSClient(
                                     IPv4Address.Localhost,
-                                    NTSKE_Port:                 tcpPort,
-                                    NTP_Port:                   udpPort,
+                                    NTSKE_Port:                 server.TCPPort,
+                                    NTP_Port:                   server.UDPPort,
                                     RemoteCertificateValidator: (_, _, _, _, _) => TLSValidationResult.Success(),
                                     Timeout:                    TimeSpan.FromSeconds(5)
                                 ))
@@ -143,9 +139,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
             using var sharedDns = new TrackingDNSClient();
 
-            await using (var server = CreateLoopbackServer(out _, out _, DNSClient: sharedDns))
+            await using (var server = await StartLoopbackServer(DNSClient: sharedDns))
             {
-                await server.Start();
             }
 
             Assert.That(sharedDns.DisposeCount, Is.EqualTo(0),
@@ -189,13 +184,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         public async Task NTSKEResult_Dispose_ReleasesCertificates_DeduplicatesLeaf_AndIsIdempotent()
         {
 
-            await using var server = CreateLoopbackServer(out var tcpPort, out var udpPort);
-            await server.Start();
+            await using var server = await StartLoopbackServer();
 
             await using var client = new NTSClient(
                                          IPv4Address.Localhost,
-                                         NTSKE_Port:                 tcpPort,
-                                         NTP_Port:                   udpPort,
+                                         NTSKE_Port:                 server.TCPPort,
+                                         NTP_Port:                   server.UDPPort,
                                          RemoteCertificateValidator: (_, _, _, _, _) => TLSValidationResult.Success(),
                                          Timeout:                    TimeSpan.FromSeconds(5)
                                      );
@@ -236,15 +230,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         public async Task MeasurementEngine_DisposeAsync_ClearsCache_DisposesCerts_AndKeepsCallerDNSClient()
         {
 
-            await using var server    = CreateLoopbackServer(out var tcpPort, out var udpPort);
-            await server.Start();
+            await using var server    = await StartLoopbackServer();
 
             using var sharedDns       = new TrackingDNSClient();
 
             var endpoint              = new NTSServerEndpoint(
                                             DomainName.Parse("127.0.0.1"),
-                                            NTSKEPort:                  tcpPort,
-                                            NTPPort:                    udpPort,
+                                            NTSKEPort:                  server.TCPPort,
+                                            NTPPort:                    server.UDPPort,
                                             RemoteCertificateValidator: (_, _, _, _, _) => TLSValidationResult.Success()
                                         );
 

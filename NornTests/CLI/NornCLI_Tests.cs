@@ -178,15 +178,26 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.CLI
         public async Task AServerToldToStopExitsWithSuccess()
         {
 
-            using var ctrlC = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            // The ports are found free and let go again before serve binds them, and another
+            // test assembly running at the same time may take one in between. serve answers
+            // that with 1, the exit code of a start that failed, so 1 is tried again on new
+            // ports; a server that cannot start at all still ends with 1 after the last try.
+            var exitCode = 1;
 
-            var exitCode = await Program.Run(
+            for (var attempt = 1; attempt <= 5 && exitCode == 1; attempt++)
+            {
+
+                using var ctrlC = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+
+                exitCode = await Program.Run(
                                      [ "serve",
                                        "--listen",   "127.0.0.1",
                                        "--port",     FreePorts.UDP().ToString(),
                                        "--ke-port",  FreePorts.TCP().ToString() ],
                                      ctrlC.Token
                                  );
+
+            }
 
             Assert.That(exitCode,                                                   Is.EqualTo(0));
 

@@ -124,13 +124,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
             for (var i = 0; i < 100; i++)
             {
 
-                var server = new NTSServer(
-                                 NTSPort:             FreePorts.UDP(),
-                                 MasterKeysFilePath:  null,
-                                 NTSKEOverTLS:        false
-                             );
-
-                await server.Start();
+                // FreePorts.Start rather than a bare Start: a hundred ports found free and let
+                // go again are a hundred chances for a parallel test to take one in between.
+                var server = await FreePorts.Start(() => new NTSServer(
+                                                             NTSPort:             FreePorts.UDP(),
+                                                             MasterKeysFilePath:  null,
+                                                             NTSKEOverTLS:        false
+                                                         ));
 
                 Assert.That(async () => await server.ShutdownAsync(), Throws.Nothing, $"the stop {i + 1} complained");
 
