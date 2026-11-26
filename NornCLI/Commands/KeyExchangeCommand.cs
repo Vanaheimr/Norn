@@ -93,23 +93,23 @@ namespace org.GraphDefined.Vanaheimr.Norn.CLI.Commands
                             "nothing about who answered.");
 
 
-            var client   = new NTSClient(
-                               hostname,
-                               NTSKE_Port:                  kePort,
-                               IPVersionPreference:         ipv4 ? IPVersionPreference.IPv4Only
-                                                                : ipv6 ? IPVersionPreference.IPv6Only
-                                                                       : null,
-                               Timeout:                     timeout,
-                               RemoteCertificateValidator:  insecure
-                                                                ? (sender, certificate, chain, tlsClient, policyErrors)
-                                                                      => TLSValidationResult.Success()
-                                                                : null
-                           );
+            await using var client = new NTSClient(
+                                         hostname,
+                                         NTSKE_Port:                  kePort,
+                                         IPVersionPreference:         ipv4 ? IPVersionPreference.IPv4Only
+                                                                          : ipv6 ? IPVersionPreference.IPv6Only
+                                                                                 : null,
+                                         Timeout:                     timeout,
+                                         RemoteCertificateValidator:  insecure
+                                                                          ? (sender, certificate, chain, tlsClient, policyErrors)
+                                                                                => TLSValidationResult.Success()
+                                                                          : null
+                                     );
 
-            var result   = await client.GetNTSKERecords(
-                                     RequestNTSPublicKeys:  publicKeys,
-                                     CancellationToken:     CancellationToken
-                                 );
+            using var result       = await client.GetNTSKERecords(
+                                               RequestNTSPublicKeys:  publicKeys,
+                                               CancellationToken:     CancellationToken
+                                           );
 
             var json     = new JObject(
                                new JProperty("host",     hostname.Trimmed),

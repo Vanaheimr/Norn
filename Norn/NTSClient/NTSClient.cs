@@ -41,7 +41,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
     /// The Network Time Security (NTS) client.
     /// </summary>
     /// 
-    public class NTSClient
+    public class NTSClient : IDisposable,
+                             IAsyncDisposable
     {
 
         #region Data
@@ -70,6 +71,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         private                Int64                    cookiesReceived        = 0;
         private                Int64                    cookiesConsumed        = 0;
         private                Int64                    droppedCookieCount     = 0;
+        private       readonly Boolean                  ownsDNSClient;
+        private                Int32                    disposed;
 
         #endregion
 
@@ -255,6 +258,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                          DomainName?                                                    RequestedNTPServer           = null)
         {
 
+            var resolvedOfferedAEADs = (OfferedAEADAlgorithms ?? NTSAEAD.Supported).
+                                           Where(NTSAEAD.IsSupported).
+                                           ToArray();
+
+            if (resolvedOfferedAEADs.Length == 0)
+                throw new ArgumentException("At least one of the offered AEAD algorithms has to be one this client can perform.",
+                                            nameof(OfferedAEADAlgorithms));
+
             this.Id                          = Id                  ?? RandomExtensions.RandomUInt16();
             this.Hostname                    = Hostname;
             this.NTSKE_Port                  = NTSKE_Port          ?? DefaultNTSKE_Port;
@@ -262,19 +273,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             this.RemoteCertificateValidator  = RemoteCertificateValidator;
             this.IPVersionPreference         = IPVersionPreference ?? Hermod.IPVersionPreference.PreferIPv6;
             this.Timeout                     = Timeout             ?? DefaultTimeout;
+            this.ownsDNSClient               = DNSClient is null;
             this.DNSClient                   = DNSClient           ?? new DNSClient();
             this.CookiePoolPolicy            = (CookiePoolPolicy   ?? new NTSCookiePoolPolicy()).Normalize();
             this.TimeProvider                = TimeProvider        ?? System.TimeProvider.System;
             this.InterleavedAssociation      = InterleavedMode ? new InterleavedAssociation() : null;
-            this.OfferedAEADAlgorithms       = (OfferedAEADAlgorithms ?? NTSAEAD.Supported).
-                                                   Where(NTSAEAD.IsSupported).
-                                                   ToArray();
+            this.OfferedAEADAlgorithms       = resolvedOfferedAEADs;
             this.CompliantAES128GCMSIVExporterContext = CompliantAES128GCMSIVExporterContext;
             this.RequestedNTPServer          = RequestedNTPServer;
-
-            if (this.OfferedAEADAlgorithms.Count == 0)
-                throw new ArgumentException("At least one of the offered AEAD algorithms has to be one this client can perform.",
-                                            nameof(OfferedAEADAlgorithms));
 
         }
 
@@ -502,6 +508,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                        TimeSpan?          Timeout                = null,
                                                        CancellationToken  CancellationToken      = default)
         {
+
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed) != 0, this);
 
             var timeout                  = Timeout ?? this.Timeout ?? DefaultTimeout;
             var totalStopwatch           = Stopwatch.StartNew();
@@ -1849,6 +1857,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                            CookiePoolDiagnostics:      CookiePoolDiagnostics
                        );
 
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed) != 0, this);
+
             var timeout = Timeout ?? this.Timeout ?? DefaultTimeout;
 
             #region Documentation
@@ -2816,6 +2826,52 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                            maxSec
                        )
                    );
+
+        }
+
+        #endregion
+
+
+        #region Dispose() / DisposeAsync()
+
+        /// <summary>
+        /// Release managed resources owned by this client (specifically an internally created <see cref="DNSClient"/>).
+        /// A caller-supplied <see cref="DNSClient"/> is not disposed.
+        /// </summary>
+        public void Dispose()
+        {
+            Dispose(Disposing: true);
+            GC.SuppressFinalize(this);
+        }
+
+        /// <summary>
+        /// Release managed resources owned by this client.
+        /// </summary>
+        protected virtual void Dispose(Boolean Disposing)
+        {
+
+            if (Interlocked.Exchange(ref disposed, 1) != 0)
+                return;
+
+            if (Disposing && ownsDNSClient)
+                DNSClient.Dispose();
+
+        }
+
+        /// <summary>
+        /// Release managed resources owned by this client asynchronously (specifically an internally created <see cref="DNSClient"/>).
+        /// A caller-supplied <see cref="DNSClient"/> is not disposed.
+        /// </summary>
+        public async ValueTask DisposeAsync()
+        {
+
+            if (Interlocked.Exchange(ref disposed, 1) != 0)
+                return;
+
+            if (ownsDNSClient)
+                await DNSClient.DisposeAsync().ConfigureAwait(false);
+
+            GC.SuppressFinalize(this);
 
         }
 

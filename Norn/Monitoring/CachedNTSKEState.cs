@@ -29,8 +29,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
     /// Cached NTS-KE state for a server. Stores the keys, cookies, and client instance
     /// to avoid repeated TLS handshakes for every NTP query.
     /// </summary>
-    public class CachedNTSKEState
+    public class CachedNTSKEState : IDisposable,
+                                    IAsyncDisposable
     {
+
+        private Int32 disposed;
 
         public NTSKE_Response?  NTSKEResponse      { get; set; }
         public NTSClient?       NTSClient          { get; set; }
@@ -73,6 +76,39 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                         ? now >= refreshAt
                         : now - LastRefreshed > MaxAge) ||
                    RemainingCookies <= 1;  // Keep 1 cookie in reserve
+
+        }
+
+        /// <summary>
+        /// Release the cached <see cref="NTSKEResponse"/> certificate handles and <see cref="NTSClient"/>.
+        /// </summary>
+        public void Dispose()
+        {
+
+            if (Interlocked.Exchange(ref disposed, 1) != 0)
+                return;
+
+            NTSKEResponse?.Dispose();
+            NTSClient?.    Dispose();
+            GC.SuppressFinalize(this);
+
+        }
+
+        /// <summary>
+        /// Release the cached <see cref="NTSKEResponse"/> certificate handles and <see cref="NTSClient"/> asynchronously.
+        /// </summary>
+        public async ValueTask DisposeAsync()
+        {
+
+            if (Interlocked.Exchange(ref disposed, 1) != 0)
+                return;
+
+            NTSKEResponse?.Dispose();
+
+            if (NTSClient is not null)
+                await NTSClient.DisposeAsync().ConfigureAwait(false);
+
+            GC.SuppressFinalize(this);
 
         }
 

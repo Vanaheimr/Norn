@@ -104,40 +104,41 @@ namespace org.GraphDefined.Vanaheimr.Norn.CLI.Commands
 
             #endregion
 
-            var client = new NTSClient(
-                             hostname,
-                             NTSKE_Port:                  kePort,
-                             NTP_Port:                    ntpPort,
-                             IPVersionPreference:         ipv4 ? IPVersionPreference.IPv4Only
-                                                              : ipv6 ? IPVersionPreference.IPv6Only
-                                                                     : null,
-                             Timeout:                     timeout,
-                             RemoteCertificateValidator:  insecure
-                                                              ? (sender, certificate, chain, tlsClient, policyErrors)
-                                                                    => TLSValidationResult.Success()
-                                                              : null,
-                             InterleavedMode:             interleaved
-                         );
+            await using var client = new NTSClient(
+                                         hostname,
+                                         NTSKE_Port:                  kePort,
+                                         NTP_Port:                    ntpPort,
+                                         IPVersionPreference:         ipv4 ? IPVersionPreference.IPv4Only
+                                                                          : ipv6 ? IPVersionPreference.IPv6Only
+                                                                                 : null,
+                                         Timeout:                     timeout,
+                                         RemoteCertificateValidator:  insecure
+                                                                          ? (sender, certificate, chain, tlsClient, policyErrors)
+                                                                                => TLSValidationResult.Success()
+                                                                          : null,
+                                         InterleavedMode:             interleaved
+                                     );
 
             #region The key exchange, unless this is plain NTP
 
             NTSKE_Response? keyExchange = null;
+            using NTSKEResult? keResult = plain
+                                              ? null
+                                              : await client.GetNTSKERecords(CancellationToken: CancellationToken);
 
             if (!plain)
             {
 
-                var keResult = await client.GetNTSKERecords(CancellationToken: CancellationToken);
-
-                if (!keResult.Success || keResult.Response is null)
+                if (keResult is null || !keResult.Success || keResult.Response is null)
                 {
 
-                    Output.Error($"the key exchange with {hostname.Trimmed} failed: {keResult.ErrorMessage}");
+                    Output.Error($"the key exchange with {hostname.Trimmed} failed: {keResult?.ErrorMessage}");
                     Output.Json(new JObject(
                         new JProperty("host",     hostname.Trimmed),
                         new JProperty("success",  false),
                         new JProperty("stage",    "nts-ke"),
-                        new JProperty("error",    keResult.ErrorMessage),
-                        new JProperty("category", keResult.ErrorCategory.ToString())
+                        new JProperty("error",    keResult?.ErrorMessage),
+                        new JProperty("category", (keResult?.ErrorCategory ?? NTSKEErrorCategory.Unknown).ToString())
                     ));
 
                     return 1;

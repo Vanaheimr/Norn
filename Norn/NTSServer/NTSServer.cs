@@ -47,7 +47,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
     /// A Network Time Secure (NTS) Server.
     /// It will serve a NTS-KeyEstablishment (NTS-KE) TLS Server and a NTP UDP Server.
     /// </summary>
-    public class NTSServer
+    public class NTSServer : IDisposable,
+                             IAsyncDisposable
     {
 
         #region Data
@@ -166,6 +167,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         private readonly         SemaphoreSlim                            ntpRequestSemaphore;
         private readonly         SemaphoreSlim                            ntskeConnectionSemaphore;
         private readonly         SemaphoreSlim                            sshNtskeConnectionSemaphore;
+        private readonly         Boolean                                  ownsDNSClient;
+        private                  Int32                                    disposed;
         private readonly         ConcurrentDictionary<System.Net.IPAddress, Int32>  ntskeConnectionsPerClient = [];
         private readonly         Boolean                                  advertiseExternalURLs;
         private volatile         TLSIdentity                              tlsIdentity;
@@ -571,6 +574,32 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 throw new ArgumentException("An SSH listener for NTS-KE needs an authenticator that says who may log in.",
                                             nameof(SSHAuthenticator));
 
+            // Validate caller arguments before allocating owned disposable resources
+            // (DNSClient, SemaphoreSlim) so failed construction cannot leak them.
+            var resolvedSupportedAEADs = (SupportedAEADAlgorithms ?? NTSAEAD.Supported).
+                                             Where(NTSAEAD.IsSupported).
+                                             ToArray();
+
+            if (resolvedSupportedAEADs.Length == 0)
+                throw new ArgumentException("At least one of the given AEAD algorithms has to be one this server can perform.",
+                                            nameof(SupportedAEADAlgorithms));
+
+            var resolvedPublicKeyLeadTime = PublicKeyLeadTime ?? TimeSpan.FromDays(1);
+
+            if (resolvedPublicKeyLeadTime < TimeSpan.Zero)
+                throw new ArgumentOutOfRangeException(nameof(PublicKeyLeadTime),
+                                                      "The lead time of a public key must not be negative.");
+
+            this.PublicKeyLeadTime            = resolvedPublicKeyLeadTime;
+            this.supportedAEADAlgorithms      = resolvedSupportedAEADs;
+
+            foreach (var keyPair in (KeyPair is not null ? [ KeyPair ] : Array.Empty<KeyPair>()).Concat(KeyPairs ?? []))
+            {
+                if (!AddKeyPair(keyPair))
+                    throw new ArgumentException($"There are two signing keys with the id {keyPair.Id}.",
+                                                nameof(KeyPairs));
+            }
+
             this.SSHPort                      = SSHPort;
             this.SSHHostKeys                  = SSHPort.HasValue
                                                     ? SSHHostKeys?.ToArray() is { Length: > 0 } hostKeys
@@ -586,6 +615,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             this.PlainNTP                     = PlainNTP;
             this.UDPPort                      = NTSPort                      ?? IPPort.NTP;
             this.ExternalURLs                 = ExternalURLs                 ?? [ URL.Parse($"udp://localhost:{this.UDPPort}") ];
+            this.ownsDNSClient                = DNSClient is null;
             this.DNSClient                    = DNSClient                    ?? new DNSClient();
             // IPv4 0.0.0.0 unless asked otherwise. IPvXAddress.Any would listen on both families
             // at once, which is often what an operator wants, but it needs a working IPv6 stack
@@ -646,31 +676,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             this.RateLimiter                  = RateLimiter;
             this.AccessList                   = AccessList                   ?? NTPAccessList.Everyone;
-
-            // What this server will agree to. Defaults to NTSAEAD.Supported, which is narrower
-            // than what is implemented — see there. Anything named that cannot be performed is
-            // dropped rather than honoured: agreeing to an algorithm and then failing every
-            // packet is the one outcome worse than refusing it.
-            this.supportedAEADAlgorithms      = (SupportedAEADAlgorithms ?? NTSAEAD.Supported).
-                                                    Where(NTSAEAD.IsSupported).
-                                                    ToArray();
-
-            if (this.supportedAEADAlgorithms.Length == 0)
-                throw new ArgumentException("At least one of the given AEAD algorithms has to be one this server can perform.",
-                                            nameof(SupportedAEADAlgorithms));
-
-            this.PublicKeyLeadTime            = PublicKeyLeadTime ?? TimeSpan.FromDays(1);
-
-            if (this.PublicKeyLeadTime < TimeSpan.Zero)
-                throw new ArgumentOutOfRangeException(nameof(PublicKeyLeadTime),
-                                                      "The lead time of a public key must not be negative.");
-
-            foreach (var keyPair in (KeyPair is not null ? [ KeyPair ] : Array.Empty<KeyPair>()).Concat(KeyPairs ?? []))
-            {
-                if (!AddKeyPair(keyPair))
-                    throw new ArgumentException($"There are two signing keys with the id {keyPair.Id}.",
-                                                nameof(KeyPairs));
-            }
 
             // The master keys an earlier run of this server wrote are taken up again, so that the
             // cookies its clients still hold stay good across a restart. A key is forgotten by the
@@ -1246,7 +1251,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             }
             finally
             {
-                sshNtskeConnectionSemaphore.Release();
+                try { sshNtskeConnectionSemaphore.Release(); } catch (ObjectDisposedException) { }
             }
 
         }
@@ -1855,6 +1860,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public async Task Start(CancellationToken CancellationToken = default)
         {
 
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed) != 0, this);
+
             if (udpSocket is not null || tcpSocket is not null)
                 return;
 
@@ -2158,7 +2165,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                             }
                             finally
                             {
-                                ntpRequestSemaphore.Release();
+                                try { ntpRequestSemaphore.Release(); } catch (ObjectDisposedException) { }
                             }
 
                         });
@@ -2400,7 +2407,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                 {
                                     try { clientSocket.Shutdown(SocketShutdown.Both); } catch { }
                                     clientSocket.Close();
-                                    ntskeConnectionSemaphore.Release();
+                                    try { ntskeConnectionSemaphore.Release(); } catch (ObjectDisposedException) { }
                                     ReleaseNTSKEClient(ntskeClient);
                                 }
 
@@ -2541,8 +2548,74 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             cts?.Dispose();
             cts          = null;
+            try { udpSocket?.Dispose(); } catch { }
+            try { tcpSocket?.Dispose(); } catch { }
+            udpSocket    = null;
+            tcpSocket    = null;
             udpLoopTask  = null;
             tcpLoopTask  = null;
+
+        }
+
+        #endregion
+
+        #region Dispose() / DisposeAsync()
+
+        /// <summary>
+        /// Stop the server and release all owned resources (sockets, semaphores, and an internally created <see cref="DNSClient"/>).
+        /// A caller-supplied <see cref="DNSClient"/> is not disposed.
+        /// </summary>
+        public void Dispose()
+        {
+            Dispose(Disposing: true);
+            GC.SuppressFinalize(this);
+        }
+
+        /// <summary>
+        /// Release managed resources owned by this server.
+        /// </summary>
+        protected virtual void Dispose(Boolean Disposing)
+        {
+
+            if (System.Threading.Interlocked.Exchange(ref disposed, 1) != 0)
+                return;
+
+            if (Disposing)
+            {
+
+                Shutdown();
+
+                ntpRequestSemaphore.        Dispose();
+                ntskeConnectionSemaphore.   Dispose();
+                sshNtskeConnectionSemaphore.Dispose();
+
+                if (ownsDNSClient)
+                    DNSClient.Dispose();
+
+            }
+
+        }
+
+        /// <summary>
+        /// Stop the server asynchronously and release all owned resources (sockets, semaphores, and an internally created <see cref="DNSClient"/>).
+        /// A caller-supplied <see cref="DNSClient"/> is not disposed.
+        /// </summary>
+        public async ValueTask DisposeAsync()
+        {
+
+            if (System.Threading.Interlocked.Exchange(ref disposed, 1) != 0)
+                return;
+
+            await ShutdownAsync().ConfigureAwait(false);
+
+            ntpRequestSemaphore.        Dispose();
+            ntskeConnectionSemaphore.   Dispose();
+            sshNtskeConnectionSemaphore.Dispose();
+
+            if (ownsDNSClient)
+                await DNSClient.DisposeAsync().ConfigureAwait(false);
+
+            GC.SuppressFinalize(this);
 
         }
 

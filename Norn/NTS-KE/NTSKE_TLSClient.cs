@@ -393,89 +393,104 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             if (certList is null || certList.Length == 0)
                 throw new TlsFatalAlert(AlertDescription.certificate_unknown);
 
-            var remoteCertificate = X509CertificateLoader.LoadCertificate(certList[0].GetEncoded());
             var certificateChain  = certList.
                                         Select(certificate => X509CertificateLoader.LoadCertificate(certificate.GetEncoded())).
                                         ToArray();
+            var remoteCertificate = certificateChain[0];
+            var transferred       = false;
 
-            // Validate the chain with .NET's X509Chain, asking about revocation only where no
-            // validator of one's own is there to ask - see ChainPolicyFor.
-            using var chain = new X509Chain {
-                                  ChainPolicy = ChainPolicyFor(AskHere: remoteCertificateValidator is null)
-                              };
-
-
-            foreach (var cert in certificateChain.Skip(1))
-                chain.ChainPolicy.ExtraStore.Add(cert);
-
-
-            var policyErrors = SslPolicyErrors.None;
-
-            // Validate the chain via the leafCertificate.
-            // Some platforms (notably Windows CryptoAPI on Ed25519-signed certificates) throw
-            // CryptographicException from X509Chain.Build when the signature algorithm is not
-            // supported by the OS chain engine. Treat that as a chain error rather than letting
-            // it escape as TLS internal_error(80), so TLSInfo is still populated and a custom
-            // validator (e.g. certificate pinning) can still decide.
-            Boolean chainBuilt;
             try
             {
-                chainBuilt = chain.Build(remoteCertificate);
-            }
-            catch (System.Security.Cryptography.CryptographicException)
-            {
-                chainBuilt    = false;
-                policyErrors |= SslPolicyErrors.RemoteCertificateChainErrors;
-            }
 
-            if (ChainErrorsOf(chainBuilt, chain.ChainStatus.Select(status => status.Status)))
-                policyErrors |= SslPolicyErrors.RemoteCertificateChainErrors;
+                // Validate the chain with .NET's X509Chain, asking about revocation only where no
+                // validator of one's own is there to ask - see ChainPolicyFor.
+                using var chain = new X509Chain {
+                                      ChainPolicy = ChainPolicyFor(AskHere: remoteCertificateValidator is null)
+                                  };
 
-            if (NTSKETLSClient.ExpectedIPAddress is { } expectedIP)
-            {
-                if (!remoteCertificate.MatchesIPAddress(expectedIP.ToDotNet()))
+
+                foreach (var cert in certificateChain.Skip(1))
+                    chain.ChainPolicy.ExtraStore.Add(cert);
+
+
+                var policyErrors = SslPolicyErrors.None;
+
+                // Validate the chain via the leafCertificate.
+                // Some platforms (notably Windows CryptoAPI on Ed25519-signed certificates) throw
+                // CryptographicException from X509Chain.Build when the signature algorithm is not
+                // supported by the OS chain engine. Treat that as a chain error rather than letting
+                // it escape as TLS internal_error(80), so TLSInfo is still populated and a custom
+                // validator (e.g. certificate pinning) can still decide.
+                Boolean chainBuilt;
+                try
+                {
+                    chainBuilt = chain.Build(remoteCertificate);
+                }
+                catch (System.Security.Cryptography.CryptographicException)
+                {
+                    chainBuilt    = false;
+                    policyErrors |= SslPolicyErrors.RemoteCertificateChainErrors;
+                }
+
+                if (ChainErrorsOf(chainBuilt, chain.ChainStatus.Select(status => status.Status)))
+                    policyErrors |= SslPolicyErrors.RemoteCertificateChainErrors;
+
+                if (NTSKETLSClient.ExpectedIPAddress is { } expectedIP)
+                {
+                    if (!remoteCertificate.MatchesIPAddress(expectedIP.ToDotNet()))
+                        policyErrors |= SslPolicyErrors.RemoteCertificateNameMismatch;
+                }
+                else if (NTSKETLSClient.ExpectedHostname is not null &&
+                         !HostnameMatches(remoteCertificate, NTSKETLSClient.ExpectedHostname.ToString()))
+                {
                     policyErrors |= SslPolicyErrors.RemoteCertificateNameMismatch;
-            }
-            else if (NTSKETLSClient.ExpectedHostname is not null &&
-                     !HostnameMatches(remoteCertificate, NTSKETLSClient.ExpectedHostname.ToString()))
-            {
-                policyErrors |= SslPolicyErrors.RemoteCertificateNameMismatch;
-            }
+                }
 
-            // Everything the validation found, kept before anything is decided on it - see
-            // NTSKE_TLSInfo. The chain as built here rather than as sent, because its end is
-            // the root this machine judged the certificate by; and copied, because the chain
-            // disposes of its own certificates with itself.
-            NTSKETLSClient.SetCertificateInfo(
-                remoteCertificate,
-                certificateChain,
-                policyErrors,
-                ValidatedChain:   [.. chain.ChainElements.Select(element => X509CertificateLoader.LoadCertificate(element.Certificate.RawData))],
-                ChainStatus:      [.. chain.ChainStatus.  Select(status  => status.Status)],
-                CheckedHostname:  NTSKETLSClient.ExpectedHostname,
-                RevocationMode:   chain.ChainPolicy.RevocationMode
-            );
+                // Everything the validation found, kept before anything is decided on it - see
+                // NTSKE_TLSInfo. The chain as built here rather than as sent, because its end is
+                // the root this machine judged the certificate by; and copied, because the chain
+                // disposes of its own certificates with itself.
+                NTSKETLSClient.SetCertificateInfo(
+                    remoteCertificate,
+                    certificateChain,
+                    policyErrors,
+                    ValidatedChain:   [.. chain.ChainElements.Select(element => X509CertificateLoader.LoadCertificate(element.Certificate.RawData))],
+                    ChainStatus:      [.. chain.ChainStatus.  Select(status  => status.Status)],
+                    CheckedHostname:  NTSKETLSClient.ExpectedHostname,
+                    RevocationMode:   chain.ChainPolicy.RevocationMode
+                );
+                transferred = true;
 
-            if (remoteCertificateValidator is not null)
-            {
+                if (remoteCertificateValidator is not null)
+                {
 
-                var tlsValidationResult = remoteCertificateValidator(
-                                               this,
-                                               remoteCertificate,
-                                               chain,
-                                               NTSKETLSClient,
-                                               policyErrors
-                                           );
+                    var tlsValidationResult = remoteCertificateValidator(
+                                                   this,
+                                                   remoteCertificate,
+                                                   chain,
+                                                   NTSKETLSClient,
+                                                   policyErrors
+                                               );
 
-                if (!tlsValidationResult.IsValid)
+                    if (!tlsValidationResult.IsValid)
+                        throw new TlsFatalAlert(AlertDescription.certificate_unknown);
+
+                    return;
+
+                }
+
+                if (policyErrors != SslPolicyErrors.None)
                     throw new TlsFatalAlert(AlertDescription.certificate_unknown);
 
-                return;
-
             }
-
-            if (policyErrors != SslPolicyErrors.None)
-                throw new TlsFatalAlert(AlertDescription.certificate_unknown);
+            finally
+            {
+                if (!transferred)
+                {
+                    foreach (var cert in certificateChain)
+                        cert.Dispose();
+                }
+            }
 
         }
 

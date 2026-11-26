@@ -52,9 +52,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
     public class MeasurementEngine(MonitoringConfig  Configuration,
                                    TimeProvider?     TimeProvider   = null,
                                    Random?           Random         = null)
+
+        : IDisposable,
+          IAsyncDisposable
+
     {
 
         #region Data
+
+        private Int32 disposed;
 
         private readonly ConcurrentDictionary<DomainName, CachedNTSKEState>  ntskeCache    = [];
         private readonly MonitoringConfig                                    config        = Configuration;
@@ -143,8 +149,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         /// <param name="Hostname">The server whose key exchange to forget.</param>
         /// <returns>Whether there was one.</returns>
         public Boolean ForgetKeyExchange(DomainName Hostname)
+        {
 
-            => ntskeCache.TryRemove(Hostname, out _);
+            if (!ntskeCache.TryRemove(Hostname, out var removed))
+                return false;
+
+            removed.NTSKEResponse?.Dispose();
+            return true;
+
+        }
 
         #endregion
 
@@ -584,6 +597,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                 var errorMessage  = ntskeResult.ErrorMessage ?? ntskeResponse?.ErrorMessage ?? "NTS-KE failed.";
                 var errorCategory = MapNTSKEErrorCategory(ntskeResult.ErrorCategory);
 
+                ntskeResult.Dispose();
+                ntsClient.  Dispose();
+
                 return new NTSKEMeasurementResult {
                            Success                 = false,
                            TotalDuration           = totalDuration,
@@ -606,16 +622,21 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
             ntsClient.SeedCookies(ntskeResponse);
             var cookiePoolDiagnostics = ntsClient.CookiePoolDiagnostics;
 
-            // Cache the NTS-KE state
+            // Cache the NTS-KE state and dispose certificate handles from any replaced entry.
             var refreshed = timeProvider.GetUtcNow();
+            var newState  = new CachedNTSKEState {
+                                NTSKEResponse     = ntskeResponse,
+                                NTSClient         = ntsClient,
+                                LastRefreshed     = refreshed,
+                                RefreshAt         = refreshed + RefreshDelay(Server),
+                                RemainingCookies  = ToByteCookieCount(cookiePoolDiagnostics.AvailableCookieCount)
+                            };
 
-            ntskeCache[Server.Hostname] = new CachedNTSKEState {
-                                              NTSKEResponse     = ntskeResponse,
-                                              NTSClient         = ntsClient,
-                                              LastRefreshed     = refreshed,
-                                              RefreshAt         = refreshed + RefreshDelay(Server),
-                                              RemainingCookies  = ToByteCookieCount(cookiePoolDiagnostics.AvailableCookieCount)
-                                          };
+            ntskeCache.TryGetValue(Server.Hostname, out var previousState);
+            ntskeCache[Server.Hostname] = newState;
+
+            if (previousState is not null && !ReferenceEquals(previousState.NTSKEResponse, ntskeResponse))
+                previousState.NTSKEResponse?.Dispose();
 
             return new NTSKEMeasurementResult {
                        Success                 = true,
@@ -715,12 +736,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
             }
             catch (OperationCanceledException) when (CancellationToken.IsCancellationRequested)
             {
+                result?.  Dispose();
+                ntsClient.Dispose();
                 throw;
             }
             catch (Exception e)
             {
 
                 sw.Stop();
+                result?.  Dispose();
+                ntsClient.Dispose();
 
                 return new NTSKEMeasurementResult {
                            Success                 = false,
@@ -746,6 +771,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
             {
 
                 var errorMessage  = result?.ErrorMessage ?? ntskeResponse?.ErrorMessage ?? "NTS-KE over SSH failed.";
+                var errorCategory = result?.ErrorCategory == NTSKEErrorCategory.SSHSubsystem
+                                        ? MonitoringErrorCategory.SSH
+                                        : MapNTSKEErrorCategory(result?.ErrorCategory ?? NTSKEErrorCategory.Unknown);
+
+                result?.  Dispose();
+                ntsClient.Dispose();
 
                 return new NTSKEMeasurementResult {
                            Success                 = false,
@@ -753,9 +784,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                            NTSKEProtocolDuration   = ntskeDuration,
                            ErrorMessage            = Error.Create(errorMessage),
                            SSHHostKey              = hostKey,
-                           ErrorCategory           = result?.ErrorCategory == NTSKEErrorCategory.SSHSubsystem
-                                                         ? MonitoringErrorCategory.SSH
-                                                         : MapNTSKEErrorCategory(result?.ErrorCategory ?? NTSKEErrorCategory.Unknown)
+                           ErrorCategory           = errorCategory
                        };
 
             }
@@ -764,15 +793,20 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
             var cookiePoolDiagnostics = ntsClient.CookiePoolDiagnostics;
 
             var refreshed = timeProvider.GetUtcNow();
+            var newState  = new CachedNTSKEState {
+                                NTSKEResponse     = ntskeResponse,
+                                NTSClient         = ntsClient,
+                                LastRefreshed     = refreshed,
+                                RefreshAt         = refreshed + RefreshDelay(Server),
+                                RemainingCookies  = ToByteCookieCount(cookiePoolDiagnostics.AvailableCookieCount),
+                                SSHHostKey        = hostKey
+                            };
 
-            ntskeCache[Server.Hostname] = new CachedNTSKEState {
-                                              NTSKEResponse     = ntskeResponse,
-                                              NTSClient         = ntsClient,
-                                              LastRefreshed     = refreshed,
-                                              RefreshAt         = refreshed + RefreshDelay(Server),
-                                              RemainingCookies  = ToByteCookieCount(cookiePoolDiagnostics.AvailableCookieCount),
-                                              SSHHostKey        = hostKey
-                                          };
+            ntskeCache.TryGetValue(Server.Hostname, out var previousState);
+            ntskeCache[Server.Hostname] = newState;
+
+            if (previousState is not null && !ReferenceEquals(previousState.NTSKEResponse, ntskeResponse))
+                previousState.NTSKEResponse?.Dispose();
 
             return new NTSKEMeasurementResult {
                        Success                 = true,
@@ -1643,6 +1677,48 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
             => TimeSpan.FromTicks(
                    (Int64) (ticks * ((Double) TimeSpan.TicksPerSecond / Stopwatch.Frequency))
                );
+
+        #endregion
+
+        #region Dispose() / DisposeAsync()
+
+        /// <summary>
+        /// Dispose all cached NTS-KE states (releasing native certificate handles and cached <see cref="NTSClient"/> instances).
+        /// </summary>
+        public void Dispose()
+        {
+
+            if (Interlocked.Exchange(ref disposed, 1) != 0)
+                return;
+
+            foreach (var key in ntskeCache.Keys.ToArray())
+            {
+                if (ntskeCache.TryRemove(key, out var state))
+                    state.Dispose();
+            }
+
+            GC.SuppressFinalize(this);
+
+        }
+
+        /// <summary>
+        /// Asynchronously dispose all cached NTS-KE states.
+        /// </summary>
+        public async ValueTask DisposeAsync()
+        {
+
+            if (Interlocked.Exchange(ref disposed, 1) != 0)
+                return;
+
+            foreach (var key in ntskeCache.Keys.ToArray())
+            {
+                if (ntskeCache.TryRemove(key, out var state))
+                    await state.DisposeAsync().ConfigureAwait(false);
+            }
+
+            GC.SuppressFinalize(this);
+
+        }
 
         #endregion
 

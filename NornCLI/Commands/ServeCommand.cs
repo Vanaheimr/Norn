@@ -179,7 +179,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.CLI.Commands
 
             #endregion
 
-            var server = new NTSServer(
+            await using var server = new NTSServer(
 
                              NTSKEPort:            kePort,
                              NTSPort:              ntpPort,

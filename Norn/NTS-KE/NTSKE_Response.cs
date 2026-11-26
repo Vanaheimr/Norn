@@ -31,8 +31,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
     /// <summary>
     /// The Network Time Security Key Establishment (NTS-KE) response.
     /// </summary>
-    public class NTSKE_Response
+    public class NTSKE_Response : IDisposable
     {
+
+        #region Data
+
+        private Int32 disposed;
+
+        #endregion
 
         #region Properties
 
@@ -326,6 +332,25 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                              : ""
 
                      );
+
+        #endregion
+
+        #region Dispose()
+
+        /// <summary>
+        /// Release any native certificate handles attached to <see cref="TLSInfo"/>.
+        /// Idempotent and safe to call multiple times.
+        /// </summary>
+        public void Dispose()
+        {
+
+            if (Interlocked.Exchange(ref disposed, 1) != 0)
+                return;
+
+            TLSInfo?.Dispose();
+            GC.SuppressFinalize(this);
+
+        }
 
         #endregion
 

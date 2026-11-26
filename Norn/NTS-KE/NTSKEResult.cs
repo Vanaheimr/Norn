@@ -21,8 +21,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
     /// <summary>
     /// A structured result for one NTS-KE exchange.
     /// </summary>
-    public class NTSKEResult
+    public class NTSKEResult : IDisposable
     {
+
+        #region Data
+
+        private Int32 disposed;
+
+        #endregion
 
         #region Properties
 
@@ -201,6 +207,26 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #endregion
 
+
+        #region Dispose()
+
+        /// <summary>
+        /// Release any native certificate handles held by <see cref="TLSInfo"/> and <see cref="Response"/>.
+        /// Idempotent and safe to call multiple times.
+        /// </summary>
+        public void Dispose()
+        {
+
+            if (Interlocked.Exchange(ref disposed, 1) != 0)
+                return;
+
+            TLSInfo?.Dispose();
+            Response?.Dispose();
+            GC.SuppressFinalize(this);
+
+        }
+
+        #endregion
 
     }
 

@@ -47,7 +47,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                IEnumerable<X509ChainStatusFlags>? ChainStatus                   = null,
                                DomainName?                        CheckedHostname               = null,
                                X509RevocationMode?                RevocationMode                = null)
+
+        : IDisposable
+
     {
+
+        #region Data
+
+        private Int32 disposed;
+
+        #endregion
 
         #region Properties
 
@@ -148,6 +157,38 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                    CheckedHostname,
                    RevocationMode
                );
+
+        #endregion
+
+        #region Dispose()
+
+        /// <summary>
+        /// Release every native <see cref="X509Certificate2"/> handle held by this TLS info snapshot.
+        /// Idempotent and deduplicated by reference so shared leaf/chain instances are disposed once.
+        /// </summary>
+        public void Dispose()
+        {
+
+            if (Interlocked.Exchange(ref disposed, 1) != 0)
+                return;
+
+            var uniqueCerts = new HashSet<X509Certificate2>(ReferenceEqualityComparer.Instance);
+
+            if (ServerCertificate is not null)
+                uniqueCerts.Add(ServerCertificate);
+
+            foreach (var cert in CertificateChain)
+                uniqueCerts.Add(cert);
+
+            foreach (var cert in ValidatedChain)
+                uniqueCerts.Add(cert);
+
+            foreach (var cert in uniqueCerts)
+                cert.Dispose();
+
+            GC.SuppressFinalize(this);
+
+        }
 
         #endregion
 
