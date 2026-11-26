@@ -108,6 +108,24 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                 var keyId                   = (UInt16) ((Data[0] << 8) | Data[1]);
                 var signatureLength         = (UInt16) ((Data[2] << 8) | Data[3]);
 
+                var paddedSignatureLength   = (signatureLength + 3) & ~3;
+
+                if (4 + signatureLength > Data.Length ||
+                    4 + paddedSignatureLength > Data.Length)
+                {
+                    ErrorResponse = $"NTS Signed Response extension declares {signatureLength} signature bytes, exceeding the {Data.Length - 4}-byte payload!";
+                    return false;
+                }
+
+                for (var i = 4 + signatureLength; i < Data.Length; i++)
+                {
+                    if (Data[i] != 0)
+                    {
+                        ErrorResponse = "NTS Signed Response extension contains non-zero trailing padding!";
+                        return false;
+                    }
+                }
+
                 var signature               = new Byte[signatureLength];
                 if (signatureLength > 0)
                     Buffer.BlockCopy(Data, 4, signature, 0, signatureLength);
@@ -143,7 +161,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                                                       Byte[]   Data)
         {
 
-            var ellipticCurve  = SecNamedCurves.GetByName(KeyPair.EllipticCurve);
+            var ellipticCurve  = SecNamedCurves.GetByName(KeyPair.EllipticCurve)
+                                     ?? throw new ArgumentException($"Unknown elliptic curve '{KeyPair.EllipticCurve}'!",
+                                                                    nameof(KeyPair));
 
             var domainParams   = new ECDomainParameters(
                                      ellipticCurve.Curve,
@@ -186,10 +206,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
             try
             {
 
-                var data            = new NTPPacket(
-                                          NTPResponse,
-                                          NTPResponse.Extensions.Where(e => e is not NTSCookieExtension && e is not NTSSignedResponseExtension)
-                                      ).ToByteArray();
+                var data            = ExtractSignedPrefix(NTPResponse)
+                                          ?? new NTPPacket(
+                                                 NTPResponse,
+                                                 NTPResponse.Extensions.Where(e => !e.Encrypted && e is not NTSSignedResponseExtension)
+                                             ).ToByteArray();
 
                 var ellipticCurve   = SecNamedCurves.GetByName(PublicKey.EllipticCurve);
 
@@ -220,6 +241,45 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                 // and not an exception in the caller.
                 return false;
             }
+
+        }
+
+        private static Byte[]? ExtractSignedPrefix(NTPPacket Packet)
+        {
+
+            var raw = Packet.ResponseBytes;
+
+            if (raw is null || raw.Length < 48)
+                return null;
+
+            var offset = 48;
+
+            while (offset + 4 <= raw.Length)
+            {
+
+                var type   = (ExtensionTypes) ((raw[offset]     << 8) | raw[offset + 1]);
+                var length = (UInt16)         ((raw[offset + 2] << 8) | raw[offset + 3]);
+
+                if (length < 4 || offset + length > raw.Length)
+                    return null;
+
+                if (type == ExtensionTypes.NTSSignedResponse)
+                {
+                    // Must be the final extension on the wire so no unsigned trailing extensions
+                    // can be appended after the signature.
+                    if (offset + length != raw.Length)
+                        return null;
+
+                    var prefix = new Byte[offset];
+                    Buffer.BlockCopy(raw, 0, prefix, 0, offset);
+                    return prefix;
+                }
+
+                offset += length;
+
+            }
+
+            return null;
 
         }
 

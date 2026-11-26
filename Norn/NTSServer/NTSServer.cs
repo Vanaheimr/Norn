@@ -164,6 +164,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         private readonly         SemaphoreSlim                            ntpRequestSemaphore;
         private readonly         SemaphoreSlim                            ntskeConnectionSemaphore;
+        private readonly         SemaphoreSlim                            sshNtskeConnectionSemaphore;
         private readonly         ConcurrentDictionary<System.Net.IPAddress, Int32>  ntskeConnectionsPerClient = [];
         private readonly         Boolean                                  advertiseExternalURLs;
         private readonly         X509Certificate?                         tlsCertificate;
@@ -589,6 +590,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             this.advertiseExternalURLs        = ExternalURLs is not null;
             this.ntpRequestSemaphore          = new SemaphoreSlim(this.MaxConcurrentNTPRequests);
             this.ntskeConnectionSemaphore     = new SemaphoreSlim(this.MaxConcurrentNTSKEConnections);
+            this.sshNtskeConnectionSemaphore  = new SemaphoreSlim(this.MaxConcurrentNTSKEConnections);
             if ((TLSCertificate is null) != (TLSPrivateKey is null))
                 throw new ArgumentException("TLS certificate and private key must be provided together.");
 
@@ -894,11 +896,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                        );
 
             // § 4.1.3: "Clients MUST NOT include Error records in their request", § 4.1.4
-            // says the same of Warning records, and § 4.1.6 of the cookies: "Clients MUST NOT
-            // send records of this type." These are the three a server speaks with.
+            // says the same of Warning records, § 4.1.6 of cookies, and NTSPublicKey is
+            // likewise server-to-client only.
             var serversOnly = records.FirstOrDefault(record => record.Type is NTSKE_RecordTypes.Error
                                                                            or NTSKE_RecordTypes.Warning
-                                                                           or NTSKE_RecordTypes.NewCookieForNTPv4);
+                                                                           or NTSKE_RecordTypes.NewCookieForNTPv4
+                                                                           or NTSKE_RecordTypes.NTSPublicKey);
 
             if (serversOnly is not null)
                 return NTSKENegotiation.Refuse(
@@ -998,7 +1001,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             // TLS-based implementations, and NTS-KE over SSH always uses § 5.1's context.
             var compliantAES128GCMSIVExporterContext = !OverSSH &&
                                                        negotiatedAEAD == AEADAlgorithms.AES_128_GCM_SIV &&
-                                                       records.Any(record => record.Type == NTSKE_RecordTypes.CompliantAES128GCMSIVExporterContext);
+                                                       records.Any(record => record.Type == NTSKE_RecordTypes.CompliantAES128GCMSIVExporterContext &&
+                                                                             record.Body.Length == 0);
 
             return NTSKENegotiation.Accept(
                        negotiatedProtocol,
@@ -1186,7 +1190,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             System.Threading.Interlocked.Increment(ref ntskeConnectionsAccepted);
 
-            if (!await ntskeConnectionSemaphore.WaitAsync(0, CancellationToken).ConfigureAwait(false))
+            if (!await sshNtskeConnectionSemaphore.WaitAsync(0, CancellationToken).ConfigureAwait(false))
             {
                 System.Threading.Interlocked.Increment(ref ntskeConnectionsRejected);
                 DebugX.Log($"Closing NTS-KE over SSH from {Context.Session.Peer}: too many concurrent key exchanges.");
@@ -1251,7 +1255,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             }
             finally
             {
-                ntskeConnectionSemaphore.Release();
+                sshNtskeConnectionSemaphore.Release();
             }
 
         }
@@ -2419,10 +2423,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             if (SSHPort.HasValue)
             {
 
-                sshServer = new SshServer(
+                                sshServer = new SshServer(
                                 new SshServerOptions {
                                     HostKeys             = SSHHostKeys,
                                     Authenticator        = sshAuthenticator!,
+                                    Limits               = new SshServerLimits {
+                                                               IdleTimeout = TimeSpan.FromMinutes(15)
+                                                           },
 
                                     // RFC 8633 § 5.1, as soon as the connection is accepted: a denied
                                     // address is closed before the version exchange, so it learns as

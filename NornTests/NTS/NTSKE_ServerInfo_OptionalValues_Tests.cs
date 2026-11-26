@@ -72,6 +72,54 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
         }
 
+
+        [Test]
+        public void EqualServerInfosCompareEqualByValue_AndEmptyUrlsDoNotCrashToString()
+        {
+
+            var a = new NTSKE_ServerInfo(
+                        [ 1, 2, 3 ],
+                        [ 4, 5, 6 ],
+                        [ new Byte[] { 7, 8, 9 } ],
+                        [],
+                        AEADAlgorithm: AEADAlgorithms.AES_SIV_CMAC_256
+                    );
+
+            var b = new NTSKE_ServerInfo(
+                        [ 1, 2, 3 ],
+                        [ 4, 5, 6 ],
+                        [ new Byte[] { 7, 8, 9 } ],
+                        [],
+                        AEADAlgorithm: AEADAlgorithms.AES_SIV_CMAC_256
+                    );
+
+            var json = a.ToJSON();
+
+            Assert.Multiple(() => {
+                Assert.That(a.Equals(b),           Is.True,  "distinct equal NTSKE_ServerInfo instances must compare equal");
+                Assert.That(a.GetHashCode(),       Is.EqualTo(b.GetHashCode()), "equal instances must have equal hash codes");
+                Assert.That(() => a.ToString(),    Throws.Nothing, "ToString must not throw when URLs is empty");
+                Assert.That(json["aeadAlgorithm"], Is.Not.Null, "ToJSON must preserve explicit AEADAlgorithms.AES_SIV_CMAC_256");
+            });
+
+        }
+
+
+        [Test]
+        public void SignedResponseTryParse_RejectsOverstatedSignatureLength()
+        {
+
+            // KeyId = 1, SignatureLength = 65000, but only 12 bytes of payload follow.
+            var malformed = new Byte[] { 0x00, 0x01, 0xFD, 0xE8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+
+            Assert.That(
+                org.GraphDefined.Vanaheimr.Norn.NTP.NTSSignedResponseExtension.TryParse(malformed, out _, out var error),
+                Is.False
+            );
+            Assert.That(error, Is.Not.Null.And.Not.Empty);
+
+        }
+
     }
 
 }

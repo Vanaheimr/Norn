@@ -288,7 +288,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         protected override IList<ServerName>? GetSniServerNames()
         {
 
-            var host = ExpectedHostname?.ToString().Trim('[', ']');
+            // DomainName.ToString() appends a trailing root dot; strip it so RFC 6066 § 3
+            // host_name omits the trailing dot and literal IP addresses are recognized and omitted.
+            var host = ExpectedHostname?.ToString().TrimEnd('.').Trim('[', ']');
 
             if (String.IsNullOrWhiteSpace(host) ||
                 System.Net.IPAddress.TryParse(host, out _))
@@ -511,7 +513,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                String            Hostname)
         {
 
-            var trimmed = Hostname.Trim('[', ']');
+            // DomainName.ToString() appends a trailing root dot; strip it before IP literal detection.
+            var trimmed = Hostname.TrimEnd('.').Trim('[', ']');
 
             if (System.Net.IPAddress.TryParse(trimmed, out var ipAddress))
                 return Certificate.MatchesIPAddress(ipAddress);

@@ -263,6 +263,24 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTP
 
         #endregion
 
+        #region ExtremeMaximumPollExponent_IsClampedWithoutOverflow()
+
+        [Test]
+        public void ExtremeMaximumPollExponent_IsClampedWithoutOverflow()
+        {
+
+            var access = new NTPServerAccessState(MaximumPollExponent: 255);
+
+            Assert.Multiple(() => {
+                Assert.That(access.MaximumPollExponent, Is.EqualTo(NTPServerAccessState.AbsoluteMaximumPollExponent));
+                Assert.That(() => access.PollInterval, Throws.Nothing);
+                Assert.That(access.UnauthenticatedDenyPause, Is.GreaterThan(TimeSpan.Zero));
+            });
+
+        }
+
+        #endregion
+
     }
 
 }

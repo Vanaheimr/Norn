@@ -272,16 +272,20 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             if (!namedSomewhereElse &&
                 NTSKEResponse?.TimingInfo?.ConnectedIPAddress is not null)
             {
-                return new System.Net.IPEndPoint(
-                           NTSKEResponse.TimingInfo.ConnectedIPAddress.Value.ToDotNet(),
-                           candidates[0].Port.ToUInt16()
-                       );
+                var connectedIP = NTSKEResponse.TimingInfo.ConnectedIPAddress.Value.ToDotNet();
+                if (IsAllowedIPAddress(connectedIP, IPVersionPreference))
+                {
+                    return new System.Net.IPEndPoint(
+                               connectedIP,
+                               candidates[0].Port.ToUInt16()
+                           );
+                }
             }
 
             foreach (var (host, port) in candidates)
             {
 
-                var normalized = host.TrimEnd('.');
+                var normalized = host.Trim('[', ']').TrimEnd('.');
 
                 if (System.Net.IPAddress.TryParse(normalized, out var literalIPAddress))
                 {
@@ -346,10 +350,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                              IPPort  Port)
         {
 
-            return System.Net.IPAddress.TryParse(Host, out var ipAddress) &&
+            var bare = Host.Trim('[', ']');
+
+            return System.Net.IPAddress.TryParse(bare, out var ipAddress) &&
                    ipAddress.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6
-                       ? $"[{Host}]:{Port}"
-                       : $"{Host}:{Port}";
+                       ? $"[{bare}]:{Port}"
+                       : $"{bare}:{Port}";
 
         }
 

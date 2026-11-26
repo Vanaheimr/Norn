@@ -1567,24 +1567,47 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         #region (private static) ResolveBySystemAsync(Hostname, Port, CancellationToken)
 
         /// <summary>
-        /// The first IPv4 address the resolver of the operating system has for a host:
+        /// Resolve a host through the operating system resolver honoring <see cref="IPVersionPreference"/>:
         /// where a request goes when this client's own resolver found none.
         /// </summary>
-        private static async Task<System.Net.IPEndPoint> ResolveBySystemAsync(String             Hostname,
-                                                                              IPPort             Port,
-                                                                              CancellationToken  CancellationToken)
+        private static async Task<System.Net.IPEndPoint> ResolveBySystemAsync(String               Hostname,
+                                                                              IPPort               Port,
+                                                                              IPVersionPreference  IPVersionPreference,
+                                                                              CancellationToken    CancellationToken)
         {
 
+            var trimmed = Hostname.Trim('[', ']').TrimEnd('.');
+
+            if (System.Net.IPAddress.TryParse(trimmed, out var literal))
+            {
+                var allowed = IPVersionPreference switch {
+                                  IPVersionPreference.IPv4Only => literal.AddressFamily == AddressFamily.InterNetwork,
+                                  IPVersionPreference.IPv6Only => literal.AddressFamily == AddressFamily.InterNetworkV6,
+                                  _                            => true
+                              };
+
+                if (!allowed)
+                    throw new SocketException((Int32) SocketError.HostNotFound);
+
+                return new System.Net.IPEndPoint(literal, Port.ToInt32());
+            }
+
             var ipAddresses = await System.Net.Dns.GetHostAddressesAsync(
-                                        Hostname,
-                                        AddressFamily.InterNetwork,
+                                        trimmed,
                                         CancellationToken
                                     ).ConfigureAwait(false);
 
-            if (ipAddresses.Length == 0)
+            var selected = (IPVersionPreference switch {
+                                IPVersionPreference.IPv4Only   => ipAddresses.Where  (ip => ip.AddressFamily == AddressFamily.InterNetwork),
+                                IPVersionPreference.IPv6Only   => ipAddresses.Where  (ip => ip.AddressFamily == AddressFamily.InterNetworkV6),
+                                IPVersionPreference.PreferIPv4 => ipAddresses.OrderBy(ip => ip.AddressFamily == AddressFamily.InterNetwork   ? 0 : 1),
+                                _                              => ipAddresses.OrderBy(ip => ip.AddressFamily == AddressFamily.InterNetworkV6 ? 0 : 1)
+                            }).FirstOrDefault();
+
+            if (selected is null)
                 throw new SocketException((Int32) SocketError.HostNotFound);
 
-            return new System.Net.IPEndPoint(ipAddresses[0], Port.ToInt32());
+            return new System.Net.IPEndPoint(selected, Port.ToInt32());
 
         }
 
@@ -1921,12 +1944,51 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             // exception before that is not one of receiving anything.
             var requestSent = false;
 
+            System.Net.IPEndPoint destination;
+            try
+            {
+                destination = remoteEndPoint ?? await ResolveBySystemAsync(
+                                                          Hostname.ToString(),
+                                                          NTP_Port,
+                                                          IPVersionPreference,
+                                                          CancellationToken
+                                                      ).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                ReturnUnusedCookie(activePoolResponse, cookie);
+
+                return NTSQueryResult.FailedWithPacket(
+                           "NTP query operation canceled.",
+                           NTSQueryErrorCategory.Canceled,
+                           remoteEndPoint,
+                           remoteDescription,
+                           cookie,
+                           AvailableCookieCount,
+                           CookiePoolDiagnostics: CookiePoolDiagnostics
+                       );
+            }
+            catch (Exception e)
+            {
+                ReturnUnusedCookie(activePoolResponse, cookie);
+
+                return NTSQueryResult.FailedWithPacket(
+                           $"NTP request to {remoteDescription} could not be sent: {e.Message}",
+                           NTSQueryErrorCategory.Exception,
+                           remoteEndPoint,
+                           remoteDescription,
+                           cookie,
+                           AvailableCookieCount,
+                           CookiePoolDiagnostics: CookiePoolDiagnostics
+                       );
+            }
+
             // A socket of its own for every query, and with it a source port of its own
             // (RFC 9109). The socket and not a UdpClient around it, which is the same socket
             // and 64 kilobytes to receive into, made anew every time.
             using (var receiveBuffer = new ReceiveBuffer())
             using (var udpSocket     = new Socket(
-                                           remoteEndPoint?.AddressFamily ?? AddressFamily.InterNetwork,
+                                           destination.AddressFamily,
                                            SocketType.Dgram,
                                            ProtocolType.Udp
                                        ))
@@ -1940,12 +2002,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     // itself in its first send, and on Windows that is well over a hundred
                     // microseconds between a transmit timestamp and the datagram it is in.
                     // They were charged to the way there, and half of them to the offset.
-                    var destination        = remoteEndPoint ?? await ResolveBySystemAsync(
-                                                                         Hostname.ToString(),
-                                                                         NTP_Port,
-                                                                         CancellationToken
-                                                                     ).ConfigureAwait(false);
-
                     udpSocket.Bind(
                         udpSocket.AddressFamily == AddressFamily.InterNetworkV6
                             ? anyIPv6EndPoint

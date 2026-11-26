@@ -132,31 +132,45 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             if (!Cookies.Any())
                 throw new ArgumentException("The given enumeration of NTS cookies must not be empty!",
-                                            nameof(S2CKey));
+                                            nameof(Cookies));
 
             #endregion
 
             this.C2SKey         = C2SKey;
             this.S2CKey         = S2CKey;
-            this.Cookies        = Cookies.    Distinct();
-            this.URLs           = URLs.       Distinct();
-            this.PublicKeys     = PublicKeys?.Distinct() ?? [];
+            this.Cookies        = DistinctByteArrays(Cookies);
+            this.URLs           = URLs.       Distinct().ToArray();
+            this.PublicKeys     = PublicKeys is not null ? DistinctByteArrays(PublicKeys) : [];
             this.AEADAlgorithm  = AEADAlgorithm;
-            this.Warnings       = Warnings?.  Distinct() ?? [];
-            this.Errors         = Errors?.    Distinct() ?? [];
+            this.Warnings       = Warnings?.  Distinct().ToArray() ?? [];
+            this.Errors         = Errors?.    Distinct().ToArray() ?? [];
 
             unchecked
             {
 
-                hashCode = this.C2SKey.        GetHashCode()       * 27 ^
-                           this.S2CKey.        CalcHashCode()      * 23 ^
-                           this.Cookies.       CalcHashCode()      * 19 ^
-                           this.URLs.          CalcHashCode()      * 17 ^
-                           this.PublicKeys.    CalcHashCode()      * 13 ^
-                          (this.AEADAlgorithm?.GetHashCode() ?? 0) * 11 ^
-                           this.Warnings.      CalcHashCode()      *  7 ^
-                           this.Errors.        CalcHashCode()      *  3 ^
-                           base.               GetHashCode();
+                var hash = new HashCode();
+
+                hash.AddBytes(this.C2SKey);
+                hash.AddBytes(this.S2CKey);
+
+                foreach (var cookie in this.Cookies)
+                    hash.AddBytes(cookie);
+
+                foreach (var url in this.URLs)
+                    hash.Add(url);
+
+                foreach (var publicKey in this.PublicKeys)
+                    hash.AddBytes(publicKey);
+
+                hash.Add(this.AEADAlgorithm);
+
+                foreach (var warning in this.Warnings)
+                    hash.Add(warning);
+
+                foreach (var error in this.Errors)
+                    hash.Add(error);
+
+                hashCode = hash.ToHashCode();
 
             }
 
@@ -403,7 +417,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                ? new JProperty("publicKeys",      new JArray(PublicKeys.Select(publicKey   => publicKey.ToBase64())))
                                : null,
 
-                           AEADAlgorithm.HasValue && AEADAlgorithm.Value != AEADAlgorithms.AES_SIV_CMAC_256
+                           AEADAlgorithm.HasValue
                                ? new JProperty("aeadAlgorithm",   AEADAlgorithm.Value.AsText())
                                : null,
 
@@ -680,6 +694,33 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// Compares two NTSKEServerInfos for equality.
         /// </summary>
         /// <param name="NTSKEServerInfo">A NTSKEServerInfo to compare with.</param>
+        private static Byte[][] DistinctByteArrays(IEnumerable<Byte[]> Items)
+        {
+
+            var result = new List<Byte[]>();
+
+            foreach (var item in Items)
+            {
+                if (!result.Any(existing => existing.SequenceEqual(item)))
+                    result.Add(item);
+            }
+
+            return result.ToArray();
+
+        }
+
+        private static Boolean ByteArraySetsEqual(IEnumerable<Byte[]> Left,
+                                                  IEnumerable<Byte[]> Right)
+        {
+
+            var left  = Left  as IReadOnlyCollection<Byte[]> ?? Left. ToArray();
+            var right = Right as IReadOnlyCollection<Byte[]> ?? Right.ToArray();
+
+            return left.Count == right.Count &&
+                   left.All(item => right.Any(other => other.SequenceEqual(item)));
+
+        }
+
         public Boolean Equals(NTSKE_ServerInfo? NTSKEServerInfo)
 
             => NTSKEServerInfo is not null &&
@@ -687,25 +728,21 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                C2SKey.SequenceEqual(NTSKEServerInfo.C2SKey) &&
                S2CKey.SequenceEqual(NTSKEServerInfo.S2CKey) &&
 
-               Cookies.   Count().Equals(NTSKEServerInfo.Cookies.   Count()) &&
-               Cookies.   Any(NTSKEServerInfo.Cookies.   Contains) &&
+               ByteArraySetsEqual(Cookies,    NTSKEServerInfo.Cookies) &&
 
                URLs.      Count().Equals(NTSKEServerInfo.URLs.      Count()) &&
-               URLs.      Any(NTSKEServerInfo.URLs.      Contains) &&
+               URLs.      All(NTSKEServerInfo.URLs.      Contains) &&
 
-               PublicKeys.Count().Equals(NTSKEServerInfo.PublicKeys.Count()) &&
-               PublicKeys.Any(NTSKEServerInfo.PublicKeys.Contains) &&
+               ByteArraySetsEqual(PublicKeys, NTSKEServerInfo.PublicKeys) &&
 
             ((!AEADAlgorithm.HasValue && !NTSKEServerInfo.AEADAlgorithm.HasValue) ||
               (AEADAlgorithm.HasValue &&  NTSKEServerInfo.AEADAlgorithm.HasValue && AEADAlgorithm.Value.Equals(NTSKEServerInfo.AEADAlgorithm.Value))) &&
 
                Warnings.  Count().Equals(NTSKEServerInfo.Warnings.  Count()) &&
-               Warnings.  Any(NTSKEServerInfo.Warnings.  Contains) &&
+               Warnings.  All(NTSKEServerInfo.Warnings.  Contains) &&
 
                Errors.    Count().Equals(NTSKEServerInfo.Errors.    Count()) &&
-               Errors.    Any(NTSKEServerInfo.Errors.    Contains) &&
-
-               base.Equals(NTSKEServerInfo);
+               Errors.    All(NTSKEServerInfo.Errors.    Contains);
 
         #endregion
 
@@ -732,7 +769,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             => String.Concat(
 
-                   $"'{URLs.First()}'",
+                   URLs.Any()
+                       ? $"'{URLs.First()}'"
+                       : "'<no url>'",
 
                    URLs.Count() > 1
                        ? $" (of {URLs.Count()})"

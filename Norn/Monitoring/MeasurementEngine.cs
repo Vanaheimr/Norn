@@ -1185,7 +1185,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                            RootDelaySeconds            = ntpResponse.RootDelay      / 65536.0,   // 16.16 fixed-point → seconds
                            RootDispersionSeconds       = ntpResponse.RootDispersion / 65536.0,
                            ReferenceId                 = ntpResponse.ReferenceIdentifier.ToString(ntpResponse.Stratum),
-                           ReferenceTimestamp          = NTPPacket.NTPTimestampToDateTime(ntpResponse.ReferenceTimestamp),
+                           ReferenceTimestamp          = NTPPacket.NTPTimestampToDateTime(ntpResponse.ReferenceTimestamp, timeProvider),
 
                            NewCookieReceived           = ntsQueryResult.NewCookieReceived,
                            RemainingCookiesAfterQuery  = CachedState.RemainingCookies,
@@ -1284,6 +1284,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                                        CancellationToken:    CancellationToken
                                    );
 
+                if (ntsClient.LastNTSKEResponse is NTSKE_Response currentKE &&
+                    !ReferenceEquals(CachedState.NTSKEResponse, currentKE))
+                {
+                    CachedState.NTSKEResponse = currentKE;
+                    CachedState.LastRefreshed = timeProvider.GetUtcNow();
+                }
+
                 CachedState.RemainingCookies = ToByteCookieCount(answer.CookiePoolDiagnostics?.AvailableCookieCount ??
                                                                  answer.RemainingCookiesAfterQuery);
 
@@ -1356,6 +1363,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                                        NTSKEResponse:      CachedState.NTSKEResponse,
                                        CancellationToken:  CancellationToken
                                    );
+
+                if (ntsClient.LastNTSKEResponse is NTSKE_Response currentKE &&
+                    !ReferenceEquals(CachedState.NTSKEResponse, currentKE))
+                {
+                    CachedState.NTSKEResponse = currentKE;
+                    CachedState.LastRefreshed = timeProvider.GetUtcNow();
+                }
 
                 CachedState.RemainingCookies = ToByteCookieCount(answer.CookiePoolDiagnostics?.AvailableCookieCount ??
                                                                  answer.RemainingCookiesAfterQuery);

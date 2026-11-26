@@ -77,7 +77,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public const Byte DefaultMaximumPollExponent = 13;
 
 
-        private readonly Lock  padlock = new();
+        /// <summary>
+        /// Upper bound on poll exponents so 2^exponent seconds can never overflow <see cref="TimeSpan"/>.
+        /// </summary>
+        public const Byte AbsoluteMaximumPollExponent = 30;
+
+
+        private readonly Lock             padlock = new();
+        private          Byte             pollExponent;
+        private          Boolean          demobilized;
+        private          DateTimeOffset?  nextQueryNotBefore;
+        private          NTPKissOfDeath?  lastKiss;
 
         #endregion
 
@@ -113,20 +123,27 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <summary>
         /// The current poll exponent: the interval between queries is 2^this seconds.
         /// </summary>
-        public Byte             PollExponent         { get; private set; }
+        public Byte             PollExponent
+        {
+            get { lock (padlock) return pollExponent; }
+        }
 
         /// <summary>
         /// Whether a RATE kiss has slowed this client down, and it has not yet earned
         /// its starting rate back.
         /// </summary>
         public Boolean          IsRateLimited
-            => PollExponent > InitialPollExponent;
+        {
+            get { lock (padlock) return pollExponent > InitialPollExponent; }
+        }
 
         /// <summary>
         /// The interval the current poll exponent stands for.
         /// </summary>
         public TimeSpan         PollInterval
-            => TimeSpan.FromSeconds(Math.Pow(2, PollExponent));
+        {
+            get { lock (padlock) return TimeSpan.FromSeconds(Math.Pow(2, pollExponent)); }
+        }
 
         /// <summary>
         /// Whether this server has told this client to go away, with a "DENY" or "RSTR" kiss.
@@ -136,17 +153,26 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// nothing a server that is not being queried can send will change its mind — so undoing
         /// this is an operator's decision, made through <see cref="Reset"/>.
         /// </remarks>
-        public Boolean          Demobilized          { get; private set; }
+        public Boolean          Demobilized
+        {
+            get { lock (padlock) return demobilized; }
+        }
 
         /// <summary>
         /// The earliest this client should query again, or null when it may query now.
         /// </summary>
-        public DateTimeOffset?  NextQueryNotBefore   { get; private set; }
+        public DateTimeOffset?  NextQueryNotBefore
+        {
+            get { lock (padlock) return nextQueryNotBefore; }
+        }
 
         /// <summary>
         /// The last kiss code accepted from this server, if any.
         /// </summary>
-        public NTPKissOfDeath?  LastKiss             { get; private set; }
+        public NTPKissOfDeath?  LastKiss
+        {
+            get { lock (padlock) return lastKiss; }
+        }
 
         #endregion
 
@@ -168,15 +194,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             if (UnauthenticatedDenyPause < TimeSpan.Zero)
                 throw new ArgumentOutOfRangeException(nameof(UnauthenticatedDenyPause), "The pause must not be negative!");
 
-            this.MinimumPollExponent  = MinimumPollExponent ?? DefaultMinimumPollExponent;
-            this.MaximumPollExponent  = Math.Max(this.MinimumPollExponent,
-                                                 MaximumPollExponent ?? DefaultMaximumPollExponent);
+            this.MinimumPollExponent  = Math.Min(AbsoluteMaximumPollExponent,
+                                                 MinimumPollExponent ?? DefaultMinimumPollExponent);
+            this.MaximumPollExponent  = Math.Clamp(MaximumPollExponent ?? DefaultMaximumPollExponent,
+                                                   this.MinimumPollExponent,
+                                                   AbsoluteMaximumPollExponent);
 
             this.InitialPollExponent  = (Byte) Math.Clamp(InitialPollExponent ?? this.MinimumPollExponent,
                                                           this.MinimumPollExponent,
                                                           this.MaximumPollExponent);
 
-            this.PollExponent         = this.InitialPollExponent;
+            this.pollExponent         = this.InitialPollExponent;
 
             this.UnauthenticatedDenyPause  = UnauthenticatedDenyPause ?? TimeSpan.FromSeconds(Math.Pow(2, this.MaximumPollExponent));
 
@@ -196,11 +224,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             lock (padlock)
             {
 
-                if (Demobilized)
+                if (demobilized)
                     return false;
 
-                return NextQueryNotBefore is null ||
-                       Now >= NextQueryNotBefore.Value;
+                return nextQueryNotBefore is null ||
+                       Now >= nextQueryNotBefore.Value;
 
             }
 
@@ -224,8 +252,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             lock (padlock)
             {
-                if (IsRateLimited)
-                    NextQueryNotBefore = Now + PollInterval;
+                if (pollExponent > InitialPollExponent)
+                    nextQueryNotBefore = Now + TimeSpan.FromSeconds(Math.Pow(2, pollExponent));
             }
 
         }
@@ -246,8 +274,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             lock (padlock)
             {
-                if (IsRateLimited)
-                    PollExponent--;
+                if (pollExponent > InitialPollExponent)
+                    pollExponent--;
             }
 
         }
@@ -275,7 +303,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             lock (padlock)
             {
 
-                LastKiss = Kiss;
+                lastKiss = Kiss;
 
                 switch (Kiss.Action)
                 {
@@ -290,16 +318,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                             // the request, and "stop for good" is too much to take from
                             // them: it costs one pause, and leaves the polling rate as it
                             // was.
-                            NextQueryNotBefore  = UnauthenticatedDenyPause > TimeSpan.Zero
+                            nextQueryNotBefore  = UnauthenticatedDenyPause > TimeSpan.Zero
                                                       ? Now + UnauthenticatedDenyPause
-                                                      : NextQueryNotBefore;
+                                                      : nextQueryNotBefore;
 
                             break;
 
                         }
 
-                        Demobilized         = true;
-                        NextQueryNotBefore  = null;
+                        demobilized         = true;
+                        nextQueryNotBefore  = null;
                         break;
 
                     case NTPKissAction.ReducePollingRate:
@@ -313,13 +341,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                         // RFC 8633 § 5.4's "MUST NOT simply accept any value". Taking the
                         // server's number, even capped, let a single forged kiss with a poll
                         // value of 255 send this client from sixteen seconds to two hours.
-                        var target          = PollExponent + 1;
+                        var target          = pollExponent + 1;
 
-                        PollExponent        = (Byte) Math.Clamp(target,
+                        pollExponent        = (Byte) Math.Clamp(target,
                                                                 MinimumPollExponent,
                                                                 MaximumPollExponent);
 
-                        NextQueryNotBefore  = Now + PollInterval;
+                        nextQueryNotBefore  = Now + TimeSpan.FromSeconds(Math.Pow(2, pollExponent));
 
                         break;
 
@@ -350,10 +378,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             lock (padlock)
             {
 
-                PollExponent        = InitialPollExponent;
-                Demobilized         = false;
-                NextQueryNotBefore  = null;
-                LastKiss            = null;
+                pollExponent        = InitialPollExponent;
+                demobilized         = false;
+                nextQueryNotBefore  = null;
+                lastKiss            = null;
 
             }
 
@@ -363,10 +391,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
 
         public override String ToString()
+        {
 
-            => Demobilized
-                   ? $"demobilized ({LastKiss?.Code ?? "?"})"
-                   : $"poll {PollExponent} ({PollInterval.TotalSeconds:0} s)";
+            lock (padlock)
+            {
+                return demobilized
+                           ? $"demobilized ({lastKiss?.Code ?? "?"})"
+                           : $"poll {pollExponent} ({Math.Pow(2, pollExponent):0} s)";
+            }
+
+        }
 
     }
 

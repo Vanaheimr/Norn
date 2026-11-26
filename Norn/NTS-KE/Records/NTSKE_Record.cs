@@ -59,9 +59,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
     /// <param name="IsCritical">Whether an unrecognized record must cause an error.</param>
     /// <param name="Type">The type of the record.</param>
     /// <param name="Body">The optional data of the record.</param>
-    public class NTSKE_Record(Boolean            IsCritical,
-                              NTSKE_RecordTypes  Type,
-                              Byte[]?            Body   = null)
+    public class NTSKE_Record
     {
 
         #region Properties
@@ -69,22 +67,46 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <summary>
         /// Whether an unrecognized record must cause an error.
         /// </summary>
-        public Boolean            IsCritical    { get; } = IsCritical;
+        public Boolean            IsCritical    { get; }
 
         /// <summary>
         /// The type of the record.
         /// </summary>
-        public NTSKE_RecordTypes  Type          { get; } = Type;
+        public NTSKE_RecordTypes  Type          { get; }
 
         /// <summary>
         /// The data of the record.
         /// </summary>
-        public Byte[]             Body          { get; } = Body ?? [];
+        public Byte[]             Body          { get; }
 
         /// <summary>
         /// Length of the record data.
         /// </summary>
-        public UInt16             Length        { get; } = (UInt16) (Body?.Length ?? 0);
+        public UInt16             Length        { get; }
+
+        #endregion
+
+        #region Constructor(s)
+
+        public NTSKE_Record(Boolean            IsCritical,
+                            NTSKE_RecordTypes  Type,
+                            Byte[]?            Body   = null)
+        {
+
+            if ((UInt16) Type > 0x7FFF)
+                throw new ArgumentOutOfRangeException(nameof(Type), $"NTS-KE record type {(UInt16) Type} exceeds the 15-bit record type field (0..32767)!");
+
+            var body = Body ?? [];
+
+            if (body.Length > UInt16.MaxValue)
+                throw new ArgumentOutOfRangeException(nameof(Body), $"NTS-KE record body length ({body.Length}) exceeds the 16-bit maximum of {UInt16.MaxValue} bytes!");
+
+            this.IsCritical  = IsCritical;
+            this.Type        = Type;
+            this.Body        = body;
+            this.Length      = (UInt16) body.Length;
+
+        }
 
         #endregion
 
@@ -411,7 +433,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <param name="NTSCookie">The new NTS cookie.</param>
         /// <param name="IsCritical">Whether the record is critical.</param>
         public static NTSKE_Record  NewCookieForNTPv4(NTSCookie  NTSCookie,
-                                                      Boolean    IsCritical   = true)
+                                                      Boolean    IsCritical   = false)
 
             => new NTSKERecords.NewCookieForNTPv4(
                    IsCritical,

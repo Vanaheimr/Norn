@@ -137,7 +137,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             if (errorRecord is not null)
             {
 
-                ErrorMessage   = $"NTS-KE server returned an Error record: {FormatRecordBody(errorRecord)}";
+                ErrorMessage   = $"NTS-KE server returned an Error record: {FormatError(errorRecord)}";
                 ErrorCategory  = NTSKEErrorCategory.ServerError;
                 return false;
 
@@ -220,15 +220,30 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             }
 
 
+            // RFC 8915 § 4.1.1: End of Message MUST occur exactly once and MUST be the final record.
+            var eomCount = records.Count(record => record.Type == NTSKE_RecordTypes.EndOfMessage);
+
+            if (eomCount != 1 || records[^1].Type != NTSKE_RecordTypes.EndOfMessage)
+            {
+
+                ErrorMessage   = eomCount == 0
+                                     ? "NTS-KE response is missing the required End of Message record."
+                                     : "NTS-KE response must contain exactly one End of Message record as the final record.";
+                ErrorCategory  = NTSKEErrorCategory.Protocol;
+                return false;
+
+            }
+
+
             // Over SSH the keys come from the one SSH Key Binding record of the response, and
             // nothing else can say which source to derive them from: no record means no keys,
             // two mean two different answers to the same question.
             if (OverSSH)
             {
 
-                var keyBindingRecords = records.Count(record => record.Type == NTSKE_RecordTypes.SSHKeyBinding);
+                var keyBindingRecords = records.Where(record => record.Type == NTSKE_RecordTypes.SSHKeyBinding).ToList();
 
-                if (keyBindingRecords == 0)
+                if (keyBindingRecords.Count == 0)
                 {
 
                     ErrorMessage   = "NTS-KE response over SSH did not select a source of its keys in an SSH Key Binding record.";
@@ -237,14 +252,70 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                 }
 
-                if (keyBindingRecords > 1)
+                if (keyBindingRecords.Count > 1)
                 {
 
-                    ErrorMessage   = $"NTS-KE response over SSH carries {keyBindingRecords} SSH Key Binding records instead of one.";
+                    ErrorMessage   = $"NTS-KE response over SSH carries {keyBindingRecords.Count} SSH Key Binding records instead of one.";
                     ErrorCategory  = NTSKEErrorCategory.Protocol;
                     return false;
 
                 }
+
+                if (!keyBindingRecords[0].IsCritical)
+                {
+
+                    ErrorMessage   = "NTS-KE response over SSH carries an SSH Key Binding record without its critical bit set.";
+                    ErrorCategory  = NTSKEErrorCategory.Protocol;
+                    return false;
+
+                }
+
+            }
+
+
+            // RFC 8915 § 4.1.7: at most one NTPv4 Server Negotiation record, non-empty ASCII host
+            // without IPv6 zone identifiers or brackets.
+            var serverRecords = records.Where(record => record.Type == NTSKE_RecordTypes.NTPv4ServerNegotiation).ToList();
+
+            if (serverRecords.Count > 1)
+            {
+
+                ErrorMessage   = $"NTS-KE response carries {serverRecords.Count} NTPv4 Server Negotiation records instead of at most one.";
+                ErrorCategory  = NTSKEErrorCategory.Protocol;
+                return false;
+
+            }
+
+            if (serverRecords.Count == 1 &&
+                !IsValidServerNegotiation(serverRecords[0]))
+            {
+
+                ErrorMessage   = "NTS-KE response carries a malformed NTPv4 Server Negotiation record.";
+                ErrorCategory  = NTSKEErrorCategory.Protocol;
+                return false;
+
+            }
+
+
+            // RFC 8915 § 4.1.8: at most one NTPv4 Port Negotiation record, exact 2-octet non-zero port.
+            var portRecords = records.Where(record => record.Type == NTSKE_RecordTypes.NTPv4PortNegotiation).ToList();
+
+            if (portRecords.Count > 1)
+            {
+
+                ErrorMessage   = $"NTS-KE response carries {portRecords.Count} NTPv4 Port Negotiation records instead of at most one.";
+                ErrorCategory  = NTSKEErrorCategory.Protocol;
+                return false;
+
+            }
+
+            if (portRecords.Count == 1 &&
+                !IsValidPortNegotiation(portRecords[0]))
+            {
+
+                ErrorMessage   = "NTS-KE response carries a malformed NTPv4 Port Negotiation record.";
+                ErrorCategory  = NTSKEErrorCategory.Protocol;
+                return false;
 
             }
 
@@ -335,6 +406,35 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         }
 
         #endregion
+
+        private static Boolean IsValidServerNegotiation(NTSKE_Record Record)
+        {
+
+            if (Record.Body.Length == 0)
+                return false;
+
+            foreach (var b in Record.Body)
+            {
+                // RFC 8915 § 4.1.7: printable ASCII host/address, no whitespace, no NUL, no IPv6
+                // zone id ('%') and no brackets ('[' / ']').
+                if (b < 0x21 || b > 0x7E || b == '%' || b == '[' || b == ']')
+                    return false;
+            }
+
+            return true;
+
+        }
+
+        private static Boolean IsValidPortNegotiation(NTSKE_Record Record)
+
+            => Record.Body.Length == 2 &&
+               ((Record.Body[0] << 8) | Record.Body[1]) != 0;
+
+        private static String FormatError(NTSKE_Record Record)
+
+            => Record.Body.Length == 2
+                   ? $"error code {(UInt16) ((Record.Body[0] << 8) | Record.Body[1])}"
+                   : $"malformed error record ({FormatRecordBody(Record)})";
 
         #region (private static) FormatWarning(Record)
 
