@@ -322,7 +322,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                                : null,
 
                            RemoteAddress   is not null
-                               ? new JProperty("remoteAddress",                NormalizeIPAddress(RemoteAddress.ToString()))
+                               ? new JProperty("remoteAddress",                NormalizeIPAddress(RemoteAddress.ToString() ?? ""))
                                : null,
 
                            RemotePort.HasValue

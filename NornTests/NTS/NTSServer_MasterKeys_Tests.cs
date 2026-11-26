@@ -338,6 +338,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
         /// </summary>
         [Test]
         [Platform(Exclude = "Win")]
+        [System.Runtime.Versioning.UnsupportedOSPlatform("windows")]
         public void TheKeyFileIsTheOwnersOnly()
         {
 
