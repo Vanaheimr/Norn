@@ -24,6 +24,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Security.Cryptography;
 using System.Collections.Concurrent;
 
+using Org.BouncyCastle.Crypto;
 using Org.BouncyCastle.Crypto.Parameters;
 using Org.BouncyCastle.Tls;
 using Org.BouncyCastle.X509;
@@ -527,7 +528,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                          Int32?             MaxConcurrentNTPRequests      = null,
                          Int32?             MaxConcurrentNTSKEConnections = null,
                          X509Certificate?   TLSCertificate                = null,
-                         ECPrivateKeyParameters? TLSPrivateKey            = null,
+                         AsymmetricKeyParameter? TLSPrivateKey            = null,
                          String?            TLSServerSubjectName          = null,
                          Byte?              Stratum                       = null,
                          ReferenceIdentifier? ReferenceIdentifier         = null,
@@ -546,7 +547,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                          Int32?                    MaxNTSKEConnectionsPerClient = null,
                          IEnumerable<KeyPair>?     KeyPairs               = null,
                          TimeSpan?                 PublicKeyLeadTime      = null,
-                         Boolean                   NTSKEOverTLS           = true)
+                         Boolean                   NTSKEOverTLS           = true,
+                         IEnumerable<X509Certificate>? TLSCertificateChain = null)
         {
 
             // An SSH listener hands out cookies to whoever logs in, so who that may be is never a
@@ -591,7 +593,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             this.sshNtskeConnectionSemaphore  = new SemaphoreSlim(this.MaxConcurrentNTSKEConnections);
             this.tlsIdentity                  = Identity(TLSCertificate,
                                                          TLSPrivateKey,
-                                                         TLSServerSubjectName);
+                                                         TLSServerSubjectName,
+                                                         TLSCertificateChain);
 
             // What this server can honestly say about its own clock (RFC 5905 § 7.3).
             //
@@ -2255,7 +2258,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                                    identity.ShownCertificate,
                                                                    identity.ShownPrivateKey,
                                                                    identity.SubjectName,
-                                                                   TimeProvider
+                                                                   TimeProvider,
+                                                                   identity.CertificateChain
                                                                );
 
                                     // The handshake of this TLS library blocks its thread until the
@@ -2655,6 +2659,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             => tlsIdentity.Certificate;
 
         /// <summary>
+        /// The intermediate CA certificates presented after <see cref="TLSCertificate"/>, if any.
+        /// </summary>
+        public IReadOnlyList<X509Certificate>  TLSCertificateChain
+            => tlsIdentity.CertificateChain;
+
+        /// <summary>
         /// The name NTS-KE over TLS goes by, or null.
         /// </summary>
         public String?           TLSServerSubjectName
@@ -2662,7 +2672,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #endregion
 
-        #region RenewTLSIdentity(Certificate, PrivateKey, SubjectName = null)
+        #region RenewTLSIdentity(Certificate, PrivateKey, SubjectName = null, CertificateChain = null)
 
         /// <summary>
         /// Show another certificate in NTS-KE over TLS, while the server runs: every key
@@ -2676,55 +2686,70 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// for a moment, and a key exchange under way with them. The cookies a client holds
         /// stay valid either way: they are sealed by the master keys, not by the certificate.
         /// </remarks>
-        /// <param name="Certificate">The certificate to show.</param>
-        /// <param name="PrivateKey">Its private key.</param>
+        /// <param name="Certificate">The leaf certificate to show.</param>
+        /// <param name="PrivateKey">Its private key (ECDSA P-256/P-384/P-521, RSA, Ed25519, or Ed448).</param>
         /// <param name="SubjectName">The name the server goes by.</param>
+        /// <param name="CertificateChain">Optional intermediate CA certificates presented after the leaf certificate.</param>
         /// <exception cref="ArgumentException">Only one of certificate and key given, or a key that is not the certificate's: no handshake could succeed under them, and the identity before stays.</exception>
-        public void RenewTLSIdentity(X509Certificate?         Certificate,
-                                     ECPrivateKeyParameters?  PrivateKey,
-                                     String?                  SubjectName   = null)
+        public void RenewTLSIdentity(X509Certificate?               Certificate,
+                                     AsymmetricKeyParameter?        PrivateKey,
+                                     String?                        SubjectName        = null,
+                                     IEnumerable<X509Certificate>?  CertificateChain   = null)
         {
 
             tlsIdentity = Identity(Certificate,
                                    PrivateKey,
-                                   SubjectName);
+                                   SubjectName,
+                                   CertificateChain);
 
         }
 
         #endregion
 
-        #region (private) Identity(Certificate, PrivateKey, SubjectName)
+        #region (private) Identity(Certificate, PrivateKey, SubjectName, CertificateChain)
 
         /// <summary>
         /// The TLS identity of the given values - a certificate with the key that belongs to it,
         /// or neither.
         /// </summary>
-        private TLSIdentity Identity(X509Certificate?         Certificate,
-                                     ECPrivateKeyParameters?  PrivateKey,
-                                     String?                  SubjectName)
+        private TLSIdentity Identity(X509Certificate?               Certificate,
+                                     AsymmetricKeyParameter?        PrivateKey,
+                                     String?                        SubjectName,
+                                     IEnumerable<X509Certificate>?  CertificateChain)
         {
 
             if ((Certificate is null) != (PrivateKey is null))
                 throw new ArgumentException("A TLS certificate and its private key are given together, or neither of them.");
 
-            // The certificate's public key has to be the one of this private key: Q = d·G.
-            // Otherwise the server signs its handshake with a key the certificate does not
-            // name, and every client - rightly - breaks the handshake off.
-            if (Certificate is not null &&
-                PrivateKey  is not null &&
-                !(Certificate.GetPublicKey() is ECPublicKeyParameters publicKey &&
-                  publicKey.Q.Normalize().Equals(PrivateKey.Parameters.G.Multiply(PrivateKey.D).Normalize())))
-            {
-                throw new ArgumentException("The private key given is not the one of the TLS certificate given.",
-                                            nameof(PrivateKey));
-            }
-
             if (Certificate is not null &&
                 PrivateKey  is not null)
-                return new (Certificate, PrivateKey, SubjectName, Certificate, PrivateKey);
+            {
+
+                NTSKE_TLSService.ValidatePrivateKey(PrivateKey);
+
+                // The certificate's public key has to match this private key.
+                // Otherwise the server signs its handshake with a key the certificate does not
+                // name, and every client - rightly - breaks the handshake off.
+                if (!PrivateKeyMatchesCertificate(Certificate, PrivateKey))
+                    throw new ArgumentException("The private key given is not the one of the TLS certificate given.",
+                                                nameof(PrivateKey));
+
+                var chain = CertificateChain?.ToArray() ?? [];
+
+                if (chain.Any(cert => cert is null))
+                    throw new ArgumentException("TLS certificate chain must not contain null entries.",
+                                                nameof(CertificateChain));
+
+                return new (Certificate, PrivateKey, SubjectName, Certificate, PrivateKey, chain);
+
+            }
+
+            if (CertificateChain is not null && CertificateChain.Any())
+                throw new ArgumentException("A TLS certificate chain cannot be provided without a leaf certificate and private key.",
+                                            nameof(CertificateChain));
 
             if (!NTSKEOverTLS)
-                return new (null, null, SubjectName, null, null);
+                return new (null, null, SubjectName, null, null, []);
 
             // Without a certificate of its own, the server shows one made self-signed here,
             // once for this identity rather than on every accepted TCP connection: no ECDSA
@@ -2740,7 +2765,38 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                   TimeProvider
                                               );
 
-            return new (null, null, SubjectName, selfSigned, selfSignedKey);
+            return new (null, null, SubjectName, selfSigned, selfSignedKey, []);
+
+        }
+
+        private static Boolean PrivateKeyMatchesCertificate(X509Certificate         Certificate,
+                                                            AsymmetricKeyParameter  PrivateKey)
+        {
+
+            var publicKey = Certificate.GetPublicKey();
+
+            return (PrivateKey, publicKey) switch {
+                (ECPrivateKeyParameters      ecPriv,      ECPublicKeyParameters      ecPub)
+                    => ecPub.Q.Normalize().Equals(ecPriv.Parameters.G.Multiply(ecPriv.D).Normalize()),
+
+                (RsaPrivateCrtKeyParameters  rsaCrt,      RsaKeyParameters           rsaPub) when !rsaPub.IsPrivate
+                    => rsaPub.Modulus.Equals(rsaCrt.Modulus) &&
+                       rsaPub.Exponent.Equals(rsaCrt.PublicExponent),
+
+                (RsaKeyParameters            rsaPriv,     RsaKeyParameters           rsaPub) when !rsaPub.IsPrivate
+                    => rsaPub.Modulus.Equals(rsaPriv.Modulus) &&
+                       Org.BouncyCastle.Math.BigInteger.Two.
+                           ModPow(rsaPub.Exponent.Multiply(rsaPriv.Exponent), rsaPub.Modulus).
+                           Equals(Org.BouncyCastle.Math.BigInteger.Two),
+
+                (Ed25519PrivateKeyParameters ed25519Priv, Ed25519PublicKeyParameters ed25519Pub)
+                    => ed25519Priv.GeneratePublicKey().GetEncoded().AsSpan().SequenceEqual(ed25519Pub.GetEncoded()),
+
+                (Ed448PrivateKeyParameters   ed448Priv,   Ed448PublicKeyParameters   ed448Pub)
+                    => ed448Priv.GeneratePublicKey().GetEncoded().AsSpan().SequenceEqual(ed448Pub.GetEncoded()),
+
+                _   => false
+            };
 
         }
 
@@ -2751,11 +2807,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// ShownPrivateKey what a handshake is made under - the ones given, or the
         /// self-signed ones made for this identity.
         /// </summary>
-        private sealed record TLSIdentity(X509Certificate?         Certificate,
-                                          ECPrivateKeyParameters?  PrivateKey,
-                                          String?                  SubjectName,
-                                          X509Certificate?         ShownCertificate,
-                                          ECPrivateKeyParameters?  ShownPrivateKey);
+        private sealed record TLSIdentity(X509Certificate?                Certificate,
+                                          AsymmetricKeyParameter?         PrivateKey,
+                                          String?                         SubjectName,
+                                          X509Certificate?                ShownCertificate,
+                                          AsymmetricKeyParameter?         ShownPrivateKey,
+                                          IReadOnlyList<X509Certificate>  CertificateChain);
 
         #endregion
 

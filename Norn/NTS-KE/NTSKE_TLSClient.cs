@@ -411,8 +411,24 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             var policyErrors = SslPolicyErrors.None;
 
-            // Validate the chain via the leafCertificate
-            if (ChainErrorsOf(chain.Build(remoteCertificate), chain.ChainStatus.Select(status => status.Status)))
+            // Validate the chain via the leafCertificate.
+            // Some platforms (notably Windows CryptoAPI on Ed25519-signed certificates) throw
+            // CryptographicException from X509Chain.Build when the signature algorithm is not
+            // supported by the OS chain engine. Treat that as a chain error rather than letting
+            // it escape as TLS internal_error(80), so TLSInfo is still populated and a custom
+            // validator (e.g. certificate pinning) can still decide.
+            Boolean chainBuilt;
+            try
+            {
+                chainBuilt = chain.Build(remoteCertificate);
+            }
+            catch (System.Security.Cryptography.CryptographicException)
+            {
+                chainBuilt    = false;
+                policyErrors |= SslPolicyErrors.RemoteCertificateChainErrors;
+            }
+
+            if (ChainErrorsOf(chainBuilt, chain.ChainStatus.Select(status => status.Status)))
                 policyErrors |= SslPolicyErrors.RemoteCertificateChainErrors;
 
             if (NTSKETLSClient.ExpectedIPAddress is { } expectedIP)

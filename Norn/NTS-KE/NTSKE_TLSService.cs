@@ -23,11 +23,13 @@ using Org.BouncyCastle.Tls.Crypto.Impl.BC;
 using Org.BouncyCastle.X509;
 using Org.BouncyCastle.Math;
 using Org.BouncyCastle.Security;
+using Org.BouncyCastle.Crypto;
 using Org.BouncyCastle.Crypto.Prng;
 using Org.BouncyCastle.Crypto.Generators;
 using Org.BouncyCastle.Crypto.Operators;
 using Org.BouncyCastle.Crypto.Parameters;
 using Org.BouncyCastle.Asn1;
+using Org.BouncyCastle.Asn1.Pkcs;
 using Org.BouncyCastle.Asn1.Sec;
 using Org.BouncyCastle.Asn1.X509;
 
@@ -46,38 +48,43 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #region Data
 
-        // Just for TLS optimization!
-        private readonly Byte[] encodedCertificate;
+        // Pre-encoded DER certificate chain (leaf first, followed by any intermediate CA certificates).
+        private readonly Byte[][] encodedCertificates;
 
         #endregion
 
         #region Properties
 
         /// <summary>
-        /// The used TLS certificate.
+        /// The leaf TLS server certificate.
         /// </summary>
-        public X509Certificate         Certificate    { get; }
+        public X509Certificate                 Certificate       { get; }
 
         /// <summary>
-        /// The used TLS private key.
+        /// The full TLS certificate chain presented to clients (leaf first, followed by any intermediates).
         /// </summary>
-        public ECPrivateKeyParameters  PrivateKey     { get; }
+        public IReadOnlyList<X509Certificate>  CertificateChain  { get; }
+
+        /// <summary>
+        /// The TLS server private key (ECDSA P-256/P-384/P-521, RSA, Ed25519, or Ed448).
+        /// </summary>
+        public AsymmetricKeyParameter          PrivateKey        { get; }
 
         /// <summary>
         /// The optional X.509 subject name to use for new certificates.
         /// </summary>
-        public String?                 SubjectName    { get; }
+        public String?                         SubjectName       { get; }
 
 
         /// <summary>
         /// The NTP-KE Client-2-Server Key
         /// </summary>
-        public Byte[]?                 NTS_C2S_Key    { get; private set; }
+        public Byte[]?                         NTS_C2S_Key       { get; private set; }
 
         /// <summary>
         /// The NTP-KE Server-2-Client Key
         /// </summary>
-        public Byte[]?                 NTS_S2C_Key    { get; private set; }
+        public Byte[]?                         NTS_S2C_Key       { get; private set; }
 
         #endregion
 
@@ -86,14 +93,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <summary>
         /// Create a new NTS-KE TLS service.
         /// </summary>
-        /// <param name="Certificate">The TLS certificate to use.</param>
-        /// <param name="PrivateKey">The private key to use.</param>
-        /// <param name="SubjectName">The optional X.509 subject name to use for new certificates.</param>
+        /// <param name="Certificate">The leaf TLS certificate to use.</param>
+        /// <param name="PrivateKey">The private key matching <paramref name="Certificate"/> (ECDSA P-256/P-384/P-521, RSA, Ed25519, or Ed448).</param>
+        /// <param name="SubjectName">The optional X.509 subject name to use for generated self-signed certificates.</param>
         /// <param name="TimeProvider">The optional clock deciding a generated certificate's validity period.</param>
-        public NTSKE_TLSService(X509Certificate?         Certificate    = null,
-                                ECPrivateKeyParameters?  PrivateKey     = null,
-                                String?                  SubjectName    = null,
-                                TimeProvider?            TimeProvider   = null)
+        /// <param name="CertificateChain">Optional intermediate CA certificates presented after the leaf certificate.</param>
+        public NTSKE_TLSService(X509Certificate?               Certificate        = null,
+                                AsymmetricKeyParameter?        PrivateKey         = null,
+                                String?                        SubjectName        = null,
+                                TimeProvider?                  TimeProvider       = null,
+                                IEnumerable<X509Certificate>?  CertificateChain   = null)
 
             : base(
                   new BcTlsCrypto(
@@ -110,13 +119,46 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 PrivateKey  is not null)
             {
 
+                ValidatePrivateKey(PrivateKey);
+
                 this.Certificate  = Certificate;
                 this.PrivateKey   = PrivateKey;
                 this.SubjectName  = SubjectName;
 
+                var leafEncoded   = Certificate.GetEncoded();
+                var chainList     = new List<X509Certificate> { Certificate };
+                var encodedList   = new List<Byte[]>          { leafEncoded };
+
+                if (CertificateChain is not null)
+                {
+                    foreach (var intermediate in CertificateChain)
+                    {
+
+                        if (intermediate is null)
+                            throw new ArgumentException("TLS certificate chain must not contain null entries.", nameof(CertificateChain));
+
+                        var encoded = intermediate.GetEncoded();
+
+                        // Tolerate callers that pass fullchain [leaf, intermediate, ...] as well as [intermediate, ...].
+                        if (encoded.AsSpan().SequenceEqual(leafEncoded))
+                            continue;
+
+                        chainList.Add(intermediate);
+                        encodedList.Add(encoded);
+
+                    }
+                }
+
+                this.CertificateChain    = chainList;
+                this.encodedCertificates = [.. encodedList];
+
             }
             else
             {
+
+                if (CertificateChain is not null && CertificateChain.Any())
+                    throw new ArgumentException("A TLS certificate chain cannot be provided without a leaf certificate and private key.",
+                                                nameof(CertificateChain));
 
                 var defaultSANs = SubjectName.IsNotNullOrEmpty()
                                       ? new[] { SubjectName }
@@ -130,11 +172,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                            TimeProvider
                                                        );
 
-                this.SubjectName = SubjectName;
+                this.SubjectName         = SubjectName;
+                this.CertificateChain    = [ this.Certificate ];
+                this.encodedCertificates = [ this.Certificate.GetEncoded() ];
 
             }
-
-            this.encodedCertificate              = this.Certificate.GetEncoded();
 
         }
 
@@ -281,53 +323,217 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         #region (public    override) GetCredentials()
 
         public override TlsCredentials GetCredentials()
-        {
-
-            //int keyExchangeAlgorithm = m_context.SecurityParameters.KeyExchangeAlgorithm;
-
-            //switch (keyExchangeAlgorithm)
-            //{
-            //    case KeyExchangeAlgorithm.DHE_DSS:
-            //        return GetDsaSignerCredentials();
-
-            //    case KeyExchangeAlgorithm.ECDHE_ECDSA:
-                    return GetECDsaSignerCredentials();
-
-            //    case KeyExchangeAlgorithm.DHE_RSA:
-            //    case KeyExchangeAlgorithm.ECDHE_RSA:
-            //        return GetRsaSignerCredentials();
-
-            //    case KeyExchangeAlgorithm.RSA:
-            //        return GetRsaEncryptionCredentials();
-
-            //    default:
-            //        // Note: internal error here; selected a key exchange we don't implement!
-            //        throw new TlsFatalAlert(AlertDescription.internal_error);
-            //}
-
-        }
+            => GetSignerCredentials();
 
         #endregion
 
         #region (protected override) GetECDsaSignerCredentials()
 
         protected override TlsCredentialedSigner GetECDsaSignerCredentials()
+            => GetSignerCredentials();
+
+        #endregion
+
+        #region (private) GetSignerCredentials() / key validation & TLS 1.3 signature negotiation
+
+        private TlsCredentialedSigner GetSignerCredentials()
         {
 
-            var certificateEntry    = new CertificateEntry(new BcTlsCertificate((BcTlsCrypto) Crypto, encodedCertificate), null);
-            var certificateChain    = new Org.BouncyCastle.Tls.Certificate(TlsUtilities.EmptyBytes, [ certificateEntry ]);
+            var crypto             = (BcTlsCrypto) Crypto;
+            var certificateEntries = encodedCertificates.
+                                         Select(certBytes => new CertificateEntry(
+                                                                 new BcTlsCertificate(crypto, certBytes),
+                                                                 null
+                                                             )).
+                                         ToArray();
 
-            var signatureAlgorithm  = new SignatureAndHashAlgorithm(
-                                          HashAlgorithm.sha256,
-                                          SignatureAlgorithm.ecdsa
-                                      );
+            var certificateChain   = new Org.BouncyCastle.Tls.Certificate(
+                                         TlsUtilities.EmptyBytes,
+                                         certificateEntries
+                                     );
 
-            return new DefaultTlsCredentialedSigner(
-                       new TlsCryptoParameters(m_context),
-                       new BcTlsECDsaSigner((BcTlsCrypto) Crypto, PrivateKey),
-                       certificateChain,
-                       signatureAlgorithm
-                   );
+            var clientSigAlgs      = m_context.SecurityParameters.ClientSigAlgs;
+
+            switch (PrivateKey)
+            {
+
+                case ECPrivateKeyParameters ecKey:
+                {
+                    var scheme = ResolveECDsaSignatureScheme(ecKey);
+                    EnsureClientSupportsSignatureScheme(clientSigAlgs, scheme);
+
+                    return new DefaultTlsCredentialedSigner(
+                               new TlsCryptoParameters(m_context),
+                               new BcTlsECDsa13Signer(crypto, ecKey, scheme),
+                               certificateChain,
+                               SignatureScheme.GetSignatureAndHashAlgorithm(scheme)
+                           );
+                }
+
+                case RsaKeyParameters rsaKey:
+                {
+                    var scheme = SelectRsaPssSignatureScheme(Certificate, clientSigAlgs);
+
+                    return new DefaultTlsCredentialedSigner(
+                               new TlsCryptoParameters(m_context),
+                               new BcTlsRsaPssSigner(crypto, rsaKey, scheme),
+                               certificateChain,
+                               SignatureScheme.GetSignatureAndHashAlgorithm(scheme)
+                           );
+                }
+
+                case Ed25519PrivateKeyParameters ed25519Key:
+                {
+                    EnsureClientSupportsSignatureScheme(clientSigAlgs, SignatureScheme.ed25519);
+
+                    return new DefaultTlsCredentialedSigner(
+                               new TlsCryptoParameters(m_context),
+                               new BcTlsEd25519Signer(crypto, ed25519Key),
+                               certificateChain,
+                               SignatureScheme.GetSignatureAndHashAlgorithm(SignatureScheme.ed25519)
+                           );
+                }
+
+                case Ed448PrivateKeyParameters ed448Key:
+                {
+                    EnsureClientSupportsSignatureScheme(clientSigAlgs, SignatureScheme.ed448);
+
+                    return new DefaultTlsCredentialedSigner(
+                               new TlsCryptoParameters(m_context),
+                               new BcTlsEd448Signer(crypto, ed448Key),
+                               certificateChain,
+                               SignatureScheme.GetSignatureAndHashAlgorithm(SignatureScheme.ed448)
+                           );
+                }
+
+                default:
+                    throw new TlsFatalAlert(AlertDescription.internal_error);
+
+            }
+
+        }
+
+        internal static void ValidatePrivateKey(AsymmetricKeyParameter PrivateKey)
+        {
+
+            if (!PrivateKey.IsPrivate)
+                throw new ArgumentException("The supplied TLS key is not a private key.", nameof(PrivateKey));
+
+            switch (PrivateKey)
+            {
+
+                case ECPrivateKeyParameters ecKey:
+                    _ = ResolveECDsaSignatureScheme(ecKey);
+                    break;
+
+                case RsaKeyParameters:
+                case Ed25519PrivateKeyParameters:
+                case Ed448PrivateKeyParameters:
+                    break;
+
+                default:
+                    throw new NotSupportedException(
+                              $"Unsupported TLS private key type '{PrivateKey.GetType().Name}'. " +
+                              "Supported key types are ECDSA (P-256, P-384, P-521), RSA, Ed25519, and Ed448."
+                          );
+
+            }
+
+        }
+
+        private static Int32 ResolveECDsaSignatureScheme(ECPrivateKeyParameters Key)
+        {
+
+            if (Key.Parameters is ECNamedDomainParameters named)
+            {
+                if (SecObjectIdentifiers.SecP256r1.Equals(named.Name))
+                    return SignatureScheme.ecdsa_secp256r1_sha256;
+
+                if (SecObjectIdentifiers.SecP384r1.Equals(named.Name))
+                    return SignatureScheme.ecdsa_secp384r1_sha384;
+
+                if (SecObjectIdentifiers.SecP521r1.Equals(named.Name))
+                    return SignatureScheme.ecdsa_secp521r1_sha512;
+            }
+
+            if (MatchesNamedCurve(Key.Parameters, SecObjectIdentifiers.SecP256r1))
+                return SignatureScheme.ecdsa_secp256r1_sha256;
+
+            if (MatchesNamedCurve(Key.Parameters, SecObjectIdentifiers.SecP384r1))
+                return SignatureScheme.ecdsa_secp384r1_sha384;
+
+            if (MatchesNamedCurve(Key.Parameters, SecObjectIdentifiers.SecP521r1))
+                return SignatureScheme.ecdsa_secp521r1_sha512;
+
+            throw new NotSupportedException(
+                      $"Unsupported ECDSA curve (field size {Key.Parameters.Curve.FieldSize} bits) for TLS 1.3. " +
+                      "RFC 8446 § 4.2.3 supports P-256 (secp256r1), P-384 (secp384r1), and P-521 (secp521r1)."
+                  );
+
+        }
+
+        private static Boolean MatchesNamedCurve(ECDomainParameters   Parameters,
+                                                 DerObjectIdentifier  CurveOid)
+        {
+
+            var curve = SecNamedCurves.GetByOid(CurveOid);
+            if (curve is null)
+                return false;
+
+            return Parameters.Curve.Equals(curve.Curve) &&
+                   Parameters.G.    Equals(curve.G)     &&
+                   Parameters.N.    Equals(curve.N);
+
+        }
+
+        private static Int32 SelectRsaPssSignatureScheme(X509Certificate                    LeafCertificate,
+                                                         IList<SignatureAndHashAlgorithm>?  ClientSigAlgs)
+        {
+
+            var spkiOid    = LeafCertificate.CertificateStructure.SubjectPublicKeyInfo.Algorithm.Algorithm;
+            var isPssCert  = PkcsObjectIdentifiers.IdRsassaPss.Equals(spkiOid);
+
+            Int32[] candidates = isPssCert
+                                     ? [
+                                           SignatureScheme.rsa_pss_pss_sha256,
+                                           SignatureScheme.rsa_pss_pss_sha384,
+                                           SignatureScheme.rsa_pss_pss_sha512
+                                       ]
+                                     : [
+                                           SignatureScheme.rsa_pss_rsae_sha256,
+                                           SignatureScheme.rsa_pss_rsae_sha384,
+                                           SignatureScheme.rsa_pss_rsae_sha512
+                                       ];
+
+            if (ClientSigAlgs is null || ClientSigAlgs.Count == 0)
+                return candidates[0];
+
+            // Honour the client's preference order among the supported TLS 1.3 RSA-PSS schemes.
+            foreach (var offered in ClientSigAlgs)
+            {
+                var scheme = SignatureScheme.From(offered);
+                if (candidates.Contains(scheme))
+                    return scheme;
+            }
+
+            throw new TlsFatalAlert(AlertDescription.handshake_failure);
+
+        }
+
+        private static void EnsureClientSupportsSignatureScheme(IList<SignatureAndHashAlgorithm>?  ClientSigAlgs,
+                                                                Int32                              RequiredScheme)
+        {
+
+            if (ClientSigAlgs is null || ClientSigAlgs.Count == 0)
+                return;
+
+            foreach (var offered in ClientSigAlgs)
+            {
+                if (SignatureScheme.From(offered) == RequiredScheme)
+                    return;
+            }
+
+            throw new TlsFatalAlert(AlertDescription.handshake_failure);
 
         }
 

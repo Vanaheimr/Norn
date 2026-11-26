@@ -152,16 +152,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.CLI.Commands
 
             #region Load the certificate, if one was named
 
-            X509Certificate?         certificate  = null;
-            ECPrivateKeyParameters?  privateKey   = null;
+            X509Certificate?               certificate       = null;
+            IReadOnlyList<X509Certificate> certificateChain  = [];
+            Org.BouncyCastle.Crypto.AsymmetricKeyParameter? privateKey = null;
 
             if (certificatePath is not null && keyPath is not null)
             {
 
                 try
                 {
-                    certificate = ReadPem<X509Certificate>(certificatePath);
-                    privateKey  = ReadPrivateKey(keyPath);
+                    (certificate, certificateChain) = ReadCertificateChain(certificatePath);
+                    privateKey                      = ReadPrivateKey(keyPath);
                 }
                 catch (Exception e)
                 {
@@ -196,6 +197,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.CLI.Commands
 
                              TLSCertificate:       certificate,
                              TLSPrivateKey:        privateKey,
+                             TLSCertificateChain:  certificateChain,
 
                              Stratum:              (Byte) stratum,
                              ReferenceIdentifier:  NTP.ReferenceIdentifier.From(refid),
@@ -328,32 +330,36 @@ namespace org.GraphDefined.Vanaheimr.Norn.CLI.Commands
 
         #endregion
 
-        #region (private) ReadPem / ReadPrivateKey / NTSServerPrecision
+        #region (private) ReadCertificateChain / ReadPrivateKey / NTSServerPrecision
 
-        private static T ReadPem<T>(String Path) where T : class
+        private static (X509Certificate Leaf, IReadOnlyList<X509Certificate> Intermediates) ReadCertificateChain(String Path)
         {
 
             using var reader = new StreamReader(Path);
+            var pemReader    = new PemReader(reader);
+            var certificates = new List<X509Certificate>();
 
-            var content = new PemReader(reader).ReadObject()
-                              ?? throw new InvalidDataException($"'{Path}' holds no PEM object.");
+            while (pemReader.ReadObject() is { } content)
+            {
+                if (content is X509Certificate cert)
+                    certificates.Add(cert);
+                else if (certificates.Count == 0)
+                    throw new InvalidDataException($"'{Path}' holds a {content.GetType().Name}, not an X509Certificate.");
+            }
 
-            return content as T
-                       ?? throw new InvalidDataException($"'{Path}' holds a {content.GetType().Name}, not a {typeof(T).Name}.");
+            if (certificates.Count == 0)
+                throw new InvalidDataException($"'{Path}' holds no PEM certificate.");
+
+            return (certificates[0], certificates.Skip(1).ToArray());
 
         }
 
 
         /// <summary>
-        /// Read a PEM private key, whether it is wrapped in a key pair or stands alone.
+        /// Read a PEM private key (ECDSA P-256/P-384/P-521, RSA, Ed25519, or Ed448), whether
+        /// wrapped in a key pair or standing alone (PKCS#8).
         /// </summary>
-        /// <remarks>
-        /// Both shapes are in the wild and neither is wrong: "openssl ecparam -genkey" writes a
-        /// key pair, while a key extracted from a PKCS#8 file arrives as the private key by
-        /// itself. Accepting only one of them would fail on whichever the operator happens to
-        /// have, with an error naming a BouncyCastle type rather than anything actionable.
-        /// </remarks>
-        private static ECPrivateKeyParameters ReadPrivateKey(String Path)
+        private static Org.BouncyCastle.Crypto.AsymmetricKeyParameter ReadPrivateKey(String Path)
         {
 
             using var reader = new StreamReader(Path);
@@ -361,13 +367,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.CLI.Commands
             var content = new PemReader(reader).ReadObject()
                               ?? throw new InvalidDataException($"'{Path}' holds no PEM object.");
 
-            return content switch {
-                       ECPrivateKeyParameters key                                             => key,
-                       Org.BouncyCastle.Crypto.AsymmetricCipherKeyPair { Private: ECPrivateKeyParameters key }  => key,
-                       _ => throw new InvalidDataException(
-                                $"'{Path}' holds a {content.GetType().Name}; an EC private key is needed. " +
-                                 "Norn's NTS-KE endpoint signs with ECDSA.")
-                   };
+            var key = content switch {
+                          Org.BouncyCastle.Crypto.AsymmetricKeyParameter                  single when single.IsPrivate => single,
+                          Org.BouncyCastle.Crypto.AsymmetricCipherKeyPair { Private: var p } when p.IsPrivate          => p,
+                          _ => throw new InvalidDataException(
+                                   $"'{Path}' holds a {content.GetType().Name}; a supported private key " +
+                                   "(ECDSA P-256/P-384/P-521, RSA, Ed25519, or Ed448) is needed.")
+                      };
+
+            return key;
 
         }
 
