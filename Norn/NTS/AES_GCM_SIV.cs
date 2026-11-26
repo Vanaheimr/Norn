@@ -17,6 +17,7 @@
 
 #region Usings
 
+using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 
 using Org.BouncyCastle.Crypto;
@@ -65,7 +66,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </summary>
         private const Int32 TagLengthBits = 128;
 
-        private readonly Byte[] key;
+        private readonly KeyParameter  keyParameter;
+        private readonly Int32         keyLength;
 
         #endregion
 
@@ -82,7 +84,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </summary>
         public AEADAlgorithms Algorithm
 
-            => key.Length == 16
+            => keyLength == 16
                    ? AEADAlgorithms.AES_128_GCM_SIV
                    : AEADAlgorithms.AES_256_GCM_SIV;
 
@@ -110,7 +112,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 throw new ArgumentException("An AES-GCM-SIV key must be 16 or 32 bytes long!",
                                             nameof(Key));
 
-            this.key = (Byte[]) Key.Clone();
+            this.keyLength     = Key.Length;
+            this.keyParameter  = new KeyParameter(Key);
 
         }
 
@@ -128,8 +131,32 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public Byte[] Encrypt(Byte[]  AssociatedData,
                               Byte[]  Nonce,
                               Byte[]  Plaintext)
+        {
 
-            => Process(true, AssociatedData, Nonce, Plaintext);
+            if (Nonce is null || Nonce.Length != NonceLength)
+                throw new ArgumentException($"An AES-GCM-SIV nonce must be exactly {NonceLength} bytes long (RFC 8452 § 6)!",
+                                            nameof(Nonce));
+
+            return Process(true, AssociatedData.AsSpan(), Nonce, Plaintext.AsSpan());
+
+        }
+
+        /// <summary>
+        /// Seal the plaintext without allocating intermediate buffers for associated data or input.
+        /// </summary>
+        [OverloadResolutionPriority(-1)]
+        public Byte[] Encrypt(ReadOnlySpan<Byte>  AssociatedData,
+                              ReadOnlySpan<Byte>  Nonce,
+                              ReadOnlySpan<Byte>  Plaintext)
+        {
+
+            if (Nonce.Length != NonceLength)
+                throw new ArgumentException($"An AES-GCM-SIV nonce must be exactly {NonceLength} bytes long (RFC 8452 § 6)!",
+                                            nameof(Nonce));
+
+            return Process(true, AssociatedData, Nonce.ToArray(), Plaintext);
+
+        }
 
         #endregion
 
@@ -146,44 +173,66 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public Byte[] Decrypt(Byte[]  AssociatedData,
                               Byte[]  Nonce,
                               Byte[]  Ciphertext)
-
-            => Process(false, AssociatedData, Nonce, Ciphertext);
-
-        #endregion
-
-        #region (private) Process(ForEncryption, AssociatedData, Nonce, Input)
-
-        private Byte[] Process(Boolean  ForEncryption,
-                               Byte[]   AssociatedData,
-                               Byte[]   Nonce,
-                               Byte[]   Input)
         {
 
             if (Nonce is null || Nonce.Length != NonceLength)
                 throw new ArgumentException($"An AES-GCM-SIV nonce must be exactly {NonceLength} bytes long (RFC 8452 § 6)!",
                                             nameof(Nonce));
 
+            return Process(false, AssociatedData.AsSpan(), Nonce, Ciphertext.AsSpan());
+
+        }
+
+        /// <summary>
+        /// Open the ciphertext without allocating intermediate buffers for associated data or input.
+        /// </summary>
+        [OverloadResolutionPriority(-1)]
+        public Byte[] Decrypt(ReadOnlySpan<Byte>  AssociatedData,
+                              ReadOnlySpan<Byte>  Nonce,
+                              ReadOnlySpan<Byte>  Ciphertext)
+        {
+
+            if (Nonce.Length != NonceLength)
+                throw new ArgumentException($"An AES-GCM-SIV nonce must be exactly {NonceLength} bytes long (RFC 8452 § 6)!",
+                                            nameof(Nonce));
+
+            return Process(false, AssociatedData, Nonce.ToArray(), Ciphertext);
+
+        }
+
+        #endregion
+
+        #region (private) Process(ForEncryption, AssociatedData, Nonce, Input)
+
+        private Byte[] Process(Boolean             ForEncryption,
+                               ReadOnlySpan<Byte>  AssociatedData,
+                               Byte[]              Nonce,
+                               ReadOnlySpan<Byte>  Input)
+        {
+
             var cipher = new GcmSivBlockCipher(AesUtilities.CreateEngine());
 
             cipher.Init(
                 ForEncryption,
                 new AeadParameters(
-                    new KeyParameter(key),
+                    keyParameter,
                     TagLengthBits,
-                    Nonce,
-                    AssociatedData ?? []
+                    Nonce
                 )
             );
 
-            var input   = Input ?? [];
-            var output  = new Byte[cipher.GetOutputSize(input.Length)];
+            if (!AssociatedData.IsEmpty)
+                cipher.ProcessAadBytes(AssociatedData);
+
+            var outputSize = cipher.GetOutputSize(Input.Length);
+            var output     = outputSize == 0 ? [] : new Byte[outputSize];
 
             Int32 written;
 
             try
             {
-                written  = cipher.ProcessBytes(input, 0, input.Length, output, 0);
-                written += cipher.DoFinal(output, written);
+                written  = Input.IsEmpty ? 0 : cipher.ProcessBytes(Input, output);
+                written += cipher.DoFinal(output.AsSpan(written));
             }
             catch (InvalidCipherTextException e)
             {

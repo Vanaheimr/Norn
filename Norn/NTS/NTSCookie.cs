@@ -17,6 +17,9 @@
 
 #region Usings
 
+using System.Buffers;
+using System.Buffers.Binary;
+using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Diagnostics.CodeAnalysis;
 
@@ -389,7 +392,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <param name="Nonce">The nonce from in front of the sealed body, which the AEAD has verified.</param>
         /// <param name="NTSCookie">The parsed NTS cookie.</param>
         /// <param name="ErrorResponse">An optional error response.</param>
-        private static Boolean TryParseBody(Byte[]                               Bytes,
+        private static Boolean TryParseBody(ReadOnlySpan<Byte>                   Bytes,
                                             UInt64                               MasterKeyId,
                                             Byte[]                               Nonce,
                                             [NotNullWhen(true)]  out NTSCookie?  NTSCookie,
@@ -408,9 +411,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     return false;
                 }
 
-                UInt64 timestampUInt64 = 0;
-                for (var j = 0; j < 8; j++)
-                    timestampUInt64 |= (UInt64) Bytes[OffsetTimestamp + j] << (56 - 8 * j);
+                var timestampUInt64 = BinaryPrimitives.ReadUInt64BigEndian(Bytes.Slice(OffsetTimestamp, 8));
 
                 if (timestampUInt64 > Int64.MaxValue)
                 {
@@ -419,10 +420,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 }
 
                 // AlgorithmId (Big-Endian)
-                UInt16 algorithmIdUInt16 = 0;
-                algorithmIdUInt16 |= (UInt16) (Bytes[OffsetAlgorithmId + 0] << 8);
-                algorithmIdUInt16 |= (UInt16) (Bytes[OffsetAlgorithmId + 1] & 0xFF);
-                var algorithmId = (AEADAlgorithms) algorithmIdUInt16;
+                var algorithmIdUInt16 = BinaryPrimitives.ReadUInt16BigEndian(Bytes.Slice(OffsetAlgorithmId, 2));
+                var algorithmId       = (AEADAlgorithms) algorithmIdUInt16;
 
                 // Key length
                 // From the one place that knows, so that an algorithm added there cannot be
@@ -444,12 +443,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 }
 
                 // C2S key
-                var c2sKey = new Byte[keyLength];
-                Array.Copy(Bytes, OffsetC2SKey,           c2sKey, 0, c2sKey.Length);
+                var c2sKey = Bytes.Slice(OffsetC2SKey,             keyLength).ToArray();
 
                 // S2C key
-                var s2cKey = new Byte[keyLength];
-                Array.Copy(Bytes, OffsetC2SKey+keyLength, s2cKey, 0, s2cKey.Length);
+                var s2cKey = Bytes.Slice(OffsetC2SKey + keyLength, keyLength).ToArray();
 
 
                 NTSCookie = new NTSCookie(
@@ -515,6 +512,20 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #region ToByteArray ()
 
+        private void WriteBodyTo(Span<Byte> Destination)
+        {
+
+            // NOTE: This is a vendor specific implementation of the NTS cookie format!
+            // rfc8915 Section 6 https://datatracker.ietf.org/doc/html/rfc8915#name-suggested-format-for-nts-co
+            // gives just some general hints about the cookie format!
+            BinaryPrimitives.WriteUInt64BigEndian(Destination.Slice(OffsetTimestamp,   8), (UInt64) Timestamp.ToUnixTimestamp());
+            BinaryPrimitives.WriteUInt16BigEndian(Destination.Slice(OffsetAlgorithmId, 2), (UInt16) AEADAlgorithm);
+
+            C2SKey.AsSpan().CopyTo(Destination.Slice(OffsetC2SKey,                 C2SKey.Length));
+            S2CKey.AsSpan().CopyTo(Destination.Slice(OffsetC2SKey + C2SKey.Length, S2CKey.Length));
+
+        }
+
         /// <summary>
         /// Return the decrypted cookie body.
         ///
@@ -524,34 +535,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public Byte[] ToByteArray()
         {
 
-            #region Data
-
-            var OffsetS2CKey   = (UInt16) (OffsetC2SKey + C2SKey.Length);
-            var totalLength    = OffsetS2CKey + S2CKey.Length;
-
-            var unixTimestamp  = (UInt64) Timestamp.ToUnixTimestamp();
-
-            #endregion
-
-            // NOTE: This is a vendor specific implementation of the NTS cookie format!
-            // rfc8915 Section 6 https://datatracker.ietf.org/doc/html/rfc8915#name-suggested-format-for-nts-co
-            // gives just some general hints about the cookie format!
-
-            var cookie = new Byte[totalLength];
-
-            // Timestamp (Big-Endian)
-            for (var i = 0; i < 8; i++)
-                cookie[OffsetTimestamp + i] = (Byte) (unixTimestamp >> (56 - 8 * i));
-
-            // AlgorithmId (Big-Endian)
-            var algorithmBytes = AEADAlgorithm.GetBytes();
-            cookie[OffsetAlgorithmId]     = algorithmBytes[0];
-            cookie[OffsetAlgorithmId + 1] = algorithmBytes[1];
-
-            // C2S/S2C keys
-            Buffer.BlockCopy(C2SKey, 0, cookie, OffsetC2SKey,                 C2SKey.Length);
-            Buffer.BlockCopy(S2CKey, 0, cookie, OffsetC2SKey + C2SKey.Length, S2CKey.Length);
-
+            var cookie = new Byte[OffsetC2SKey + C2SKey.Length + S2CKey.Length];
+            WriteBodyTo(cookie);
             return cookie;
 
         }
@@ -618,28 +603,41 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             else
                 ntsCookie = this;
 
-            var body           = ntsCookie.ToByteArray();
-            var aeadLength     = SyntheticIVLength + body.Length;
+            var bodyLength     = OffsetC2SKey + ntsCookie.C2SKey.Length + ntsCookie.S2CKey.Length;
+            var aeadLength     = SyntheticIVLength + bodyLength;
+            var sealedCookie   = new Byte[SealedOffsetAEAD + aeadLength];
 
             // The header that frames the ciphertext is authenticated but not encrypted, so
             // neither the key id nor the length can be swapped without failing the AEAD.
-            var header         = new Byte[SealedOffsetNonce];
-            Buffer.BlockCopy(ToNetworkByteOrder(MasterKey.Id), 0, header, SealedOffsetMasterKeyId, 8);
-            header[SealedOffsetAEADLength]     = (Byte) (aeadLength >> 8);
-            header[SealedOffsetAEADLength + 1] = (Byte)  aeadLength;
+            var headerSpan     = sealedCookie.AsSpan(0, SealedOffsetNonce);
+            BinaryPrimitives.WriteUInt64BigEndian(headerSpan.Slice(SealedOffsetMasterKeyId, 8), MasterKey.Id);
+            BinaryPrimitives.WriteUInt16BigEndian(headerSpan.Slice(SealedOffsetAEADLength,  2), (UInt16) aeadLength);
 
-            var aeadOutput     = (MasterKey.Cipher ?? new AES_SIV(MasterKey.Value)).
-                                     Encrypt(
-                                         [ header ],
-                                         ntsCookie.Nonce,
-                                         body
-                                     );
+            ntsCookie.Nonce.AsSpan().CopyTo(sealedCookie.AsSpan(SealedOffsetNonce, NonceLength));
 
-            var sealedCookie   = new Byte[SealedOffsetAEAD + aeadOutput.Length];
+            Byte[]? rentedBody = null;
+            Span<Byte> body    = bodyLength <= 256
+                                     ? stackalloc Byte[bodyLength]
+                                     : (rentedBody = ArrayPool<Byte>.Shared.Rent(bodyLength)).AsSpan(0, bodyLength);
 
-            Buffer.BlockCopy(header,           0, sealedCookie, 0,                 header.Length);
-            Buffer.BlockCopy(ntsCookie.Nonce,  0, sealedCookie, SealedOffsetNonce, NonceLength);
-            Buffer.BlockCopy(aeadOutput,       0, sealedCookie, SealedOffsetAEAD,  aeadOutput.Length);
+            try
+            {
+                ntsCookie.WriteBodyTo(body);
+
+                (MasterKey.Cipher ?? new AES_SIV(MasterKey.Value)).
+                    Encrypt(
+                        headerSpan,
+                        ntsCookie.Nonce,
+                        body,
+                        sealedCookie.AsSpan(SealedOffsetAEAD, aeadLength)
+                    );
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(body);
+                if (rentedBody is not null)
+                    ArrayPool<Byte>.Shared.Return(rentedBody);
+            }
 
             return sealedCookie;
 
@@ -659,6 +657,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public static Boolean TryReadMasterKeyId(Byte[]                            SealedCookie,
                                                  out UInt64                        MasterKeyId,
                                                  [NotNullWhen(false)] out String?  ErrorResponse)
+
+            => TryReadMasterKeyId(SealedCookie.AsSpan(), out MasterKeyId, out ErrorResponse);
+
+        /// <summary>
+        /// Read just the master key id from a sealed cookie span.
+        /// </summary>
+        [OverloadResolutionPriority(-1)]
+        public static Boolean TryReadMasterKeyId(ReadOnlySpan<Byte>                SealedCookie,
+                                                 out UInt64                        MasterKeyId,
+                                                 [NotNullWhen(false)] out String?  ErrorResponse)
         {
 
             MasterKeyId    = 0;
@@ -670,8 +678,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 return false;
             }
 
-            for (var i = 0; i < 8; i++)
-                MasterKeyId |= (UInt64) SealedCookie[SealedOffsetMasterKeyId + i] << (56 - 8 * i);
+            MasterKeyId = BinaryPrimitives.ReadUInt64BigEndian(SealedCookie.Slice(SealedOffsetMasterKeyId, 8));
 
             return true;
 
@@ -686,6 +693,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// was tampered with, or that this server never issued, yields no cookie at all.
         /// </summary>
         public static Boolean TryParse(Byte[]                                SealedCookie,
+                                       MasterKey                             MasterKey,
+                                       [NotNullWhen(true)]  out NTSCookie?   NTSCookie,
+                                       [NotNullWhen(false)] out String?      ErrorResponse)
+
+            => TryParse(SealedCookie.AsSpan(), MasterKey, out NTSCookie, out ErrorResponse);
+
+        /// <summary>
+        /// Unseal a cookie from a read-only span using the master key that issued it.
+        /// </summary>
+        [OverloadResolutionPriority(-1)]
+        public static Boolean TryParse(ReadOnlySpan<Byte>                    SealedCookie,
                                        MasterKey                             MasterKey,
                                        [NotNullWhen(true)]  out NTSCookie?   NTSCookie,
                                        [NotNullWhen(false)] out String?      ErrorResponse)
@@ -712,7 +730,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             try
             {
 
-                var aeadLength   = (SealedCookie[SealedOffsetAEADLength] << 8) | SealedCookie[SealedOffsetAEADLength + 1];
+                var aeadLength   = (Int32) BinaryPrimitives.ReadUInt16BigEndian(SealedCookie.Slice(SealedOffsetAEADLength, 2));
                 var sealedEnd    = SealedOffsetAEAD + aeadLength;
                 var paddingBytes = SealedCookie.Length - sealedEnd;
 
@@ -736,23 +754,34 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                 // Sliced to the declared length, so any RFC 7822 padding the extension field
                 // added around the cookie is left out of the AEAD.
-                var header      = new Byte[SealedOffsetNonce];
-                Buffer.BlockCopy(SealedCookie, 0, header, 0, header.Length);
+                var headerSpan     = SealedCookie.Slice(0, SealedOffsetNonce);
+                var nonceSpan      = SealedCookie.Slice(SealedOffsetNonce, NonceLength);
+                var aeadInputSpan  = SealedCookie.Slice(SealedOffsetAEAD,  aeadLength);
+                var bodyLength     = aeadLength - SyntheticIVLength;
 
-                var nonce       = new Byte[NonceLength];
-                Buffer.BlockCopy(SealedCookie, SealedOffsetNonce, nonce, 0, NonceLength);
+                Byte[]? rentedBody = null;
+                Span<Byte> body    = bodyLength <= 256
+                                         ? stackalloc Byte[bodyLength]
+                                         : (rentedBody = ArrayPool<Byte>.Shared.Rent(bodyLength)).AsSpan(0, bodyLength);
 
-                var aeadOutput  = new Byte[aeadLength];
-                Buffer.BlockCopy(SealedCookie, SealedOffsetAEAD, aeadOutput, 0, aeadLength);
+                try
+                {
+                    (MasterKey.Cipher ?? new AES_SIV(MasterKey.Value)).
+                        Decrypt(
+                            headerSpan,
+                            nonceSpan,
+                            aeadInputSpan,
+                            body
+                        );
 
-                var body        = (MasterKey.Cipher ?? new AES_SIV(MasterKey.Value)).
-                                      Decrypt(
-                                          [ header ],
-                                          nonce,
-                                          aeadOutput
-                                      );
-
-                return TryParseBody(body, masterKeyId, nonce, out NTSCookie, out ErrorResponse);
+                    return TryParseBody(body, masterKeyId, nonceSpan.ToArray(), out NTSCookie, out ErrorResponse);
+                }
+                finally
+                {
+                    CryptographicOperations.ZeroMemory(body);
+                    if (rentedBody is not null)
+                        ArrayPool<Byte>.Shared.Return(rentedBody);
+                }
 
             }
             catch (Exception e)
@@ -771,6 +800,19 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// window.
         /// </summary>
         public static Boolean TryParse(Byte[]                                                   SealedCookie,
+                                       IReadOnlyDictionary<UInt64, MasterKey>?                  MasterKeys,
+                                       [NotNullWhen(true)]  out NTSCookie?                      NTSCookie,
+                                       [NotNullWhen(false)] out String?                         ErrorResponse)
+
+            => TryParse(SealedCookie.AsSpan(), MasterKeys, out NTSCookie, out ErrorResponse);
+
+        /// <summary>
+        /// Unseal a cookie span by looking its master key up among the server's current and
+        /// still-accepted keys, then checking the cookie falls inside that key's validity
+        /// window.
+        /// </summary>
+        [OverloadResolutionPriority(-1)]
+        public static Boolean TryParse(ReadOnlySpan<Byte>                                       SealedCookie,
                                        IReadOnlyDictionary<UInt64, MasterKey>?                  MasterKeys,
                                        [NotNullWhen(true)]  out NTSCookie?                      NTSCookie,
                                        [NotNullWhen(false)] out String?                         ErrorResponse)
@@ -807,22 +849,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             }
 
             return true;
-
-        }
-
-        #endregion
-
-        #region (private, static) ToNetworkByteOrder(Value)
-
-        private static Byte[] ToNetworkByteOrder(UInt64 Value)
-        {
-
-            var bytes = new Byte[8];
-
-            for (var i = 0; i < 8; i++)
-                bytes[i] = (Byte) (Value >> (56 - 8 * i));
-
-            return bytes;
 
         }
 

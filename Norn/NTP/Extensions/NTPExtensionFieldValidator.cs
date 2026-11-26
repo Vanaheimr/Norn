@@ -17,7 +17,9 @@
 
 #region Usings
 
+using System.Buffers.Binary;
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 
 #endregion
 
@@ -60,6 +62,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         /// <param name="ErrorResponse">Why the framing is invalid, when it is.</param>
         public static Boolean TryValidate(Byte[]                            Buffer,
                                           [NotNullWhen(false)] out String?  ErrorResponse)
+
+            => TryValidate(Buffer.AsSpan(), out ErrorResponse);
+
+
+        /// <summary>
+        /// Check the extension field chain that follows the header without allocating on the heap.
+        /// </summary>
+        /// <param name="Buffer">The whole packet.</param>
+        /// <param name="ErrorResponse">Why the framing is invalid, when it is.</param>
+        [OverloadResolutionPriority(-1)]
+        public static Boolean TryValidate(ReadOnlySpan<Byte>                Buffer,
+                                          [NotNullWhen(false)] out String?  ErrorResponse)
         {
 
             ErrorResponse = null;
@@ -74,9 +88,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
             if (Buffer.Length == HeaderLength)
                 return true;
 
-            var offset  = HeaderLength;
-            var lengths = new List<Int32>();
-            var counts  = new Dictionary<ExtensionTypes, Int32>();
+            var offset                  = HeaderLength;
+            var fieldIndex              = 0;
+            var uniqueIdentifierCount   = 0;
+            var authenticatorCount      = 0;
+            var firstShortFieldIndex    = -1;
+            var firstShortFieldLength   = 0;
+            var firstShortFieldIsLast   = false;
 
             while (offset < Buffer.Length)
             {
@@ -90,7 +108,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                     return false;
                 }
 
-                var length = (Buffer[offset + 2] << 8) | Buffer[offset + 3];
+                var length = BinaryPrimitives.ReadUInt16BigEndian(Buffer.Slice(offset + 2, 2));
 
                 if (length < 4)
                 {
@@ -99,7 +117,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                     return false;
                 }
 
-                if (length % 4 != 0)
+                if ((length & 3) != 0)
                 {
                     ErrorResponse = $"The extension field at offset {offset} declares a length of {length} octets, " +
                                      "which is not a multiple of 4 (RFC 7822: fields are zero-padded to a four-octet boundary)!";
@@ -114,11 +132,25 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                     return false;
                 }
 
-                var type      = (ExtensionTypes) ((Buffer[offset] << 8) | Buffer[offset + 1]);
-                counts[type]  = counts.TryGetValue(type, out var seen) ? seen + 1 : 1;
+                var type = (ExtensionTypes) BinaryPrimitives.ReadUInt16BigEndian(Buffer.Slice(offset, 2));
 
-                lengths.Add(length);
+                if (type == ExtensionTypes.UniqueIdentifier)
+                    uniqueIdentifierCount++;
+                else if (type == ExtensionTypes.AuthenticatorAndEncrypted)
+                    authenticatorCount++;
+
+                var isLast  = offset + length == Buffer.Length;
+                var minimum = isLast ? MinimumLastFieldLength : MinimumFieldLength;
+
+                if (firstShortFieldIndex < 0 && length < minimum)
+                {
+                    firstShortFieldIndex  = fieldIndex;
+                    firstShortFieldLength = length;
+                    firstShortFieldIsLast = isLast;
+                }
+
                 offset += length;
+                fieldIndex++;
 
             }
 
@@ -126,30 +158,26 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
             // Authenticator field in an NTS-protected packet. Accepting two would leave it
             // undefined which one a peer is meant to match against, and would let an
             // attacker append a second one to change how the packet is read.
-            foreach (var singleton in new[] { ExtensionTypes.UniqueIdentifier,
-                                              ExtensionTypes.AuthenticatorAndEncrypted })
+            if (uniqueIdentifierCount > 1)
             {
-                if (counts.TryGetValue(singleton, out var count) && count > 1)
-                {
-                    ErrorResponse = $"The packet carries {count} {singleton} extension fields; " +
-                                     "RFC 8915 § 5.7 permits at most one!";
-                    return false;
-                }
+                ErrorResponse = $"The packet carries {uniqueIdentifierCount} {ExtensionTypes.UniqueIdentifier} extension fields; " +
+                                 "RFC 8915 § 5.7 permits at most one!";
+                return false;
             }
 
-            for (var i = 0; i < lengths.Count; i++)
+            if (authenticatorCount > 1)
             {
+                ErrorResponse = $"The packet carries {authenticatorCount} {ExtensionTypes.AuthenticatorAndEncrypted} extension fields; " +
+                                 "RFC 8915 § 5.7 permits at most one!";
+                return false;
+            }
 
-                var isLast   = i == lengths.Count - 1;
-                var minimum  = isLast ? MinimumLastFieldLength : MinimumFieldLength;
-
-                if (lengths[i] < minimum)
-                {
-                    ErrorResponse = $"The {(isLast ? "last" : $"#{i + 1}")} extension field is {lengths[i]} octets; " +
-                                    $"RFC 7822 § 7.5.1.4 requires at least {minimum} in a packet without a MAC!";
-                    return false;
-                }
-
+            if (firstShortFieldIndex >= 0)
+            {
+                var minimum = firstShortFieldIsLast ? MinimumLastFieldLength : MinimumFieldLength;
+                ErrorResponse = $"The {(firstShortFieldIsLast ? "last" : $"#{firstShortFieldIndex + 1}")} extension field is {firstShortFieldLength} octets; " +
+                                $"RFC 7822 § 7.5.1.4 requires at least {minimum} in a packet without a MAC!";
+                return false;
             }
 
             return true;

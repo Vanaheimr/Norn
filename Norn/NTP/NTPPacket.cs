@@ -17,6 +17,7 @@
 
 #region Usings
 
+using System.Buffers.Binary;
 using System.Diagnostics;
 using System.Security.Cryptography;
 
@@ -447,6 +448,37 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         #endregion
 
 
+        #region WriteHeaderTo(Destination)
+
+        /// <summary>
+        /// Write the 48-byte big-endian NTP header directly into the given span.
+        /// </summary>
+        /// <param name="Destination">A destination span of at least 48 bytes.</param>
+        public void WriteHeaderTo(Span<Byte> Destination)
+        {
+
+            if (Destination.Length < 48)
+                throw new ArgumentException($"Destination span ({Destination.Length} bytes) is shorter than the 48-byte NTP header!",
+                                            nameof(Destination));
+
+            // Byte 0: LI (2 Bit), VN (3 Bit), Mode (3 Bit)
+            Destination[0] = (Byte) (((LI & 0x03) << 6) | ((VN & 0x07) << 3) | (Mode & 0x07));
+            Destination[1] = Stratum;
+            Destination[2] = Poll;
+            Destination[3] = (Byte) Precision;
+
+            BinaryPrimitives.WriteUInt32BigEndian(Destination.Slice( 4, 4), RootDelay);
+            BinaryPrimitives.WriteUInt32BigEndian(Destination.Slice( 8, 4), RootDispersion);
+            BinaryPrimitives.WriteUInt32BigEndian(Destination.Slice(12, 4), ReferenceIdentifier.Integer);
+            BinaryPrimitives.WriteUInt64BigEndian(Destination.Slice(16, 8), ReferenceTimestamp);
+            BinaryPrimitives.WriteUInt64BigEndian(Destination.Slice(24, 8), OriginateTimestamp);
+            BinaryPrimitives.WriteUInt64BigEndian(Destination.Slice(32, 8), ReceiveTimestamp);
+            BinaryPrimitives.WriteUInt64BigEndian(Destination.Slice(40, 8), TransmitTimestamp ?? GetCurrentNTPTimestamp());
+
+        }
+
+        #endregion
+
         #region ToByteArray(SkipExtensions = false)
 
         /// <summary>
@@ -455,87 +487,50 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         public Byte[] ToByteArray(Boolean SkipExtensions = false)
         {
 
-            var buffer = new Byte[48];
+            var totalLength = 48;
 
-            // Byte 0: LI (2 Bit), VN (3 Bit), Mode (3 Bit)
-            buffer[0] = (Byte) (((LI & 0x03) << 6) | ((VN & 0x07) << 3) | (Mode & 0x07));
-            buffer[1] = Stratum;
-            buffer[2] = Poll;
-            buffer[3] = (Byte) Precision;
-
-            WriteUInt32BigEndian(buffer,  4, RootDelay);
-            WriteUInt32BigEndian(buffer,  8, RootDispersion);
-            WriteUInt32BigEndian(buffer, 12, ReferenceIdentifier.Integer);
-            WriteUInt64BigEndian(buffer, 16, ReferenceTimestamp);
-            WriteUInt64BigEndian(buffer, 24, OriginateTimestamp);
-            WriteUInt64BigEndian(buffer, 32, ReceiveTimestamp);
-
-            if (TransmitTimestamp.HasValue)
-                WriteUInt64BigEndian(buffer, 40, TransmitTimestamp.Value);
-
-            else
+            if (!SkipExtensions)
             {
-
-                var ntpTimestamp = GetCurrentNTPTimestamp();
-
-                // Bytes 40-47:  Transmit Timestamp as big-endian
-                for (var i = 0; i < 8; i++)
-                    buffer[40 + i] = (Byte) (ntpTimestamp >> (56 - i * 8));
-
+                if (Extensions is IReadOnlyList<NTPExtension> extensionList)
+                {
+                    for (var i = 0; i < extensionList.Count; i++)
+                        totalLength += extensionList[i].Length;
+                }
+                else
+                {
+                    foreach (var extension in Extensions)
+                        totalLength += extension.Length;
+                }
             }
 
-            if (Extensions.Any() && !SkipExtensions)
+            var buffer = new Byte[totalLength];
+            WriteHeaderTo(buffer);
+
+            if (totalLength > 48)
             {
+                var offset = 48;
 
-                var bufferLength = buffer.Length;
-
-                Array.Resize(ref buffer, bufferLength + Extensions.Sum(extension => extension.Length));
-                var offset       = bufferLength;
-
-                foreach (var extension in Extensions)
+                if (Extensions is IReadOnlyList<NTPExtension> extensionList)
                 {
-                    Buffer.BlockCopy(extension.ToByteArray(), 0, buffer, offset, extension.Length);
-                    offset += extension.Length;
+                    for (var i = 0; i < extensionList.Count; i++)
+                    {
+                        var extension = extensionList[i];
+                        extension.WriteTo(buffer.AsSpan(offset, extension.Length));
+                        offset += extension.Length;
+                    }
                 }
-
+                else
+                {
+                    foreach (var extension in Extensions)
+                    {
+                        extension.WriteTo(buffer.AsSpan(offset, extension.Length));
+                        offset += extension.Length;
+                    }
+                }
             }
 
             return buffer;
 
-        }
-
-        #endregion
-
-        #region (static) WriteUInt32BigEndian(buffer, offset, value)
-
-        /// <summary>
-        /// Schreibt eine 32-Bit-Zahl im big-endian Format in den Buffer.
-        /// </summary>
-        private static void WriteUInt32BigEndian(byte[] buffer, int offset, uint value)
-        {
-            buffer[offset]     = (byte)((value >> 24) & 0xFF);
-            buffer[offset + 1] = (byte)((value >> 16) & 0xFF);
-            buffer[offset + 2] = (byte)((value >> 8) & 0xFF);
-            buffer[offset + 3] = (byte)(value & 0xFF);
-        }
-
-        #endregion
-
-        #region (static) WriteUInt64BigEndian(buffer, offset, value)
-
-        /// <summary>
-        /// Schreibt eine 64-Bit-Zahl im big-endian Format in den Buffer.
-        /// </summary>
-        private static void WriteUInt64BigEndian(byte[] buffer, int offset, ulong value)
-        {
-            buffer[offset]     = (byte)((value >> 56) & 0xFF);
-            buffer[offset + 1] = (byte)((value >> 48) & 0xFF);
-            buffer[offset + 2] = (byte)((value >> 40) & 0xFF);
-            buffer[offset + 3] = (byte)((value >> 32) & 0xFF);
-            buffer[offset + 4] = (byte)((value >> 24) & 0xFF);
-            buffer[offset + 5] = (byte)((value >> 16) & 0xFF);
-            buffer[offset + 6] = (byte)((value >> 8) & 0xFF);
-            buffer[offset + 7] = (byte)(value & 0xFF);
         }
 
         #endregion
@@ -592,14 +587,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
         protected static UInt64 ReadUInt64(Byte[] Buffer, Int32 Offset)
 
-            => ((UInt64) Buffer[Offset]     << 56) |
-               ((UInt64) Buffer[Offset + 1] << 48) |
-               ((UInt64) Buffer[Offset + 2] << 40) |
-               ((UInt64) Buffer[Offset + 3] << 32) |
-               ((UInt64) Buffer[Offset + 4] << 24) |
-               ((UInt64) Buffer[Offset + 5] << 16) |
-               ((UInt64) Buffer[Offset + 6] <<  8) |
-                         Buffer[Offset + 7];
+            => BinaryPrimitives.ReadUInt64BigEndian(Buffer.AsSpan(Offset, 8));
+
+        protected static UInt64 ReadUInt64(ReadOnlySpan<Byte> Buffer, Int32 Offset)
+
+            => BinaryPrimitives.ReadUInt64BigEndian(Buffer.Slice(Offset, 8));
 
         #endregion
 

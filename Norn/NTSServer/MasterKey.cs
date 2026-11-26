@@ -63,7 +63,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             #endregion
 
-            var cookies = new List<NTSKE_Record>();
+            var cookies = new List<NTSKE_Record>(NumberOfCookies);
 
             for (var i = 0; i < NumberOfCookies; i++)
             {
@@ -111,7 +111,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             #endregion
 
-            var cookies = new List<NTSCookieExtension>();
+            var cookies = new List<NTSCookieExtension>(NumberOfCookies);
 
             for (var i = 0; i < NumberOfCookies; i++)
             {

@@ -17,6 +17,7 @@
 
 #region Usings
 
+using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 
 using Org.BouncyCastle.Crypto;
@@ -61,7 +62,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <summary>
         /// CMAC(Key1, 0^128): what S2V starts from, RFC 5297 § 2.4.
         /// </summary>
-        private readonly Byte[]  cmacOfZero;
+        private readonly Byte[]        cmacOfZero;
+
+        private readonly KeyParameter  key1Parameter;
+        private readonly KeyParameter  key2Parameter;
 
         #endregion
 
@@ -92,16 +96,19 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             var half = Key.Length / 2;
 
-            Key1_CMAC    = new Byte[half];
-            Key2_AESCTR  = new Byte[half];
+            Key1_CMAC      = new Byte[half];
+            Key2_AESCTR    = new Byte[half];
 
             Array.Copy(Key,    0, Key1_CMAC,   0, half);
             Array.Copy(Key, half, Key2_AESCTR, 0, half);
 
-            var aes      = Keyed(Key1_CMAC);
+            key1Parameter  = new KeyParameter(Key1_CMAC);
+            key2Parameter  = new KeyParameter(Key2_AESCTR);
 
-            cmacSubkeys  = new Byte[2 * BlockSize];
-            cmacOfZero   = new Byte[BlockSize];
+            var aes        = Keyed(key1Parameter);
+
+            cmacSubkeys    = new Byte[2 * BlockSize];
+            cmacOfZero     = new Byte[BlockSize];
 
             Subkeys(aes, cmacSubkeys);
 
@@ -137,9 +144,47 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             String2InitializationVector(AssociatedData, Nonce, Plaintext, syntheticIV);
 
-            CTR(Keyed(Key2_AESCTR), syntheticIV, Plaintext, result.AsSpan(BlockSize));
+            CTR(Keyed(key2Parameter), syntheticIV, Plaintext, result.AsSpan(BlockSize));
 
             return result;
+
+        }
+
+        /// <summary>
+        /// Encrypts the given plaintext with a single associated-data component, avoiding
+        /// intermediate array allocations on the NTP/NTS hot path.
+        /// </summary>
+        [OverloadResolutionPriority(-1)]
+        public Byte[] Encrypt(ReadOnlySpan<Byte>  AssociatedData,
+                              ReadOnlySpan<Byte>  Nonce,
+                              ReadOnlySpan<Byte>  Plaintext)
+        {
+
+            var result = new Byte[BlockSize + Plaintext.Length];
+            Encrypt(AssociatedData, Nonce, Plaintext, result);
+            return result;
+
+        }
+
+        /// <summary>
+        /// Encrypts the given plaintext with a single associated-data component directly into
+        /// <paramref name="Destination"/> (which must be at least <c>16 + Plaintext.Length</c> bytes).
+        /// </summary>
+        public void Encrypt(ReadOnlySpan<Byte>  AssociatedData,
+                            ReadOnlySpan<Byte>  Nonce,
+                            ReadOnlySpan<Byte>  Plaintext,
+                            Span<Byte>          Destination)
+        {
+
+            if (Destination.Length < BlockSize + Plaintext.Length)
+                throw new ArgumentException($"Destination span ({Destination.Length} bytes) must be at least {BlockSize + Plaintext.Length} bytes!",
+                                            nameof(Destination));
+
+            var syntheticIV = Destination[..BlockSize];
+
+            String2InitializationVector(AssociatedData, Nonce, Plaintext, syntheticIV);
+
+            CTR(Keyed(key2Parameter), syntheticIV, Plaintext, Destination.Slice(BlockSize, Plaintext.Length));
 
         }
 
@@ -165,7 +210,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             var plaintext    = new Byte[SyntheticIVAndCiphertext.Length - BlockSize];
 
             // AES-CTR decryption is the same as encryption:
-            CTR(Keyed(Key2_AESCTR), syntheticIV, SyntheticIVAndCiphertext.AsSpan(BlockSize), plaintext);
+            CTR(Keyed(key2Parameter), syntheticIV, SyntheticIVAndCiphertext.AsSpan(BlockSize), plaintext);
 
             // Recompute the synthetic IV from associated data, nonce, and the decrypted plaintext:
             Span<Byte> computedSIV = stackalloc Byte[BlockSize];
@@ -186,6 +231,76 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             }
 
             return plaintext;
+
+        }
+
+        /// <summary>
+        /// Decrypts an encrypted message of the form syntheticIV || ciphertext with a single
+        /// associated-data component.
+        /// </summary>
+        [OverloadResolutionPriority(-1)]
+        public Byte[] Decrypt(ReadOnlySpan<Byte>  AssociatedData,
+                              ReadOnlySpan<Byte>  Nonce,
+                              ReadOnlySpan<Byte>  SyntheticIVAndCiphertext)
+        {
+
+            if (SyntheticIVAndCiphertext.Length < BlockSize)
+                throw new ArgumentException("Encrypted message too short.");
+
+            var plaintext = SyntheticIVAndCiphertext.Length == BlockSize
+                                ? []
+                                : new Byte[SyntheticIVAndCiphertext.Length - BlockSize];
+
+            Decrypt(AssociatedData, Nonce, SyntheticIVAndCiphertext, plaintext);
+
+            return plaintext;
+
+        }
+
+        /// <summary>
+        /// Decrypts an encrypted message of the form syntheticIV || ciphertext with a single
+        /// associated-data component directly into <paramref name="Destination"/>.
+        /// Throws <see cref="CryptographicException"/> if authentication fails, zeroing <paramref name="Destination"/>.
+        /// </summary>
+        public void Decrypt(ReadOnlySpan<Byte>  AssociatedData,
+                            ReadOnlySpan<Byte>  Nonce,
+                            ReadOnlySpan<Byte>  SyntheticIVAndCiphertext,
+                            Span<Byte>          Destination)
+        {
+
+            if (SyntheticIVAndCiphertext.Length < BlockSize)
+                throw new ArgumentException("Encrypted message too short.");
+
+            var plaintextLength = SyntheticIVAndCiphertext.Length - BlockSize;
+
+            if (Destination.Length < plaintextLength)
+                throw new ArgumentException($"Destination span ({Destination.Length} bytes) must be at least {plaintextLength} bytes!",
+                                            nameof(Destination));
+
+            var syntheticIV = SyntheticIVAndCiphertext[..BlockSize];
+            var output      = Destination[..plaintextLength];
+
+            // AES-CTR decryption is the same as encryption:
+            if (plaintextLength > 0)
+                CTR(Keyed(key2Parameter), syntheticIV, SyntheticIVAndCiphertext[BlockSize..], output);
+
+            // Recompute the synthetic IV from associated data, nonce, and the decrypted plaintext:
+            Span<Byte> computedSIV = stackalloc Byte[BlockSize];
+
+            String2InitializationVector(AssociatedData, Nonce, output, computedSIV);
+
+            // Compared in constant time: a data-dependent early exit would leak how much of a
+            // forged synthetic IV was correct, letting an attacker construct one byte at a time.
+            if (!CryptographicOperations.FixedTimeEquals(syntheticIV, computedSIV))
+            {
+
+                // What was decrypted with a synthetic IV that is not this message's is not
+                // this message, and is nobody's business.
+                CryptographicOperations.ZeroMemory(output);
+
+                throw new CryptographicException("Authentication failed: SIV mismatch!");
+
+            }
 
         }
 
@@ -217,7 +332,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             // CMAC(<one>) on "no associated data and no plaintext" produced a different
             // synthetic IV than any conformant implementation.
 
-            var aes = Keyed(Key1_CMAC);
+            var aes = Keyed(key1Parameter);
 
             // Step 1: D = CMAC(K, <zero>), which the constructor has computed.
             Span<Byte> D    = stackalloc Byte[BlockSize];
@@ -241,6 +356,50 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 XOR(D, cmac);
             }
 
+            FinalizeS2V(aes, D, Plaintext, SyntheticIV);
+
+        }
+
+        /// <summary>
+        /// Single-AD fast path for S2V (RFC 5297 § 2.4), matching <c>[ AssociatedData ]</c>
+        /// with zero heap allocations.
+        /// </summary>
+        private void String2InitializationVector(ReadOnlySpan<Byte>  AssociatedData,
+                                                 ReadOnlySpan<Byte>  Nonce,
+                                                 ReadOnlySpan<Byte>  Plaintext,
+                                                 Span<Byte>          SyntheticIV)
+        {
+
+            var aes = Keyed(key1Parameter);
+
+            // Step 1: D = CMAC(K, <zero>), which the constructor has computed.
+            Span<Byte> D    = stackalloc Byte[BlockSize];
+            Span<Byte> cmac = stackalloc Byte[BlockSize];
+
+            cmacOfZero.CopyTo(D);
+
+            // Step 2: single associated-data component, then the nonce if present.
+            DoubleBlock(D);
+            CMAC(aes, cmacSubkeys, AssociatedData, [], cmac);
+            XOR(D, cmac);
+
+            if (!Nonce.IsEmpty)
+            {
+                DoubleBlock(D);
+                CMAC(aes, cmacSubkeys, Nonce, [], cmac);
+                XOR(D, cmac);
+            }
+
+            FinalizeS2V(aes, D, Plaintext, SyntheticIV);
+
+        }
+
+        private void FinalizeS2V(IBlockCipher        AES,
+                                 Span<Byte>          D,
+                                 ReadOnlySpan<Byte>  Plaintext,
+                                 Span<Byte>          SyntheticIV)
+        {
+
             // Step 3 and 4: V = CMAC(K, T)
             if (Plaintext.Length >= BlockSize)
             {
@@ -252,7 +411,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 Plaintext[^BlockSize..].CopyTo(end);
                 XOR(end, D);
 
-                CMAC(aes, cmacSubkeys, Plaintext[..^BlockSize], end, SyntheticIV);
+                CMAC(AES, cmacSubkeys, Plaintext[..^BlockSize], end, SyntheticIV);
 
             }
             else
@@ -268,7 +427,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 DoubleBlock(D);
                 XOR(padded, D);
 
-                CMAC(aes, cmacSubkeys, padded, [], SyntheticIV);
+                CMAC(AES, cmacSubkeys, padded, [], SyntheticIV);
 
             }
 
@@ -289,11 +448,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// to do so for every CMAC.
         /// </remarks>
         private static IBlockCipher Keyed(Byte[] Key)
+            => Keyed(new KeyParameter(Key));
+
+        private static IBlockCipher Keyed(KeyParameter KeyParameter)
         {
 
             var aes = AesUtilities.CreateEngine();
 
-            aes.Init(true, new KeyParameter(Key));
+            aes.Init(true, KeyParameter);
 
             return aes;
 

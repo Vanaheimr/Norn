@@ -17,6 +17,8 @@
 
 #region Usings
 
+using System.Buffers.Binary;
+using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Diagnostics.CodeAnalysis;
 
@@ -109,6 +111,40 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                        AEADAlgorithms                                                AEADAlgorithm = NTSAEAD.Default)
         {
 
+            if (ReceivedValue is null || ReceivedValue.Length < 16)
+            {
+                ErrorResponse = "NTS Authenticator and Encrypted extension value is null or too short!";
+                AuthExtension = null;
+                return false;
+            }
+
+            return TryParse(
+                       ReceivedValue.AsSpan(),
+                       AssociatedData.Aggregate().AsSpan(),
+                       ref AuthenticatedExtensions,
+                       Key,
+                       out AuthExtension,
+                       out ErrorResponse,
+                       AEADAlgorithm
+                   );
+
+        }
+
+
+        /// <summary>
+        /// Verify and open an NTS Authenticator and Encrypted Extension Fields value directly
+        /// from wire spans, without copying the associated data or intermediate slices.
+        /// </summary>
+        [OverloadResolutionPriority(-1)]
+        public static Boolean TryParse(ReadOnlySpan<Byte>                                            ReceivedValue,
+                                       ReadOnlySpan<Byte>                                            AssociatedData,
+                                       ref List<NTPExtension>                                        AuthenticatedExtensions,
+                                       Byte[]                                                        Key, // S2C or C2S key!
+                                       [NotNullWhen(true)]  out AuthenticatorAndEncryptedExtension?  AuthExtension,
+                                       [NotNullWhen(false)] out String?                              ErrorResponse,
+                                       AEADAlgorithms                                                AEADAlgorithm = NTSAEAD.Default)
+        {
+
             try
             {
 
@@ -121,14 +157,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     return false;
                 }
 
-                if (ReceivedValue is null || ReceivedValue.Length < 16)
+                if (ReceivedValue.Length < 16)
                 {
                     ErrorResponse = "NTS Authenticator and Encrypted extension value is null or too short!";
                     return false;
                 }
 
-                var nonceLength                  = (UInt16) ((ReceivedValue[0] << 8) | ReceivedValue[1]);
-                var ciphertextLength             = (UInt16) ((ReceivedValue[2] << 8) | ReceivedValue[3]);
+                var nonceLength                  = BinaryPrimitives.ReadUInt16BigEndian(ReceivedValue.Slice(0, 2));
+                var ciphertextLength             = BinaryPrimitives.ReadUInt16BigEndian(ReceivedValue.Slice(2, 2));
 
                 if (nonceLength == 0)
                 {
@@ -157,27 +193,26 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     }
                 }
 
-                var receivedNonce             = new Byte[nonceLength];
-                Buffer.BlockCopy(ReceivedValue, 4, receivedNonce, 0, nonceLength);
-
-                var receivedCiphertext        = new Byte[ciphertextLength];
-                if (ciphertextLength > 0)
-                    Buffer.BlockCopy(ReceivedValue, 4 + paddedNonceLength, receivedCiphertext, 0, ciphertextLength);
+                var receivedNonceSpan         = ReceivedValue.Slice(4, nonceLength);
+                var receivedCiphertextSpan    = ciphertextLength > 0
+                                                    ? ReceivedValue.Slice(4 + paddedNonceLength, ciphertextLength)
+                                                    : ReadOnlySpan<Byte>.Empty;
 
                 // Opened with the algorithm the key exchange agreed on, not with a fixed one:
                 // the sender chose it, and the ciphertext is unreadable under any other.
                 var aead                      = NTSAEAD.Create(AEADAlgorithm, Key);
-                var computedOutput            = aead.Decrypt(AssociatedData.Aggregate(), receivedNonce, receivedCiphertext);
-                var extensions                = new List<NTPExtension>();
+                var computedOutput            = aead.Decrypt(AssociatedData, receivedNonceSpan, receivedCiphertextSpan);
+
+                List<NTPExtension>? extensions = null;
 
                 var offset = 0;
                 while (offset + 4 <= computedOutput.Length)
                 {
 
-                    var type   = (ExtensionTypes) ((computedOutput[offset]     << 8) | computedOutput[offset + 1]);
-                    var length = (UInt16)         ((computedOutput[offset + 2] << 8) | computedOutput[offset + 3]);
+                    var type   = (ExtensionTypes) BinaryPrimitives.ReadUInt16BigEndian(computedOutput.AsSpan(offset,     2));
+                    var length =                  BinaryPrimitives.ReadUInt16BigEndian(computedOutput.AsSpan(offset + 2, 2));
 
-                    if (length < 4 || (length % 4) != 0)
+                    if (length < 4 || (length & 3) != 0)
                     {
                         ErrorResponse = $"Illegal length of encrypted extension {length} at offset {offset}!";
                         return false;
@@ -189,29 +224,27 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                         return false;
                     }
 
-                    var data = new Byte[length - 4];
-                    Array.Copy(computedOutput, offset + 4, data, 0, length - 4);
-
                     switch (type)
                     {
 
                         case ExtensionTypes.UniqueIdentifier:
-                            break;
-
-                        case ExtensionTypes.NTSCookie:
-                            extensions.Add(
-                                new NTSCookieExtension(data, Authenticated: true, Encrypted: true)
-                            );
-                            break;
-
                         case ExtensionTypes.NTSCookiePlaceholder:
-                            break;
-
                         case ExtensionTypes.AuthenticatorAndEncrypted:
                             break;
 
+                        case ExtensionTypes.NTSCookie:
+                            extensions ??= new List<NTPExtension>(2);
+                            extensions.Add(
+                                new NTSCookieExtension(
+                                    computedOutput.AsSpan(offset + 4, length - 4).ToArray(),
+                                    Authenticated: true,
+                                    Encrypted:     true
+                                )
+                            );
+                            break;
+
                         case ExtensionTypes.Debug:
-                            if (!DebugExtension.TryParse(data,
+                            if (!DebugExtension.TryParse(computedOutput.AsSpan(offset + 4, length - 4).ToArray(),
                                                          out var debugExtension,
                                                          out     ErrorResponse,
                                                          Authenticated: true,
@@ -219,14 +252,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                             {
                                 return false;
                             }
+                            extensions ??= new List<NTPExtension>(2);
                             extensions.Add(debugExtension);
                             break;
 
                         default:
+                            extensions ??= new List<NTPExtension>(2);
                             extensions.Add(
                                 new NTPExtension(
                                     type,
-                                    data,
+                                    computedOutput.AsSpan(offset + 4, length - 4).ToArray(),
                                     Authenticated: true,
                                     Encrypted:     true
                                 )
@@ -245,13 +280,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     return false;
                 }
 
-                foreach (var authenticatedExtension in AuthenticatedExtensions)
-                    authenticatedExtension.Authenticated = true;
+                for (var i = 0; i < AuthenticatedExtensions.Count; i++)
+                    AuthenticatedExtensions[i].Authenticated = true;
 
                 AuthExtension = new AuthenticatorAndEncryptedExtension(
-                                    receivedNonce,
-                                    receivedCiphertext,
-                                    extensions
+                                    receivedNonceSpan.ToArray(),
+                                    ciphertextLength > 0 ? receivedCiphertextSpan.ToArray() : [],
+                                    extensions ?? (IEnumerable<NTPExtension>) []
                                 );
 
                 return true;
@@ -291,6 +326,26 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                    NTSKEResponse.AEADAlgorithm
                );
 
+        /// <summary>
+        /// Create a "NTS Authenticator and Encrypted Extension Fields" extension (type=0x0404)
+        /// from contiguous read-only spans without copying associated data or plaintext.
+        /// </summary>
+        [OverloadResolutionPriority(-1)]
+        public static AuthenticatorAndEncryptedExtension
+
+            Create(NTSKE_Response      NTSKEResponse,
+                   ReadOnlySpan<Byte>  AssociatedData,
+                   ReadOnlySpan<Byte>  Plaintext   = default,
+                   Byte[]?             Nonce       = null)
+
+            => Create(
+                   NTSKEResponse.C2SKey,
+                   AssociatedData,
+                   Plaintext,
+                   Nonce,
+                   NTSKEResponse.AEADAlgorithm
+               );
+
         #endregion
 
         #region Create(NTSKey,        AssociatedData, Plainttext = null, Nonce = null)
@@ -315,20 +370,38 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                    Byte[]?              Nonce          = null,
                    AEADAlgorithms       AEADAlgorithm  = NTSAEAD.Default)
 
+            => Create(
+                   NTSKey,
+                   AssociatedData.Aggregate().AsSpan(),
+                   Plaintext.AsSpan(),
+                   Nonce,
+                   AEADAlgorithm
+               );
+
+        /// <summary>
+        /// Create a "NTS Authenticator and Encrypted Extension Fields" extension (type=0x0404)
+        /// from contiguous read-only spans without copying associated data or plaintext.
+        /// </summary>
+        [OverloadResolutionPriority(-1)]
+        public static AuthenticatorAndEncryptedExtension
+
+            Create(Byte[]              NTSKey,
+                   ReadOnlySpan<Byte>  AssociatedData,
+                   ReadOnlySpan<Byte>  Plaintext      = default,
+                   Byte[]?             Nonce          = null,
+                   AEADAlgorithms      AEADAlgorithm  = NTSAEAD.Default)
+
         {
 
             var aead   = NTSAEAD.Create(AEADAlgorithm, NTSKey);
-            var nonce  = Nonce ?? new Byte[aead.NonceLength];
-
-            if (Nonce is null)
-                RandomNumberGenerator.Fill(nonce);
+            var nonce  = Nonce ?? RandomNumberGenerator.GetBytes(aead.NonceLength);
 
             return new AuthenticatorAndEncryptedExtension(
                        nonce,
                        aead.Encrypt(
-                           AssociatedData.Aggregate(),
+                           AssociatedData,
                            nonce,
-                           Plaintext ?? []
+                           Plaintext
                        )
                    );
 

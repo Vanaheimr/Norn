@@ -17,6 +17,7 @@
 
 #region Usings
 
+using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Diagnostics.CodeAnalysis;
 
@@ -158,10 +159,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                 return false;
             }
 
-            var type   = (UInt16) ((ByteArray[0] << 8) | ByteArray[1]);
-            var length = (UInt16) ((ByteArray[2] << 8) | ByteArray[3]);
+            var type   = BinaryPrimitives.ReadUInt16BigEndian(ByteArray.AsSpan(0, 2));
+            var length = BinaryPrimitives.ReadUInt16BigEndian(ByteArray.AsSpan(2, 2));
 
-            if (length < 16 || (length % 4) != 0)
+            if (length < 16 || (length & 3) != 0)
             {
                 ErrorResponse = "Extension field length must be at least 16 bytes and a multiple of 4!";
                 return false;
@@ -187,6 +188,34 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
         #endregion
 
+        #region WriteTo(Destination)
+
+        /// <summary>
+        /// Write the wire representation of this extension directly into the given span
+        /// without allocating an intermediate byte array.
+        /// </summary>
+        /// <param name="Destination">A destination span of at least <see cref="Length"/> bytes.</param>
+        public void WriteTo(Span<Byte> Destination)
+        {
+
+            if (Destination.Length < Length)
+                throw new ArgumentException($"Destination span ({Destination.Length} bytes) is shorter than extension length ({Length} bytes)!",
+                                            nameof(Destination));
+
+            BinaryPrimitives.WriteUInt16BigEndian(Destination,              (UInt16) Type);
+            BinaryPrimitives.WriteUInt16BigEndian(Destination.Slice(2, 2),  Length);
+
+            if (Value.Length > 0)
+                Value.AsSpan().CopyTo(Destination.Slice(4, Value.Length));
+
+            var padding = Length - 4 - Value.Length;
+            if (padding > 0)
+                Destination.Slice(4 + Value.Length, padding).Clear();
+
+        }
+
+        #endregion
+
         #region ToByteArray()
 
         /// <summary>
@@ -196,17 +225,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         {
 
             var result = new Byte[Length];
-            var type   = (UInt16) Type;
-
-            result[0] = (Byte) ((type   >> 8) & 0xff);
-            result[1] = (Byte)  (type         & 0xff);
-
-            result[2] = (Byte) ((Length >> 8) & 0xff);
-            result[3] = (Byte)  (Length       & 0xff);
-
-            if (Value.Length > 0)
-                Buffer.BlockCopy(Value, 0, result, 4, Value.Length);
-
+            WriteTo(result);
             return result;
 
         }

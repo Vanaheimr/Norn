@@ -15,6 +15,8 @@
  * limitations under the License.
  */
 
+using System.Runtime.CompilerServices;
+
 namespace org.GraphDefined.Vanaheimr.Norn.NTS
 {
 
@@ -52,9 +54,23 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         Byte[] Encrypt(Byte[] AssociatedData, Byte[] Nonce, Byte[] Plaintext);
 
         /// <summary>
+        /// Seal from read-only spans, returning ciphertext with the tag appended.
+        /// </summary>
+        [OverloadResolutionPriority(-1)]
+        Byte[] Encrypt(ReadOnlySpan<Byte> AssociatedData, ReadOnlySpan<Byte> Nonce, ReadOnlySpan<Byte> Plaintext)
+            => Encrypt(AssociatedData.ToArray(), Nonce.ToArray(), Plaintext.ToArray());
+
+        /// <summary>
         /// Open, or throw if the tag does not verify.
         /// </summary>
         Byte[] Decrypt(Byte[] AssociatedData, Byte[] Nonce, Byte[] Ciphertext);
+
+        /// <summary>
+        /// Open from read-only spans, or throw if the tag does not verify.
+        /// </summary>
+        [OverloadResolutionPriority(-1)]
+        Byte[] Decrypt(ReadOnlySpan<Byte> AssociatedData, ReadOnlySpan<Byte> Nonce, ReadOnlySpan<Byte> Ciphertext)
+            => Decrypt(AssociatedData.ToArray(), Nonce.ToArray(), Ciphertext.ToArray());
 
     }
 
@@ -247,12 +263,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public Int32           NonceLength  => 16;
 
         // AES-SIV takes a vector of associated-data components rather than one string; NTS uses
-        // exactly one, so the vector always has a single element.
+        // exactly one, so the single-AD span overload avoids allocating a wrapper array.
         public Byte[] Encrypt(Byte[] AssociatedData, Byte[] Nonce, Byte[] Plaintext)
-            => aesSiv.Encrypt([ AssociatedData ], Nonce, Plaintext);
+            => aesSiv.Encrypt(AssociatedData.AsSpan(), Nonce.AsSpan(), Plaintext.AsSpan());
+
+        public Byte[] Encrypt(ReadOnlySpan<Byte> AssociatedData, ReadOnlySpan<Byte> Nonce, ReadOnlySpan<Byte> Plaintext)
+            => aesSiv.Encrypt(AssociatedData, Nonce, Plaintext);
 
         public Byte[] Decrypt(Byte[] AssociatedData, Byte[] Nonce, Byte[] Ciphertext)
-            => aesSiv.Decrypt([ AssociatedData ], Nonce, Ciphertext);
+            => aesSiv.Decrypt(AssociatedData.AsSpan(), Nonce.AsSpan(), Ciphertext.AsSpan());
+
+        public Byte[] Decrypt(ReadOnlySpan<Byte> AssociatedData, ReadOnlySpan<Byte> Nonce, ReadOnlySpan<Byte> Ciphertext)
+            => aesSiv.Decrypt(AssociatedData, Nonce, Ciphertext);
 
     }
 
@@ -272,7 +294,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public Byte[] Encrypt(Byte[] AssociatedData, Byte[] Nonce, Byte[] Plaintext)
             => aesGcmSiv.Encrypt(AssociatedData, Nonce, Plaintext);
 
+        public Byte[] Encrypt(ReadOnlySpan<Byte> AssociatedData, ReadOnlySpan<Byte> Nonce, ReadOnlySpan<Byte> Plaintext)
+            => aesGcmSiv.Encrypt(AssociatedData, Nonce, Plaintext);
+
         public Byte[] Decrypt(Byte[] AssociatedData, Byte[] Nonce, Byte[] Ciphertext)
+            => aesGcmSiv.Decrypt(AssociatedData, Nonce, Ciphertext);
+
+        public Byte[] Decrypt(ReadOnlySpan<Byte> AssociatedData, ReadOnlySpan<Byte> Nonce, ReadOnlySpan<Byte> Ciphertext)
             => aesGcmSiv.Decrypt(AssociatedData, Nonce, Ciphertext);
 
     }

@@ -3091,36 +3091,59 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                         Boolean              SignedResponseRequested = false)
         {
 
-            var extensions           = new List<NTPExtension>();
-            var encryptedExtensions  = new List<NTPExtension>();
+            // Single pass over the request extensions instead of repeated LINQ traversals.
+            var hasNtsExtension        = false;
+            var clearUniqueIdCount     = 0;
+            Byte[]? firstUniqueId      = null;
+            var clearCookieCount       = 0;
+            NTSCookieExtension? n1     = null;
+            var hasAuthenticator       = false;
+
+            foreach (var extension in RequestPacket.Extensions)
+            {
+
+                if (extension.Type is ExtensionTypes.UniqueIdentifier
+                                   or ExtensionTypes.NTSCookie
+                                   or ExtensionTypes.NTSCookiePlaceholder
+                                   or ExtensionTypes.AuthenticatorAndEncrypted)
+                {
+                    hasNtsExtension = true;
+                }
+
+                if (extension.Type == ExtensionTypes.UniqueIdentifier)
+                {
+                    firstUniqueId ??= extension.Value;
+                    if (!extension.Encrypted)
+                        clearUniqueIdCount++;
+                }
+                else if (extension.Type == ExtensionTypes.NTSCookie)
+                {
+                    n1 ??= extension as NTSCookieExtension;
+                    if (!extension.Encrypted)
+                        clearCookieCount++;
+                }
+
+                if (extension is AuthenticatorAndEncryptedExtension)
+                    hasAuthenticator = true;
+
+            }
 
             // A request carrying no NTS extension field at all is a plain NTPv4 request and
             // must be answered as one. RFC 8915 § 5.7's NTS NAK is for a request that *tried*
             // to use NTS and failed; returning a Kiss-o'-Death to a client that never asked for
             // NTS tells it this server is unusable, and a plain NTP client — chronyd without
             // the "nts" option, for one — will drop the server entirely.
-            if (!RequestPacket.Extensions.Any(extension => extension.Type is ExtensionTypes.UniqueIdentifier
-                                                                          or ExtensionTypes.NTSCookie
-                                                                          or ExtensionTypes.NTSCookiePlaceholder
-                                                                          or ExtensionTypes.AuthenticatorAndEncrypted))
-            {
+            if (!hasNtsExtension)
                 return BuildResponseHeader(RequestPacket, [], Exchange);
-            }
-
-            var u1 = RequestPacket.UniqueIdentifier();
 
             // RFC 8915 § 5.3 / § 5.7: every NTS-protected request MUST carry a Unique Identifier
             // extension field of at least 32 octets in the clear.
-            if (RequestPacket.Extensions.Count(extension => extension.Type == ExtensionTypes.UniqueIdentifier &&
-                                                            !extension.Encrypted) != 1 ||
-                u1 is null || u1.Length < 32)
+            if (clearUniqueIdCount != 1 ||
+                firstUniqueId is null   ||
+                firstUniqueId.Length < 32)
             {
                 return BuildNTSNAK(RequestPacket, Exchange, "The request must carry a valid Unique Identifier (>= 32 octets)!");
             }
-
-            extensions.Add(new UniqueIdentifierExtension(u1));
-
-            var n1 = RequestPacket.NTSCookieExtension();
 
             if (n1 is null)
                 return BuildNTSNAK(RequestPacket, Exchange, "Invalid NTS cookie!");
@@ -3141,18 +3164,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             // RFC 8915 §5.7: a request carries exactly one cookie in the clear. With two, the
             // one the authenticator was checked under and the one answered here could differ.
-            if (RequestPacket.Extensions.Count(extension => extension.Type == ExtensionTypes.NTSCookie &&
-                                                            !extension.Encrypted) != 1)
-            {
+            if (clearCookieCount != 1)
                 return BuildNTSNAK(RequestPacket, Exchange, "The request must carry exactly one NTS cookie!");
-            }
 
             // RFC 8915 §5.7: the cookie alone proves nothing, as it crosses the network in the
             // clear and anyone who saw it can send it again. Only the authenticator shows that
             // the sender holds the C2S key. NTPRequest.TryParse yields the typed extension
             // only when it verified under this cookie's key; a missing one, or one that did
             // not verify, is answered with an NTS NAK and nothing else.
-            if (!RequestPacket.Extensions.Any(extension => extension is AuthenticatorAndEncryptedExtension))
+            if (!hasAuthenticator)
                 return BuildNTSNAK(RequestPacket, Exchange, "The request is not authenticated!");
 
 
@@ -3167,49 +3187,99 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             // NTSCookiePlaceholderExtension subclass when parsed here, but the client builds
             // them from the NTPExtension.NTSCookiePlaceholder factory, which returns the base
             // type. The type field is the same either way.
-            var validPlaceholders = RequestPacket.Extensions.
-                                        Count(extension => extension.Type == ExtensionTypes.NTSCookiePlaceholder &&
-                                                           extension.Authenticated                               &&
-                                                           extension.Value.Length == n1.Value.Length);
+            var validPlaceholders = 0;
+            foreach (var extension in RequestPacket.Extensions)
+            {
+                if (extension.Type == ExtensionTypes.NTSCookiePlaceholder &&
+                    extension.Authenticated                               &&
+                    extension.Value.Length == n1.Value.Length)
+                {
+                    validPlaceholders++;
+                }
+            }
 
             var numberOfCookies   = (UInt16) Math.Min(1 + validPlaceholders, MaxCookiesPerResponse);
 
-            encryptedExtensions.AddRange(
-                GetCurrentMasterKey().
-                    GenerateNTSCookieExtensions(
-                        NumberOfCookies:  numberOfCookies,
-                        C2SKey:           ntsCookie.C2SKey,
-                        S2CKey:           ntsCookie.S2CKey,
-                        AEADAlgorithm:    ntsCookie.AEADAlgorithm,
-                        TimeProvider:     TimeProvider
-                    )
-            );
-
+            var extensions        = new List<NTPExtension>(SignedResponseRequested ? 3 : 2) {
+                                        new UniqueIdentifierExtension(firstUniqueId)
+                                    };
 
             if (SignedResponseRequested)
                 extensions.Add(
                     new NTSSignedResponseAnnouncementExtension(IsScheduled: true)
                 );
 
+            var encryptedExtensions = GetCurrentMasterKey().
+                                          GenerateNTSCookieExtensions(
+                                              NumberOfCookies:  numberOfCookies,
+                                              C2SKey:           ntsCookie.C2SKey,
+                                              S2CKey:           ntsCookie.S2CKey,
+                                              AEADAlgorithm:    ntsCookie.AEADAlgorithm,
+                                              TimeProvider:     TimeProvider
+                                          );
 
             var response1 = BuildResponseHeader(RequestPacket, extensions, Exchange);
 
+            var adLength  = 48;
+            for (var i = 0; i < extensions.Count; i++)
+                adLength += extensions[i].Length;
 
-            var associatedData = new List<Byte[]>() { response1.ToByteArray(SkipExtensions: true) }.
-                                     Concat(extensions.Select(ext => ext.ToByteArray())).ToArray();
+            var ptLength  = 0;
+            foreach (var ext in encryptedExtensions)
+                ptLength += ext.Length;
 
-            extensions.Add(
-                AuthenticatorAndEncryptedExtension.Create(
-                    NTSKey:          ntsCookie.S2CKey,
-                    AssociatedData:  associatedData,
-                    Plaintext:       encryptedExtensions.Select(ext => ext.ToByteArray()).Aggregate(),
-                    Nonce:           null,
-                    // The cookie says which algorithm this session agreed on, and it is the only
-                    // thing that does: the key exchange that decided it may have been days ago
-                    // and on another machine.
-                    AEADAlgorithm:   ntsCookie.AEADAlgorithm
-                )
-            );
+            Byte[]? rentedAd = null;
+            Byte[]? rentedPt = null;
+
+            Span<Byte> adSpan = adLength <= 512
+                                    ? stackalloc Byte[adLength]
+                                    : (rentedAd = System.Buffers.ArrayPool<Byte>.Shared.Rent(adLength)).AsSpan(0, adLength);
+
+            Span<Byte> ptSpan = ptLength <= 512
+                                    ? stackalloc Byte[ptLength]
+                                    : (rentedPt = System.Buffers.ArrayPool<Byte>.Shared.Rent(ptLength)).AsSpan(0, ptLength);
+
+            try
+            {
+
+                response1.WriteHeaderTo(adSpan);
+                var adOffset = 48;
+                for (var i = 0; i < extensions.Count; i++)
+                {
+                    var ext = extensions[i];
+                    ext.WriteTo(adSpan.Slice(adOffset, ext.Length));
+                    adOffset += ext.Length;
+                }
+
+                var ptOffset = 0;
+                foreach (var ext in encryptedExtensions)
+                {
+                    ext.WriteTo(ptSpan.Slice(ptOffset, ext.Length));
+                    ptOffset += ext.Length;
+                }
+
+                extensions.Add(
+                    AuthenticatorAndEncryptedExtension.Create(
+                        NTSKey:          ntsCookie.S2CKey,
+                        AssociatedData:  adSpan,
+                        Plaintext:       ptSpan,
+                        Nonce:           null,
+                        // The cookie says which algorithm this session agreed on, and it is the only
+                        // thing that does: the key exchange that decided it may have been days ago
+                        // and on another machine.
+                        AEADAlgorithm:   ntsCookie.AEADAlgorithm
+                    )
+                );
+
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(ptSpan);
+                if (rentedAd is not null)
+                    System.Buffers.ArrayPool<Byte>.Shared.Return(rentedAd);
+                if (rentedPt is not null)
+                    System.Buffers.ArrayPool<Byte>.Shared.Return(rentedPt);
+            }
 
             return new NTPPacket(
                        response1,

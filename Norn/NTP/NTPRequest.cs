@@ -17,6 +17,7 @@
 
 #region Usings
 
+using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 
@@ -189,7 +190,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
             // Validate the whole extension field chain before decoding any of it, so a
             // malformed tail cannot be dropped while the rest of the packet is accepted.
-            if (!NTPExtensionFieldValidator.TryValidate(Buffer, out ErrorResponse))
+            if (!NTPExtensionFieldValidator.TryValidate(Buffer.AsSpan(), out ErrorResponse))
             {
                 NTPRequest = null;
                 return false;
@@ -197,172 +198,179 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
             #endregion
 
-            var ntpPacketBytes = new Byte[48];
-            Array.Copy(Buffer, ntpPacketBytes, 48);
-            var things         = new List<Byte[]>() { ntpPacketBytes };
-
             #region Parse Extensions
 
-            var offset          = 48;
-            var extensions      = new List<NTPExtension>();
-            String? ntsCookieError = null;
+            IEnumerable<NTPExtension> parsedExtensions;
 
-            // Which AEAD the sender used is the cookie's business: the server put it there when
-            // it issued the cookie, and the client had no say in it beyond the key exchange that
-            // produced it. Until a cookie has been unsealed there is nothing to decrypt anyway.
-            var ntsAEADAlgorithm = NTSAEAD.Default;
-
-            while (offset + 4 <= Buffer.Length)
+            if (Buffer.Length == 48)
+            {
+                parsedExtensions = [];
+            }
+            else
             {
 
-                var type   = (ExtensionTypes) ((Buffer[offset]     << 8) | Buffer[offset + 1]);
-                var length = (UInt16)         ((Buffer[offset + 2] << 8) | Buffer[offset + 3]);
+                var offset            = 48;
+                var extensions        = new List<NTPExtension>(4);
+                var carriesCookie     = false;
+                String? ntsCookieError = null;
 
-                var copy = new Byte[length];
-                Array.Copy(Buffer, offset, copy, 0, length);
-                things.Add(copy);
+                // Which AEAD the sender used is the cookie's business: the server put it there when
+                // it issued the cookie, and the client had no say in it beyond the key exchange that
+                // produced it. Until a cookie has been unsealed there is nothing to decrypt anyway.
+                var ntsAEADAlgorithm  = NTSAEAD.Default;
 
-                var data = new Byte[length - 4];
-                Array.Copy(Buffer, offset + 4, data, 0, length - 4);
-
-                switch (type)
+                while (offset + 4 <= Buffer.Length)
                 {
 
-                    case ExtensionTypes.UniqueIdentifier:
+                    var type      = (ExtensionTypes) BinaryPrimitives.ReadUInt16BigEndian(Buffer.AsSpan(offset,     2));
+                    var length    =                  BinaryPrimitives.ReadUInt16BigEndian(Buffer.AsSpan(offset + 2, 2));
+                    var valueSpan = Buffer.AsSpan(offset + 4, length - 4);
 
-                        if (!UniqueIdentifierExtension.TryParse(data, out var uniqueIdentifierExtension, out ErrorResponse))
-                            return false;
+                    switch (type)
+                    {
 
-                        extensions.Add(uniqueIdentifierExtension);
+                        case ExtensionTypes.UniqueIdentifier:
 
-                        break;
+                            if (!UniqueIdentifierExtension.TryParse(valueSpan.ToArray(), out var uniqueIdentifierExtension, out ErrorResponse))
+                                return false;
+
+                            extensions.Add(uniqueIdentifierExtension);
+
+                            break;
 
 
-                    case ExtensionTypes.NTSCookie:
+                        case ExtensionTypes.NTSCookie:
 
-                        var ntsCookieExtension = new NTSCookieExtension(data);
+                            carriesCookie = true;
 
-                        // Unsealing the cookie authenticates it under the server's master key
-                        // and checks it against that key's validity window.
-                        if (NTSCookie.TryParse(ntsCookieExtension.Value, MasterKeys, out var ntsCookie, out var cookieError))
-                        {
+                            // Unsealing the cookie authenticates it under the server's master key
+                            // and checks it against that key's validity window.
+                            if (NTSCookie.TryParse(valueSpan, MasterKeys, out var ntsCookie, out var cookieError))
+                            {
 
-                            NTSKey            = ntsCookie.C2SKey;
-                            ntsAEADAlgorithm  = ntsCookie.AEADAlgorithm;
+                                NTSKey            = ntsCookie.C2SKey;
+                                ntsAEADAlgorithm  = ntsCookie.AEADAlgorithm;
 
+                                extensions.Add(
+                                    new NTSCookieExtension(
+                                        valueSpan.ToArray(),
+                                        ntsCookie
+                                    )
+                                );
+
+                            }
+                            else
+                            {
+                                // Kept so the authenticator's "missing NTS key" failure can say why
+                                // the key is missing — otherwise every cookie problem looks identical.
+                                ntsCookieError = cookieError;
+                                extensions.Add(new NTSCookieExtension(valueSpan.ToArray()));
+                            }
+
+                            break;
+
+
+                        case ExtensionTypes.NTSCookiePlaceholder:
                             extensions.Add(
-                                new NTSCookieExtension(
-                                    data,
-                                    ntsCookie
+                                new NTSCookiePlaceholderExtension((UInt16) (length - 4))
+                            );
+                            break;
+
+
+                        case ExtensionTypes.AuthenticatorAndEncrypted:
+
+                            // RFC 8915 §5.7 wants an NTS NAK for a request whose cookie cannot be
+                            // unsealed or whose authenticator does not verify, and a NAK needs the
+                            // parsed request: its timestamps and its unique identifier. So where the
+                            // request does carry a cookie, an authenticator that cannot be checked
+                            // is kept as an opaque field instead of failing the parse. It is never
+                            // the typed AuthenticatorAndEncryptedExtension, and nothing before it is
+                            // marked as authenticated, which is how the server tells the two apart.
+                            if (NTSKey is null)
+                            {
+
+                                if (carriesCookie)
+                                {
+                                    extensions.Add(new NTPExtension(type, valueSpan.ToArray()));
+                                    break;
+                                }
+
+                                ErrorResponse = ntsCookieError is not null
+                                                    ? $"Missing NTS key for the AuthenticatorAndEncrypted extension: {ntsCookieError}"
+                                                    :  "Missing NTS key for the AuthenticatorAndEncrypted extension!";
+                                return false;
+
+                            }
+
+                            if (!AuthenticatorAndEncryptedExtension.TryParse(valueSpan,
+                                                                             Buffer.AsSpan(0, offset),
+                                                                             ref extensions,
+                                                                             NTSKey,
+                                                                             out var authenticatorAndEncryptedExtension,
+                                                                             out ErrorResponse,
+                                                                             ntsAEADAlgorithm))
+                            {
+
+                                if (carriesCookie)
+                                {
+                                    ErrorResponse = null;
+                                    extensions.Add(new NTPExtension(type, valueSpan.ToArray()));
+                                    break;
+                                }
+
+                                return false;
+
+                            }
+
+                            extensions.Add(authenticatorAndEncryptedExtension);
+
+                            if (authenticatorAndEncryptedExtension.EncryptedExtensions is ICollection<NTPExtension> { Count: > 0 } enc)
+                                extensions.AddRange(enc);
+                            else
+                            {
+                                foreach (var encryptedExtension in authenticatorAndEncryptedExtension.EncryptedExtensions)
+                                    extensions.Add(encryptedExtension);
+                            }
+
+                            break;
+
+
+                        case ExtensionTypes.Debug:
+
+                            if (!DebugExtension.TryParse(valueSpan.ToArray(), out var debugExtension, out ErrorResponse))
+                                return false;
+
+                            extensions.Add(debugExtension);
+
+                            break;
+
+
+                        case ExtensionTypes.NTSRequestSignedResponse:
+
+                            if (!NTSRequestSignedResponseExtension.TryParse(valueSpan.ToArray(), out var requestSignedResponseExtension, out ErrorResponse))
+                                return false;
+
+                            extensions.Add(requestSignedResponseExtension);
+
+                            break;
+
+
+                        default:
+                            extensions.Add(
+                                new NTPExtension(
+                                    type,
+                                    valueSpan.ToArray()
                                 )
                             );
+                            break;
 
-                        }
-                        else
-                        {
-                            // Kept so the authenticator's "missing NTS key" failure can say why
-                            // the key is missing — otherwise every cookie problem looks identical.
-                            ntsCookieError = cookieError;
-                            extensions.Add(ntsCookieExtension);
-                        }
+                    }
 
-                        break;
-
-
-                    case ExtensionTypes.NTSCookiePlaceholder:
-                        extensions.Add(
-                            new NTSCookiePlaceholderExtension((UInt16) data.Length)
-                        );
-                        break;
-
-
-                    case ExtensionTypes.AuthenticatorAndEncrypted:
-
-                        // RFC 8915 §5.7 wants an NTS NAK for a request whose cookie cannot be
-                        // unsealed or whose authenticator does not verify, and a NAK needs the
-                        // parsed request: its timestamps and its unique identifier. So where the
-                        // request does carry a cookie, an authenticator that cannot be checked
-                        // is kept as an opaque field instead of failing the parse. It is never
-                        // the typed AuthenticatorAndEncryptedExtension, and nothing before it is
-                        // marked as authenticated, which is how the server tells the two apart.
-                        var carriesCookie = extensions.Any(extension => extension.Type == ExtensionTypes.NTSCookie);
-
-                        if (NTSKey is null)
-                        {
-
-                            if (carriesCookie)
-                            {
-                                extensions.Add(new NTPExtension(type, data));
-                                break;
-                            }
-
-                            ErrorResponse = ntsCookieError is not null
-                                                ? $"Missing NTS key for the AuthenticatorAndEncrypted extension: {ntsCookieError}"
-                                                :  "Missing NTS key for the AuthenticatorAndEncrypted extension!";
-                            return false;
-
-                        }
-
-                        if (!AuthenticatorAndEncryptedExtension.TryParse(data,
-                                                                         things.Take(things.Count-1),
-                                                                         ref extensions,
-                                                                         NTSKey,
-                                                                         out var authenticatorAndEncryptedExtension,
-                                                                         out ErrorResponse,
-                                                                         ntsAEADAlgorithm))
-                        {
-
-                            if (carriesCookie)
-                            {
-                                ErrorResponse = null;
-                                extensions.Add(new NTPExtension(type, data));
-                                break;
-                            }
-
-                            return false;
-
-                        }
-
-                        extensions.Add(authenticatorAndEncryptedExtension);
-
-                        if (authenticatorAndEncryptedExtension.EncryptedExtensions.Any())
-                            extensions.AddRange(authenticatorAndEncryptedExtension.EncryptedExtensions);
-
-                        break;
-
-
-                    case ExtensionTypes.Debug:
-
-                        if (!DebugExtension.TryParse(data, out var debugExtension, out ErrorResponse))
-                            return false;
-
-                        extensions.Add(debugExtension);
-
-                        break;
-
-
-                    case ExtensionTypes.NTSRequestSignedResponse:
-
-                        if (!NTSRequestSignedResponseExtension.TryParse(data, out var requestSignedResponseExtension, out ErrorResponse))
-                            return false;
-
-                        extensions.Add(requestSignedResponseExtension);
-
-                        break;
-
-
-                    default:
-                        extensions.Add(
-                            new NTPExtension(
-                                type,
-                                data
-                            )
-                        );
-                        break;
+                    offset += length;
 
                 }
 
-                offset += length;
+                parsedExtensions = extensions;
 
             }
 
@@ -370,23 +378,25 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
             #region Parse NTP packet
 
+            var headerSpan = Buffer.AsSpan(0, 48);
+
             NTPRequest = new NTPRequest(
 
-                            LI:                    (Byte) ((Buffer[0] >> 6) & 0x03),
-                            VN:                    (Byte) ((Buffer[0] >> 3) & 0x07),
-                            Mode:                  (Byte)  (Buffer[0]       & 0x07),
-                            Stratum:               Buffer[1],
-                            Poll:                  Buffer[2],
-                            Precision:             (SByte) Buffer[3],
-                            RootDelay:             (UInt32) ((Buffer[4]  << 24) | (Buffer[5]  << 16) | (Buffer[6]  << 8) | Buffer[7]),
-                            RootDispersion:        (UInt32) ((Buffer[8]  << 24) | (Buffer[9]  << 16) | (Buffer[10] << 8) | Buffer[11]),
-                            ReferenceIdentifier:   ReferenceIdentifier.From(Buffer[12], Buffer[13], Buffer[14], Buffer[15]),
-                            ReferenceTimestamp:    ReadUInt64(Buffer, 16),
-                            OriginateTimestamp:    ReadUInt64(Buffer, 24),
-                            ReceiveTimestamp:      ReadUInt64(Buffer, 32),
-                            TransmitTimestamp:     ReadUInt64(Buffer, 40),
+                            LI:                    (Byte) ((headerSpan[0] >> 6) & 0x03),
+                            VN:                    (Byte) ((headerSpan[0] >> 3) & 0x07),
+                            Mode:                  (Byte)  (headerSpan[0]       & 0x07),
+                            Stratum:               headerSpan[1],
+                            Poll:                  headerSpan[2],
+                            Precision:             (SByte) headerSpan[3],
+                            RootDelay:             BinaryPrimitives.ReadUInt32BigEndian(headerSpan.Slice(4, 4)),
+                            RootDispersion:        BinaryPrimitives.ReadUInt32BigEndian(headerSpan.Slice(8, 4)),
+                            ReferenceIdentifier:   ReferenceIdentifier.From(headerSpan[12], headerSpan[13], headerSpan[14], headerSpan[15]),
+                            ReferenceTimestamp:    ReadUInt64(headerSpan, 16),
+                            OriginateTimestamp:    ReadUInt64(headerSpan, 24),
+                            ReceiveTimestamp:      ReadUInt64(headerSpan, 32),
+                            TransmitTimestamp:     ReadUInt64(headerSpan, 40),
 
-                            Extensions:            extensions
+                            Extensions:            parsedExtensions
 
                         );
 

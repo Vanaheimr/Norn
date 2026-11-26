@@ -416,61 +416,72 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                           ?? NTPPacket.GetCurrentNTPTimestamp(TimeProvider ?? System.TimeProvider.System)
                               );
 
-            var extensions  = new List<NTPExtension>();
+            IEnumerable<NTPExtension> requestExtensions;
 
             if (NTSKEResponse is not null &&
                 Cookie        is not null &&
                 NTSKEResponse.C2SKey.Length > 0)
             {
 
-                var uniqueIdExtension  = NTPExtension.UniqueIdentifier(UniqueId);
-                var cookieExtension    = NTPExtension.NTSCookie(Cookie);
-
-                extensions.Add(
-                    uniqueIdExtension
-                );
-
-                extensions.Add(
-                    cookieExtension
-                );
-
-                var extensionBytes = new List<Byte[]>() {
-                                         ntpPacket1.       ToByteArray(),
-                                         uniqueIdExtension.ToByteArray(),
-                                          cookieExtension.  ToByteArray()
-                                      };
+                var extensions = new List<NTPExtension>(3 + CookiePlaceholderCount + (RequestSignedResponse != SignedResponseMode.None ? 1 : 0)) {
+                                     NTPExtension.UniqueIdentifier(UniqueId),
+                                     NTPExtension.NTSCookie(Cookie)
+                                 };
 
                 for (var i = 0; i < CookiePlaceholderCount; i++)
-                {
-
-                    var cookiePlaceholderExtension = NTPExtension.NTSCookiePlaceholder(CookiePlaceholderLength);
-
-                    extensions.    Add(cookiePlaceholderExtension);
-                    extensionBytes.Add(cookiePlaceholderExtension.ToByteArray());
-
-                }
+                    extensions.Add(NTPExtension.NTSCookiePlaceholder(CookiePlaceholderLength));
 
                 if (RequestSignedResponse != SignedResponseMode.None)
+                    extensions.Add(new NTSRequestSignedResponseExtension(SignedResponseKeyId));
+
+                var adLength = 48;
+                for (var i = 0; i < extensions.Count; i++)
+                    adLength += extensions[i].Length;
+
+                Byte[]? rentedAd = null;
+                Span<Byte> adSpan = adLength <= 512
+                                        ? stackalloc Byte[adLength]
+                                        : (rentedAd = System.Buffers.ArrayPool<Byte>.Shared.Rent(adLength)).AsSpan(0, adLength);
+
+                try
                 {
-                    var requestSignedResponseExtension = new NTSRequestSignedResponseExtension(SignedResponseKeyId);
-                    extensions.    Add(requestSignedResponseExtension);
-                    extensionBytes.Add(requestSignedResponseExtension.ToByteArray());
+
+                    ntpPacket1.WriteHeaderTo(adSpan);
+                    var adOffset = 48;
+                    for (var i = 0; i < extensions.Count; i++)
+                    {
+                        var ext = extensions[i];
+                        ext.WriteTo(adSpan.Slice(adOffset, ext.Length));
+                        adOffset += ext.Length;
+                    }
+
+                    // Basically this extension validates all data (NTP header + extensions) which came before it!
+                    extensions.Add(
+                        AuthenticatorAndEncryptedExtension.Create(
+                            NTSKEResponse,
+                            adSpan,
+                            Plaintext.AsSpan()
+                        )
+                    );
+
+                }
+                finally
+                {
+                    if (rentedAd is not null)
+                        System.Buffers.ArrayPool<Byte>.Shared.Return(rentedAd);
                 }
 
-                // Basically this extension validates all data (NTP header + extensions) which came before it!
-                extensions.Add(
-                    AuthenticatorAndEncryptedExtension.Create(
-                        NTSKEResponse,
-                        extensionBytes,
-                        Plaintext
-                    )
-                );
+                requestExtensions = extensions;
 
+            }
+            else
+            {
+                requestExtensions = [];
             }
 
             var ntpPacket = new NTPRequest(
                                 ntpPacket1,
-                                Extensions: extensions
+                                Extensions: requestExtensions
                             );
 
             return ntpPacket;

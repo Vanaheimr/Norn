@@ -17,6 +17,7 @@
 
 #region Usings
 
+using System.Buffers.Binary;
 using System.Diagnostics.CodeAnalysis;
 
 using org.GraphDefined.Vanaheimr.Illias;
@@ -210,7 +211,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
             // Validate the whole extension field chain before decoding any of it, so a
             // malformed tail cannot be dropped while the rest of the packet is accepted.
-            if (!NTPExtensionFieldValidator.TryValidate(Buffer, out ErrorResponse))
+            if (!NTPExtensionFieldValidator.TryValidate(Buffer.AsSpan(), out ErrorResponse))
             {
                 NTPResponse = null;
                 return false;
@@ -218,124 +219,134 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
             #endregion
 
-            var ntpPacketBytes = new Byte[48];
-            Array.Copy(Buffer, ntpPacketBytes, 48);
-            var things         = new List<Byte[]>() { ntpPacketBytes };
-
             #region Parse Extensions
 
-            var offset     = 48;
-            var extensions = new List<NTPExtension>();
+            IEnumerable<NTPExtension>   parsedExtensions;
+            UniqueIdentifierExtension?  firstUniqueId = null;
 
-            while (offset + 4 <= Buffer.Length)
+            if (Buffer.Length == 48)
+            {
+                parsedExtensions = [];
+            }
+            else
             {
 
-                var type   = (ExtensionTypes) ((Buffer[offset]     << 8) | Buffer[offset + 1]);
-                var length = (UInt16)         ((Buffer[offset + 2] << 8) | Buffer[offset + 3]);
+                var offset     = 48;
+                var extensions = new List<NTPExtension>(4);
 
-                var copy = new Byte[length];
-                Array.Copy(Buffer, offset, copy, 0, length);
-                things.Add(copy);
-
-                var data = new Byte[length - 4];
-                Array.Copy(Buffer, offset + 4, data, 0, length - 4);
-
-                switch (type)
+                while (offset + 4 <= Buffer.Length)
                 {
 
-                    case ExtensionTypes.UniqueIdentifier:
+                    var type      = (ExtensionTypes) BinaryPrimitives.ReadUInt16BigEndian(Buffer.AsSpan(offset,     2));
+                    var length    =                  BinaryPrimitives.ReadUInt16BigEndian(Buffer.AsSpan(offset + 2, 2));
+                    var valueSpan = Buffer.AsSpan(offset + 4, length - 4);
 
-                        if (!UniqueIdentifierExtension.TryParse(data, out var uniqueIdentifierExtension, out ErrorResponse))
-                            return false;
+                    switch (type)
+                    {
 
-                        extensions.Add(uniqueIdentifierExtension);
+                        case ExtensionTypes.UniqueIdentifier:
 
-                        break;
+                            if (!UniqueIdentifierExtension.TryParse(valueSpan.ToArray(), out var uniqueIdentifierExtension, out ErrorResponse))
+                                return false;
 
+                            firstUniqueId ??= uniqueIdentifierExtension;
+                            extensions.Add(uniqueIdentifierExtension);
 
-                    case ExtensionTypes.NTSCookie:
-                        extensions.Add(
-                            new NTSCookieExtension(data)
-                        );
-                        break;
-
-
-                    case ExtensionTypes.NTSCookiePlaceholder:
-                        extensions.Add(
-                            new NTSCookiePlaceholderExtension((UInt16) data.Length)
-                        );
-                        break;
+                            break;
 
 
-                    case ExtensionTypes.AuthenticatorAndEncrypted:
-
-                        if (NTSKey is null)
-                        {
-                            ErrorResponse = "Missing NTS key for the AuthenticatorAndEncrypted extension!";
-                            return false;
-                        }
-
-                        if (!AuthenticatorAndEncryptedExtension.TryParse(data,
-                                                                         things.Take(things.Count-1),
-                                                                         ref extensions,
-                                                                         NTSKey,
-                                                                         out var authenticatorAndEncryptedExtension,
-                                                                         out ErrorResponse,
-                                                                         AEADAlgorithm))
-                        {
-                            return false;
-                        }
-
-                        extensions.Add(authenticatorAndEncryptedExtension);
-
-                        if (authenticatorAndEncryptedExtension.EncryptedExtensions.Any())
-                            extensions.AddRange(authenticatorAndEncryptedExtension.EncryptedExtensions);
-
-                        break;
+                        case ExtensionTypes.NTSCookie:
+                            extensions.Add(
+                                new NTSCookieExtension(valueSpan.ToArray())
+                            );
+                            break;
 
 
-                    case ExtensionTypes.Debug:
-
-                        if (!DebugExtension.TryParse(data, out var debugExtension, out ErrorResponse))
-                            return false;
-
-                        extensions.Add(debugExtension);
-
-                        break;
+                        case ExtensionTypes.NTSCookiePlaceholder:
+                            extensions.Add(
+                                new NTSCookiePlaceholderExtension((UInt16) (length - 4))
+                            );
+                            break;
 
 
-                    case ExtensionTypes.NTSSignedResponseAnnouncement:
+                        case ExtensionTypes.AuthenticatorAndEncrypted:
 
-                        if (!NTSSignedResponseAnnouncementExtension.TryParse(data, out var signedResponseAnnouncementExtension, out ErrorResponse))
-                            return false;
+                            if (NTSKey is null)
+                            {
+                                ErrorResponse = "Missing NTS key for the AuthenticatorAndEncrypted extension!";
+                                return false;
+                            }
 
-                        extensions.Add(signedResponseAnnouncementExtension);
+                            if (!AuthenticatorAndEncryptedExtension.TryParse(valueSpan,
+                                                                             Buffer.AsSpan(0, offset),
+                                                                             ref extensions,
+                                                                             NTSKey,
+                                                                             out var authenticatorAndEncryptedExtension,
+                                                                             out ErrorResponse,
+                                                                             AEADAlgorithm))
+                            {
+                                return false;
+                            }
 
-                        break;
+                            extensions.Add(authenticatorAndEncryptedExtension);
+
+                            if (authenticatorAndEncryptedExtension.EncryptedExtensions is ICollection<NTPExtension> { Count: > 0 } enc)
+                                extensions.AddRange(enc);
+                            else
+                            {
+                                foreach (var encryptedExtension in authenticatorAndEncryptedExtension.EncryptedExtensions)
+                                    extensions.Add(encryptedExtension);
+                            }
+
+                            break;
 
 
-                    case ExtensionTypes.NTSSignedResponse:
+                        case ExtensionTypes.Debug:
 
-                        if (!NTSSignedResponseExtension.TryParse(data, out var signedResponseExtension, out ErrorResponse))
-                            return false;
+                            if (!DebugExtension.TryParse(valueSpan.ToArray(), out var debugExtension, out ErrorResponse))
+                                return false;
 
-                        extensions.Add(signedResponseExtension);
+                            extensions.Add(debugExtension);
 
-                        break;
+                            break;
 
 
-                    default:
-                        extensions.Add(
-                            new NTPExtension(
-                                type,
-                                data
-                            )
-                        );
-                        break;
+                        case ExtensionTypes.NTSSignedResponseAnnouncement:
+
+                            if (!NTSSignedResponseAnnouncementExtension.TryParse(valueSpan.ToArray(), out var signedResponseAnnouncementExtension, out ErrorResponse))
+                                return false;
+
+                            extensions.Add(signedResponseAnnouncementExtension);
+
+                            break;
+
+
+                        case ExtensionTypes.NTSSignedResponse:
+
+                            if (!NTSSignedResponseExtension.TryParse(valueSpan.ToArray(), out var signedResponseExtension, out ErrorResponse))
+                                return false;
+
+                            extensions.Add(signedResponseExtension);
+
+                            break;
+
+
+                        default:
+                            extensions.Add(
+                                new NTPExtension(
+                                    type,
+                                    valueSpan.ToArray()
+                                )
+                            );
+                            break;
+
+                    }
+
+                    offset += length;
 
                 }
 
-                offset += length;
+                parsedExtensions = extensions;
 
             }
 
@@ -345,7 +356,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
             if (ExpectedUniqueId is { Length: > 0 })
             {
-                var responseUniqueId = extensions.OfType<UniqueIdentifierExtension>().FirstOrDefault()?.Value;
+                var responseUniqueId = firstUniqueId?.Value;
                 if (responseUniqueId is null ||
                     !System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(responseUniqueId, ExpectedUniqueId))
                 {
@@ -354,23 +365,25 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                 }
             }
 
+            var headerSpan = Buffer.AsSpan(0, 48);
+
             NTPResponse = new NTPResponse(
 
-                            LI:                     (Byte) ((Buffer[0] >> 6) & 0x03),
-                            VN:                     (Byte) ((Buffer[0] >> 3) & 0x07),
-                            Mode:                   (Byte)  (Buffer[0]       & 0x07),
-                            Stratum:                Buffer[1],
-                            Poll:                   Buffer[2],
-                            Precision:              (SByte) Buffer[3],
-                            RootDelay:              (UInt32) ((Buffer[4]  << 24) | (Buffer[5]  << 16) | (Buffer[6]  << 8) | Buffer[7]),
-                            RootDispersion:         (UInt32) ((Buffer[8]  << 24) | (Buffer[9]  << 16) | (Buffer[10] << 8) | Buffer[11]),
-                            ReferenceIdentifier:    ReferenceIdentifier.From(Buffer[12], Buffer[13], Buffer[14], Buffer[15]),
-                            ReferenceTimestamp:     ReadUInt64(Buffer, 16),
-                            OriginateTimestamp:     ReadUInt64(Buffer, 24),
-                            ReceiveTimestamp:       ReadUInt64(Buffer, 32),
-                            TransmitTimestamp:      ReadUInt64(Buffer, 40),
+                            LI:                     (Byte) ((headerSpan[0] >> 6) & 0x03),
+                            VN:                     (Byte) ((headerSpan[0] >> 3) & 0x07),
+                            Mode:                   (Byte)  (headerSpan[0]       & 0x07),
+                            Stratum:                headerSpan[1],
+                            Poll:                   headerSpan[2],
+                            Precision:              (SByte) headerSpan[3],
+                            RootDelay:              BinaryPrimitives.ReadUInt32BigEndian(headerSpan.Slice(4, 4)),
+                            RootDispersion:         BinaryPrimitives.ReadUInt32BigEndian(headerSpan.Slice(8, 4)),
+                            ReferenceIdentifier:    ReferenceIdentifier.From(headerSpan[12], headerSpan[13], headerSpan[14], headerSpan[15]),
+                            ReferenceTimestamp:     ReadUInt64(headerSpan, 16),
+                            OriginateTimestamp:     ReadUInt64(headerSpan, 24),
+                            ReceiveTimestamp:       ReadUInt64(headerSpan, 32),
+                            TransmitTimestamp:      ReadUInt64(headerSpan, 40),
 
-                            Extensions:             extensions,
+                            Extensions:             parsedExtensions,
                             KeyId:                  null,
                             MessageDigest:          null,
                             DestinationTimestamp:   DestinationTimestamp,
