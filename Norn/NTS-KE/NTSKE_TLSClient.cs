@@ -79,7 +79,26 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         public Org.BouncyCastle.Tls.TlsContext?  NTSKEContext    { get; private set; }
 
-        public DomainName?  ExpectedHostname { get; } = ExpectedHostname;
+        public DomainName?  ExpectedHostname   { get; } = ExpectedHostname;
+
+        /// <summary>
+        /// An explicit literal IP address (IPv4 or IPv6) the server's certificate is checked
+        /// against via iPAddress SANs when the client connected by IP rather than DNS name.
+        /// </summary>
+        public IPAddress?   ExpectedIPAddress  { get; }
+
+        /// <summary>
+        /// Create an NTS-KE TLS client connecting directly to a literal IP address.
+        /// </summary>
+        public NTSKE_TLSClient(RemoteTLSServerCertificateValidationHandler<NTSKE_TLSClient>?  RemoteCertificateValidator,
+                               IPAddress                                                      ExpectedIPAddress)
+
+            : this(RemoteCertificateValidator,
+                   (DomainName?) null)
+
+        {
+            this.ExpectedIPAddress = ExpectedIPAddress;
+        }
 
         /// <summary>
         /// TLS certificate and handshake information captured during NTS-KE.
@@ -288,6 +307,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         protected override IList<ServerName>? GetSniServerNames()
         {
 
+            if (ExpectedIPAddress is not null)
+                return null;
+
             // DomainName.ToString() appends a trailing root dot; strip it so RFC 6066 § 3
             // host_name omits the trailing dot and literal IP addresses are recognized and omitted.
             var host = ExpectedHostname?.ToString().TrimEnd('.').Trim('[', ']');
@@ -393,8 +415,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             if (ChainErrorsOf(chain.Build(remoteCertificate), chain.ChainStatus.Select(status => status.Status)))
                 policyErrors |= SslPolicyErrors.RemoteCertificateChainErrors;
 
-            if (NTSKETLSClient.ExpectedHostname is not null &&
-                !HostnameMatches(remoteCertificate, NTSKETLSClient.ExpectedHostname.ToString()))
+            if (NTSKETLSClient.ExpectedIPAddress is { } expectedIP)
+            {
+                if (!remoteCertificate.MatchesIPAddress(expectedIP.ToDotNet()))
+                    policyErrors |= SslPolicyErrors.RemoteCertificateNameMismatch;
+            }
+            else if (NTSKETLSClient.ExpectedHostname is not null &&
+                     !HostnameMatches(remoteCertificate, NTSKETLSClient.ExpectedHostname.ToString()))
             {
                 policyErrors |= SslPolicyErrors.RemoteCertificateNameMismatch;
             }

@@ -2043,8 +2043,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                                                              or ExtensionTypes.NTSCookiePlaceholder
                                                                                              or ExtensionTypes.AuthenticatorAndEncrypted);
 
+                                    var uniqueId           = requestPacket.UniqueIdentifier();
+
                                     var isAuthenticatedNts = requestPacket.Extensions.Any(
                                                                  extension => extension is AuthenticatorAndEncryptedExtension) &&
+                                                             requestPacket.Extensions.Count(
+                                                                 extension => extension.Type == ExtensionTypes.UniqueIdentifier &&
+                                                                              !extension.Encrypted) == 1 &&
+                                                             uniqueId is { Length: >= 32 } &&
                                                              requestPacket.Extensions.Count(
                                                                  extension => extension.Type == ExtensionTypes.NTSCookie &&
                                                                               !extension.Encrypted) == 1 &&
@@ -2872,7 +2878,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             var extensions  = new List<NTPExtension>();
             var uniqueId    = RequestPacket.UniqueIdentifier();
 
-            if (uniqueId?.Length > 0)
+            // Echo only plausible RFC 8915 § 5.3 Unique Identifiers (32–64 octets) so an
+            // unauthenticated caller cannot inflate a NAK with an oversized Unique Identifier.
+            if (uniqueId is { Length: >= 32 and <= 64 })
                 extensions.Add(new UniqueIdentifierExtension(uniqueId));
 
             return new NTPPacket(
@@ -2928,8 +2936,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             var u1 = RequestPacket.UniqueIdentifier();
 
-            if (u1?.Length > 0)
-                extensions.Add(new UniqueIdentifierExtension(u1));
+            // RFC 8915 § 5.3 / § 5.7: every NTS-protected request MUST carry a Unique Identifier
+            // extension field of at least 32 octets in the clear.
+            if (RequestPacket.Extensions.Count(extension => extension.Type == ExtensionTypes.UniqueIdentifier &&
+                                                            !extension.Encrypted) != 1 ||
+                u1 is null || u1.Length < 32)
+            {
+                return BuildNTSNAK(RequestPacket, Exchange, "The request must carry a valid Unique Identifier (>= 32 octets)!");
+            }
+
+            extensions.Add(new UniqueIdentifierExtension(u1));
 
             var n1 = RequestPacket.NTSCookieExtension();
 

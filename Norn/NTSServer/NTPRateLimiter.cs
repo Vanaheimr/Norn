@@ -236,6 +236,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         private          Double                              kissTokens;
         private          Int64                               kissRefill;
 
+        /// <summary>
+        /// Optional global ceiling on total answers per second across all addresses,
+        /// defending against spoofed-source floods that continuously evict the table.
+        /// Only ever taken inside a part's lock, never the other way round.
+        /// </summary>
+        private readonly Lock                                answerLock   = new ();
+
+        private          Double                              answerTokens;
+        private          Int64                               answerRefill;
+
         #endregion
 
         #region Properties
@@ -264,6 +274,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// The ceiling on RATE kisses per second across all addresses together.
         /// </summary>
         public Double        MaxKissesPerSecond  { get; }
+
+        /// <summary>
+        /// An optional ceiling on total answers per second across all addresses together
+        /// (null = unlimited). Caps total amplification/CPU even under a flood of distinct
+        /// forged source addresses that continuously evicts the per-client table.
+        /// </summary>
+        public Double?       MaxAnswersPerSecond { get; }
 
         /// <summary>
         /// How many client addresses are tracked at once.
@@ -338,6 +355,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <param name="TimeProvider">The clock to measure elapsed time on.</param>
         /// <param name="IPv6PrefixLength">How many leading bits of an IPv6 address make up one client.</param>
         /// <param name="Leak">Of the requests over the limit, one in 2^Leak is answered anyway; zero answers none.</param>
+        /// <param name="MaxAnswersPerSecond">Optional global cap on total answers per second across all addresses (null = unlimited).</param>
         public NTPRateLimiter(TimeSpan?      MinimumInterval      = null,
                               Int32?         Burst                = null,
                               TimeSpan?      KissInterval         = null,
@@ -345,7 +363,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                               Int32?         MaxClients           = null,
                               TimeProvider?  TimeProvider         = null,
                               Int32?         IPv6PrefixLength     = null,
-                              Byte?          Leak                 = null)
+                              Byte?          Leak                 = null,
+                              Double?        MaxAnswersPerSecond  = null)
         {
 
             this.Leak                = Math.Min(Leak ?? DefaultLeak, MaxLeak);
@@ -359,6 +378,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             this.Burst               = Math.Max(1, Burst ?? DefaultBurst);
             this.KissInterval        = KissInterval       ?? DefaultKissInterval;
             this.MaxKissesPerSecond  = Math.Max(0, MaxKissesPerSecond ?? DefaultMaxKissesPerSecond);
+            this.MaxAnswersPerSecond = MaxAnswersPerSecond is not null
+                                           ? Math.Max(0, MaxAnswersPerSecond.Value)
+                                           : null;
             this.MaxClients          = Math.Max(1, MaxClients         ?? DefaultMaxClients);
 
             var exponent             = Math.Ceiling(Math.Log2(Math.Max(1.0, this.MinimumInterval.TotalSeconds)));
@@ -372,6 +394,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             this.kissRefill          = this.TimeProvider.GetTimestamp();
             this.kissTokens          = 1;
+            this.answerRefill        = this.kissRefill;
+            this.answerTokens        = this.MaxAnswersPerSecond ?? 0;
 
         }
 
@@ -405,16 +429,20 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                 var client   = GetOrAddClient(shard, RemoteAddress, now);
 
-                var elapsed  = TimeProvider.GetElapsedTime(client.LastRefill, now);
+                var elapsedSeconds = Math.Max(0, TimeProvider.GetElapsedTime(client.LastRefill, now).TotalSeconds);
 
                 client.Tokens      = Math.Min(
                                          Burst,
-                                         client.Tokens + elapsed.TotalSeconds / MinimumInterval.TotalSeconds
+                                         client.Tokens + elapsedSeconds / MinimumInterval.TotalSeconds
                                      );
-                client.LastRefill  = now;
+                if (elapsedSeconds > 0)
+                    client.LastRefill = now;
 
                 if (client.Tokens >= 1.0)
                 {
+                    if (!TrySpendAnswerToken(now))
+                        return RateLimitDecision.Drop;
+
                     client.Tokens -= 1.0;
                     return RateLimitDecision.Answer;
                 }
@@ -425,7 +453,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 if (Leak > 0 &&
                     Random.Shared.Next(1 << Leak) == 0)
                 {
-                    return RateLimitDecision.Answer;
+                    return TrySpendAnswerToken(now)
+                               ? RateLimitDecision.Answer
+                               : RateLimitDecision.Drop;
                 }
 
                 // Limited from here on. Whether the client is told so is a second, stricter
@@ -575,6 +605,43 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     return false;
 
                 kissTokens -= 1.0;
+
+                return true;
+
+            }
+
+        }
+
+        #endregion
+
+        #region (private) TrySpendAnswerToken(Now)
+
+        private Boolean TrySpendAnswerToken(Int64 Now)
+        {
+
+            if (MaxAnswersPerSecond is not { } ceiling)
+                return true;
+
+            if (ceiling <= 0)
+                return false;
+
+            lock (answerLock)
+            {
+
+                var elapsed = Math.Max(0, TimeProvider.GetElapsedTime(answerRefill, Now).TotalSeconds);
+
+                answerTokens = Math.Min(
+                                   ceiling,
+                                   answerTokens + elapsed * ceiling
+                               );
+
+                if (elapsed > 0)
+                    answerRefill = Now;
+
+                if (answerTokens < 1.0)
+                    return false;
+
+                answerTokens -= 1.0;
 
                 return true;
 

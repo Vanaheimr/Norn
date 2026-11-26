@@ -76,6 +76,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         #region Properties
         public UInt16                                                         Id                            { get; }
         public DomainName                                                     Hostname                      { get; }
+
+        /// <summary>
+        /// An explicit literal IP address (IPv4 or IPv6) when the client was constructed to
+        /// connect directly by IP rather than DNS name (e.g. <c>::1</c>).
+        /// </summary>
+        public IPAddress?                                                     HostIPAddress                 { get; }
+
+        /// <summary>
+        /// The host string this client connects to (IP literal or domain name without trailing dot).
+        /// </summary>
+        public String                                                         HostText
+            => HostIPAddress?.ToString() ?? Hostname.ToString().TrimEnd('.');
         public IPPort                                                         NTSKE_Port                    { get; }
         public IPPort                                                         NTP_Port                      { get; }
         public RemoteTLSServerCertificateValidationHandler<NTSKE_TLSClient>?  RemoteCertificateValidator    { get; }
@@ -264,6 +276,43 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 throw new ArgumentException("At least one of the offered AEAD algorithms has to be one this client can perform.",
                                             nameof(OfferedAEADAlgorithms));
 
+        }
+
+        /// <summary>
+        /// Create a new NTS client connecting directly to a literal IP address (IPv4 or IPv6).
+        /// </summary>
+        public NTSClient(IPAddress                                                      HostIPAddress,
+                         IPPort?                                                        NTSKE_Port                           = null,
+                         IPPort?                                                        NTP_Port                             = null,
+                         UInt16?                                                        Id                                   = null,
+                         RemoteTLSServerCertificateValidationHandler<NTSKE_TLSClient>?  RemoteCertificateValidator           = null,
+                         IPVersionPreference?                                           IPVersionPreference                  = null,
+                         TimeSpan?                                                      Timeout                              = null,
+                         DNSClient?                                                     DNSClient                            = null,
+                         NTSCookiePoolPolicy?                                           CookiePoolPolicy                     = null,
+                         Boolean                                                        InterleavedMode                      = false,
+                         IEnumerable<AEADAlgorithms>?                                   OfferedAEADAlgorithms                = null,
+                         Boolean                                                        CompliantAES128GCMSIVExporterContext = true,
+                         TimeProvider?                                                  TimeProvider                         = null,
+                         DomainName?                                                    RequestedNTPServer                   = null)
+
+            : this(DomainName.Empty,
+                   NTSKE_Port,
+                   NTP_Port,
+                   Id,
+                   RemoteCertificateValidator,
+                   IPVersionPreference,
+                   Timeout,
+                   DNSClient,
+                   CookiePoolPolicy,
+                   InterleavedMode,
+                   OfferedAEADAlgorithms,
+                   CompliantAES128GCMSIVExporterContext,
+                   TimeProvider,
+                   RequestedNTPServer)
+
+        {
+            this.HostIPAddress = HostIPAddress;
         }
 
         #endregion
@@ -477,11 +526,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 // can be addressed by IP throughout.
                 IEnumerable<IPAddress> ipAddresses;
 
+                if (HostIPAddress is { } hostIP)
+                    ipAddresses = [ hostIP ];
+
                 // DomainName renders as an FQDN, so the trailing root dot has to come off
                 // before this can look like an address literal.
-                var hostnameText = Hostname.ToString().TrimEnd('.').Trim('[', ']');
-
-                if (System.Net.IPAddress.TryParse(hostnameText, out var literalIPAddress))
+                else if (System.Net.IPAddress.TryParse(Hostname.ToString().TrimEnd('.').Trim('[', ']'), out var literalIPAddress))
                     ipAddresses = [ literalIPAddress.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6
                                         ? IPv6Address.Parse(literalIPAddress.ToString())
                                         : IPv4Address.Parse(literalIPAddress.ToString()) ];
@@ -508,7 +558,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                 if (resolvedIPAddresses.Length == 0)
                     return NTSKEResult.Failed(
-                               $"No IP address found for {Hostname}!",
+                               $"No IP address found for {HostText}!",
                                NTSKEErrorCategory.DNS,
                                TakeTimingInfoSnapshot()
                            );
@@ -551,7 +601,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                 if (tcpClient is null)
                     return NTSKEResult.Failed(
-                               lastException?.Message ?? $"Could not connect to {Hostname}:{NTSKE_Port}!",
+                               lastException?.Message ?? $"Could not connect to {HostText}:{NTSKE_Port}!",
                                NTSKEErrorCategory.TCPConnect,
                                TakeTimingInfoSnapshot()
                            );
@@ -561,8 +611,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 {
 
                     var tlsClientProtocol  = new TlsClientProtocol(networkStream);
-                    var ntsTlsClient       = new NTSKE_TLSClient  (RemoteCertificateValidator,
-                                                                   Hostname);
+                    var ntsTlsClient       = HostIPAddress is { } expectedIP
+                                                 ? new NTSKE_TLSClient(RemoteCertificateValidator,
+                                                                       expectedIP)
+                                                 : new NTSKE_TLSClient(RemoteCertificateValidator,
+                                                                       Hostname);
 
                     var tlsStopwatch       = Stopwatch.StartNew();
                     var tlsHandshakeTask   = Task.Run(
@@ -1856,7 +1909,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             var remoteEndPoint     = await NTPRemoteEndPointResolver.ResolveAsync(
                                                NTSKEResponse,
-                                               Hostname,
+                                               HostText,
                                                NTP_Port,
                                                DNSClient,
                                                IPVersionPreference,
@@ -1869,7 +1922,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                          ? remoteEndPoint.ToString()
                                          : NTPServer ?? NTPRemoteEndPointResolver.GetRemoteDescription(
                                                NTSKEResponse,
-                                               Hostname,
+                                               HostText,
                                                NTP_Port
                                            );
 
@@ -1948,7 +2001,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             try
             {
                 destination = remoteEndPoint ?? await ResolveBySystemAsync(
-                                                          Hostname.ToString(),
+                                                          HostText,
                                                           NTP_Port,
                                                           IPVersionPreference,
                                                           CancellationToken

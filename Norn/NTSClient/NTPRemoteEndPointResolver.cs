@@ -125,11 +125,22 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                                                   DomainName       FallbackHost,
                                                                                   IPPort           FallbackPort,
                                                                                   String?          ChosenServer   = null)
+
+            => GetRemoteCandidates(NTSKEResponse,
+                                   FallbackHost.ToString().TrimEnd('.'),
+                                   FallbackPort,
+                                   ChosenServer);
+
+
+        public static IEnumerable<(String Host, IPPort Port)> GetRemoteCandidates(NTSKE_Response?  NTSKEResponse,
+                                                                                  String           FallbackHost,
+                                                                                  IPPort           FallbackPort,
+                                                                                  String?          ChosenServer   = null)
         {
 
             var hosts = (NTSKEResponse?.NTPv4ServerNames.Any() == true
                              ? NTSKEResponse.NTPv4ServerNames
-                             : [ FallbackHost.ToString().TrimEnd('.') ]).
+                             : [ FallbackHost.Trim().Trim('[', ']').TrimEnd('.') ]).
                         ToList();
 
             var ports = (NTSKEResponse?.NTPv4Ports.Any() == true
@@ -165,6 +176,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         public static String GetRemoteDescription(NTSKE_Response?  NTSKEResponse,
                                                   DomainName       FallbackHost,
+                                                  IPPort           FallbackPort)
+
+            => GetRemoteDescription(NTSKEResponse,
+                                    FallbackHost.ToString().TrimEnd('.'),
+                                    FallbackPort);
+
+
+        public static String GetRemoteDescription(NTSKE_Response?  NTSKEResponse,
+                                                  String           FallbackHost,
                                                   IPPort           FallbackPort)
         {
 
@@ -230,8 +250,27 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// One of the servers this exchange named, to the exclusion of the
         /// others; null takes them in the order they were named.
         /// </param>
+        public static Task<System.Net.IPEndPoint?> ResolveAsync(NTSKE_Response?      NTSKEResponse,
+                                                                DomainName           FallbackHost,
+                                                                IPPort               FallbackPort,
+                                                                DNSClient            DNSClient,
+                                                                IPVersionPreference  IPVersionPreference,
+                                                                TimeSpan             Timeout,
+                                                                CancellationToken    CancellationToken = default,
+                                                                String?              ChosenServer      = null)
+
+            => ResolveAsync(NTSKEResponse,
+                            FallbackHost.ToString().TrimEnd('.'),
+                            FallbackPort,
+                            DNSClient,
+                            IPVersionPreference,
+                            Timeout,
+                            CancellationToken,
+                            ChosenServer);
+
+
         public static async Task<System.Net.IPEndPoint?> ResolveAsync(NTSKE_Response?      NTSKEResponse,
-                                                                      DomainName           FallbackHost,
+                                                                      String               FallbackHost,
                                                                       IPPort               FallbackPort,
                                                                       DNSClient            DNSClient,
                                                                       IPVersionPreference  IPVersionPreference,
@@ -240,9 +279,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                                       String?              ChosenServer      = null)
         {
 
+            var fallbackHostNormalized = FallbackHost.Trim().Trim('[', ']').TrimEnd('.');
+
             var candidates = GetRemoteCandidates(
                                  NTSKEResponse,
-                                 FallbackHost,
+                                 fallbackHostNormalized,
                                  FallbackPort,
                                  ChosenServer
                              ).ToList();
@@ -266,7 +307,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             // right property, so the two disagreed with each other.
             var namedSomewhereElse = NTSKEResponse?.NTPv4ServerNames.Any() == true &&
                                      !String.Equals(candidates[0].Host.Trim('[', ']').TrimEnd('.'),
-                                                    FallbackHost.ToString().TrimEnd('.'),
+                                                    fallbackHostNormalized,
                                                     StringComparison.OrdinalIgnoreCase);
 
             if (!namedSomewhereElse &&
