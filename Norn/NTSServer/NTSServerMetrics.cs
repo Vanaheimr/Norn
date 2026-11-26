@@ -35,7 +35,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                   Int64 NTSKERequestsInvalid,
                                   Int64 NTSKEResponsesSent,
                                   Int64 NTPRequestsDenied       = 0,
-                                  Int64 NTSKEConnectionsDenied  = 0)
+                                  Int64 NTSKEConnectionsDenied  = 0,
+                                  Int64 NTPPlainRequestsIgnored = 0)
     {
 
         public Int64 NTPRequestsReceived       { get; } = NTPRequestsReceived;
@@ -44,6 +45,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// allow where they came from. Never answered, so never counted as rate-limited too.
         /// </summary>
         public Int64 NTPRequestsDenied         { get; } = NTPRequestsDenied;
+
+        /// <summary>
+        /// How many plain NTP requests, without NTS, a server of NTS alone left unanswered -
+        /// see <see cref="NTSServer.PlainNTP"/>.
+        /// </summary>
+        public Int64 NTPPlainRequestsIgnored   { get; } = NTPPlainRequestsIgnored;
 
         public Int64 NTPRequestsRejected       { get; } = NTPRequestsRejected;
 
@@ -90,6 +97,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             var counters = new (String Name, Int64 Value)[] {
                                ("received",         NTPRequestsReceived),
                                ("denied",           NTPRequestsDenied),
+                               ("plain-ignored",    NTPPlainRequestsIgnored),
                                ("rejected",         NTPRequestsRejected),
                                ("rate-limited",     NTPRequestsRateLimited),
                                ("kisses",           NTPKissesOfDeathSent),

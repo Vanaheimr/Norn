@@ -174,6 +174,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         private                  Int64                                    ntpRequestsReceived;
         private                  Int64                                    ntpRequestsDenied;
+        private                  Int64                                    ntpPlainRequestsIgnored;
         private                  Int64                                    ntpRequestsRejected;
         private                  Int64                                    ntpRequestsRateLimited;
         private                  Int64                                    ntpKissesOfDeathSent;
@@ -209,6 +210,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// certificate at all.
         /// </summary>
         public Boolean           NTSKEOverTLS    { get; }
+
+        /// <summary>
+        /// Whether a plain NTP request - one without any NTS extension field - is answered
+        /// (default: yes, as RFC 8915 § 5.7 has it for a server that serves both). A server that
+        /// says no serves NTS alone: such a request gets no answer at all, as an address the
+        /// access list refuses gets none, and is counted in
+        /// <see cref="NTSServerMetrics.NTPPlainRequestsIgnored"/>. A client that tried NTS and
+        /// failed is still told so, by an NTS NAK.
+        /// </summary>
+        public Boolean           PlainNTP        { get; }
 
         /// <summary>
         /// The NTP UDP port.
@@ -472,7 +483,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                    NTSKERequestsInvalid:      System.Threading.Interlocked.Read(ref ntskeRequestsInvalid),
                    NTSKEResponsesSent:        System.Threading.Interlocked.Read(ref ntskeResponsesSent),
                    NTPRequestsDenied:         System.Threading.Interlocked.Read(ref ntpRequestsDenied),
-                   NTSKEConnectionsDenied:    System.Threading.Interlocked.Read(ref ntskeConnectionsDenied)
+                   NTSKEConnectionsDenied:    System.Threading.Interlocked.Read(ref ntskeConnectionsDenied),
+                   NTPPlainRequestsIgnored:   System.Threading.Interlocked.Read(ref ntpPlainRequestsIgnored)
                );
 
         #endregion
@@ -511,6 +523,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <param name="SSHAuthenticator">Who may log in to that listener; required with <paramref name="SSHPort"/>.</param>
         /// <param name="AccessList">Who may query this server at all, RFC 8633 § 5.1 (default: everyone).</param>
         /// <param name="NTSKEOverTLS">Whether NTS-KE is served over TLS on <paramref name="NTSKEPort"/> (default: yes); no where the key exchange goes over SSH alone.</param>
+        /// <param name="PlainNTP">Whether a plain NTP request without NTS is answered (default: yes); no for a server of NTS alone.</param>
         public NTSServer(I18NString?        Description    = null,
                          IPPort?            NTSKEPort      = null,
                          IPPort?            NTSPort        = null,
@@ -548,7 +561,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                          IEnumerable<KeyPair>?     KeyPairs               = null,
                          TimeSpan?                 PublicKeyLeadTime      = null,
                          Boolean                   NTSKEOverTLS           = true,
-                         IEnumerable<X509Certificate>? TLSCertificateChain = null)
+                         IEnumerable<X509Certificate>? TLSCertificateChain = null,
+                         Boolean                   PlainNTP               = true)
         {
 
             // An SSH listener hands out cookies to whoever logs in, so who that may be is never a
@@ -569,6 +583,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             this.Description                  = Description                  ?? I18NString.Empty;
             this.TCPPort                      = NTSKEPort                    ?? IPPort.NTSKE;
             this.NTSKEOverTLS                 = NTSKEOverTLS;
+            this.PlainNTP                     = PlainNTP;
             this.UDPPort                      = NTSPort                      ?? IPPort.NTP;
             this.ExternalURLs                 = ExternalURLs                 ?? [ URL.Parse($"udp://localhost:{this.UDPPort}") ];
             this.DNSClient                    = DNSClient                    ?? new DNSClient();
@@ -2018,6 +2033,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                                                              or ExtensionTypes.NTSCookie
                                                                                              or ExtensionTypes.NTSCookiePlaceholder
                                                                                              or ExtensionTypes.AuthenticatorAndEncrypted);
+
+                                    // A server of NTS alone says nothing to a client that does
+                                    // not even try it: no time, and no kiss either, which would
+                                    // be an unauthenticated answer of the request's size to an
+                                    // address nobody checked.
+                                    if (!PlainNTP && !isNtsRequest)
+                                    {
+                                        System.Threading.Interlocked.Increment(ref ntpPlainRequestsIgnored);
+                                        return;
+                                    }
 
                                     var uniqueId           = requestPacket.UniqueIdentifier();
 
