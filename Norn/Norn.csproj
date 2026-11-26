@@ -12,4 +12,8 @@
     <ProjectReference Include="..\..\Hermod\Hermod\Hermod.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="org.GraphDefined.Vanaheimr.Norn.Tests" />
+  </ItemGroup>
+
 </Project>

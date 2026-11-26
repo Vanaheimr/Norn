@@ -167,9 +167,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         private readonly         SemaphoreSlim                            sshNtskeConnectionSemaphore;
         private readonly         ConcurrentDictionary<System.Net.IPAddress, Int32>  ntskeConnectionsPerClient = [];
         private readonly         Boolean                                  advertiseExternalURLs;
-        private readonly         X509Certificate?                         tlsCertificate;
-        private readonly         ECPrivateKeyParameters?                  tlsPrivateKey;
-        private readonly         String?                                  tlsServerSubjectName;
+        private volatile         TLSIdentity                              tlsIdentity;
         private readonly         ISshUserAuthenticator?                   sshAuthenticator;
         private                  SshServer?                               sshServer;
 
@@ -591,34 +589,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             this.ntpRequestSemaphore          = new SemaphoreSlim(this.MaxConcurrentNTPRequests);
             this.ntskeConnectionSemaphore     = new SemaphoreSlim(this.MaxConcurrentNTSKEConnections);
             this.sshNtskeConnectionSemaphore  = new SemaphoreSlim(this.MaxConcurrentNTSKEConnections);
-            if ((TLSCertificate is null) != (TLSPrivateKey is null))
-                throw new ArgumentException("TLS certificate and private key must be provided together.");
-
-            if (TLSCertificate is not null && TLSPrivateKey is not null)
-            {
-                this.tlsCertificate       = TLSCertificate;
-                this.tlsPrivateKey        = TLSPrivateKey;
-            }
-            else if (this.NTSKEOverTLS)
-            {
-                // Generate the fallback self-signed certificate once per server instance rather
-                // than on every accepted TCP connection (avoids per-connection ECDSA keygen CPU
-                // amplification and keeps the presented certificate consistent across handshakes).
-                var defaultSANs           = TLSServerSubjectName.IsNotNullOrEmpty()
-                                                ? new[] { TLSServerSubjectName }
-                                                : new[] { "ntpKE1.example.org", "ntpKE2.example.org" };
-
-                (this.tlsCertificate,
-                 this.tlsPrivateKey)      = NTSKE_TLSService.GenerateSelfSignedServerCertificate(
-                                                TLSServerSubjectName.IsNotNullOrEmpty()
-                                                    ? $"CN={TLSServerSubjectName}"
-                                                    : "CN=ntpKE.example.org",
-                                                defaultSANs,
-                                                this.TimeProvider
-                                            );
-            }
-
-            this.tlsServerSubjectName     = TLSServerSubjectName;
+            this.tlsIdentity                  = Identity(TLSCertificate,
+                                                         TLSPrivateKey,
+                                                         TLSServerSubjectName);
 
             // What this server can honestly say about its own clock (RFC 5905 § 7.3).
             //
@@ -2275,10 +2248,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                     using var requestCTS     = CancellationTokenSource.CreateLinkedTokenSource(cts.Token);
                                     requestCTS.CancelAfter(NTSKEHandshakeTimeout + NTSKERequestTimeout);
                                     var tlsServerProtocol    = new TlsServerProtocol(networkStream);
+                                    // Read once: a RenewTLSIdentity in between must not hand this
+                                    // connection the certificate of one identity and the key of another.
+                                    var identity             = tlsIdentity;
                                     var tlsServer            = new NTSKE_TLSService (
-                                                                   tlsCertificate,
-                                                                   tlsPrivateKey,
-                                                                   tlsServerSubjectName,
+                                                                   identity.ShownCertificate,
+                                                                   identity.ShownPrivateKey,
+                                                                   identity.SubjectName,
                                                                    TimeProvider
                                                                );
 
@@ -2665,6 +2641,121 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                         LeapIndicator        ?? 0);
 
         }
+
+        #endregion
+
+
+        #region TLSCertificate / TLSServerSubjectName
+
+        /// <summary>
+        /// The certificate NTS-KE over TLS shows, or null where it shows one it made itself,
+        /// self-signed.
+        /// </summary>
+        public X509Certificate?  TLSCertificate
+            => tlsIdentity.Certificate;
+
+        /// <summary>
+        /// The name NTS-KE over TLS goes by, or null.
+        /// </summary>
+        public String?           TLSServerSubjectName
+            => tlsIdentity.SubjectName;
+
+        #endregion
+
+        #region RenewTLSIdentity(Certificate, PrivateKey, SubjectName = null)
+
+        /// <summary>
+        /// Show another certificate in NTS-KE over TLS, while the server runs: every key
+        /// exchange that begins from now on is made under it, one under way ends under the
+        /// one it began with. Null for both is a certificate the server makes itself,
+        /// self-signed, once for this call, as in the constructor.
+        /// </summary>
+        /// <remarks>
+        /// A certificate is renewed before it expires - every 60 days, where it comes from an
+        /// ACME CA - and a server had to be made anew for it before: its listeners went down
+        /// for a moment, and a key exchange under way with them. The cookies a client holds
+        /// stay valid either way: they are sealed by the master keys, not by the certificate.
+        /// </remarks>
+        /// <param name="Certificate">The certificate to show.</param>
+        /// <param name="PrivateKey">Its private key.</param>
+        /// <param name="SubjectName">The name the server goes by.</param>
+        /// <exception cref="ArgumentException">Only one of certificate and key given, or a key that is not the certificate's: no handshake could succeed under them, and the identity before stays.</exception>
+        public void RenewTLSIdentity(X509Certificate?         Certificate,
+                                     ECPrivateKeyParameters?  PrivateKey,
+                                     String?                  SubjectName   = null)
+        {
+
+            tlsIdentity = Identity(Certificate,
+                                   PrivateKey,
+                                   SubjectName);
+
+        }
+
+        #endregion
+
+        #region (private) Identity(Certificate, PrivateKey, SubjectName)
+
+        /// <summary>
+        /// The TLS identity of the given values - a certificate with the key that belongs to it,
+        /// or neither.
+        /// </summary>
+        private TLSIdentity Identity(X509Certificate?         Certificate,
+                                     ECPrivateKeyParameters?  PrivateKey,
+                                     String?                  SubjectName)
+        {
+
+            if ((Certificate is null) != (PrivateKey is null))
+                throw new ArgumentException("A TLS certificate and its private key are given together, or neither of them.");
+
+            // The certificate's public key has to be the one of this private key: Q = d·G.
+            // Otherwise the server signs its handshake with a key the certificate does not
+            // name, and every client - rightly - breaks the handshake off.
+            if (Certificate is not null &&
+                PrivateKey  is not null &&
+                !(Certificate.GetPublicKey() is ECPublicKeyParameters publicKey &&
+                  publicKey.Q.Normalize().Equals(PrivateKey.Parameters.G.Multiply(PrivateKey.D).Normalize())))
+            {
+                throw new ArgumentException("The private key given is not the one of the TLS certificate given.",
+                                            nameof(PrivateKey));
+            }
+
+            if (Certificate is not null &&
+                PrivateKey  is not null)
+                return new (Certificate, PrivateKey, SubjectName, Certificate, PrivateKey);
+
+            if (!NTSKEOverTLS)
+                return new (null, null, SubjectName, null, null);
+
+            // Without a certificate of its own, the server shows one made self-signed here,
+            // once for this identity rather than on every accepted TCP connection: no ECDSA
+            // key generation per connection for anybody to make it do, and the same
+            // certificate in every handshake.
+            var (selfSigned, selfSignedKey) = NTSKE_TLSService.GenerateSelfSignedServerCertificate(
+                                                  SubjectName.IsNotNullOrEmpty()
+                                                      ? $"CN={SubjectName}"
+                                                      : "CN=ntpKE.example.org",
+                                                  SubjectName.IsNotNullOrEmpty()
+                                                      ? [ SubjectName ]
+                                                      : [ "ntpKE1.example.org", "ntpKE2.example.org" ],
+                                                  TimeProvider
+                                              );
+
+            return new (null, null, SubjectName, selfSigned, selfSignedKey);
+
+        }
+
+        /// <summary>
+        /// The certificate NTS-KE over TLS shows, its key and its name, as one: a connection
+        /// reads them at once, so that none is of one identity and another of the next.
+        /// Certificate and PrivateKey are the ones given, or null; ShownCertificate and
+        /// ShownPrivateKey what a handshake is made under - the ones given, or the
+        /// self-signed ones made for this identity.
+        /// </summary>
+        private sealed record TLSIdentity(X509Certificate?         Certificate,
+                                          ECPrivateKeyParameters?  PrivateKey,
+                                          String?                  SubjectName,
+                                          X509Certificate?         ShownCertificate,
+                                          ECPrivateKeyParameters?  ShownPrivateKey);
 
         #endregion
 

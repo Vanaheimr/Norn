@@ -45,7 +45,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.TimeSync
         private static NTSMeasurementResult Answer(String    Name,
                                                    Double    OffsetMilliseconds,
                                                    Boolean   Authenticated       = true,
-                                                   Boolean   Succeeded           = true)
+                                                   Boolean   Succeeded           = true,
+                                                   SignedResponseResult? Signed  = null)
 
             => new (DomainName.Parse(Name),
                     Guid.Empty) {
@@ -55,7 +56,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.TimeSync
                                   Success                 = Succeeded,
                                   NTSAuthenticationValid  = Authenticated,
                                   Offset                  = TimeSpan.FromMilliseconds(OffsetMilliseconds)
-                              }
+                              },
+                   SignedResponse  = Signed
 
                };
 
@@ -458,6 +460,52 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.TimeSync
                 Assert.That(verdict.Outcome,  Is.EqualTo(TimeSyncOutcome.ServersDisagree));
                 Assert.That(verdict.Offset,   Is.Null);
             });
+
+        }
+
+        #endregion
+
+        #region AServerAskedToSignCountsOnlyWhereItsSignatureChecks()
+
+        /// <summary>
+        /// A server asked for signed responses counts where its signature
+        /// checked, and not where it sent none, one that is not its key's, or
+        /// one by a key its key exchange did not name - however well its
+        /// answer authenticated. A server not asked counts as ever.
+        /// </summary>
+        [Test]
+        public void AServerAskedToSignCountsOnlyWhereItsSignatureChecks()
+        {
+
+            var signed    = Answer("signed",    10, Signed: new SignedResponseResult(true,  [ 1 ], 1, true));
+            var unsigned  = Answer("unsigned",  11, Signed: new SignedResponseResult(false, ErrorMessage: "The response was not signed"));
+            var forged    = Answer("forged",    12, Signed: new SignedResponseResult(true,  [ 1 ], 1, false));
+            var unknown   = Answer("unknown",   13, Signed: new SignedResponseResult(true,  [ 1 ], 7, null));
+            var notAsked  = Answer("notAsked",  14);
+
+            Assert.Multiple(() => {
+
+                Assert.That(TimeSyncVerdict.CanBeTrusted(signed),    Is.True);
+                Assert.That(TimeSyncVerdict.CanBeTrusted(notAsked),  Is.True);
+                Assert.That(TimeSyncVerdict.CanBeTrusted(unsigned),  Is.False);
+                Assert.That(TimeSyncVerdict.CanBeTrusted(forged),    Is.False);
+                Assert.That(TimeSyncVerdict.CanBeTrusted(unknown),   Is.False);
+
+                Assert.That(TimeSyncVerdict.SignatureProblem(signed),    Is.Null);
+                Assert.That(TimeSyncVerdict.SignatureProblem(notAsked),  Is.Null);
+                Assert.That(TimeSyncVerdict.SignatureProblem(unsigned),  Does.Contain("got none"));
+                Assert.That(TimeSyncVerdict.SignatureProblem(forged),    Does.Contain("not signed by its key 1"));
+                Assert.That(TimeSyncVerdict.SignatureProblem(unknown),   Does.Contain("named no key 7"));
+
+            });
+
+            // Two that count of five: a quorum of three is not reached.
+            var verdict = TimeSyncVerdict.From([ signed, unsigned, forged, unknown, notAsked ],
+                                               MinServers:    3,
+                                               MaxDeviation:  oneMinute);
+
+            Assert.That(verdict.IsUsable,  Is.False);
+            Assert.That(verdict.Answered,  Is.EqualTo(2));
 
         }
 

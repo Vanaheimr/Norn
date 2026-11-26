@@ -186,13 +186,40 @@ namespace org.GraphDefined.Vanaheimr.Norn.TimeSync
         /// synchronized - leap indicator 3, or a stratum of 0 or of 16 and
         /// above - although nothing here asks: NTSResponseValidator turns it
         /// into a failed query long before it is a measurement.
+        ///
+        /// Nor does the answer of a server that was asked for a signed response
+        /// - its endpoint says SignedResponses - and gave none whose signature
+        /// checked: none at all, one whose signature is not the one of its key,
+        /// or one by a key its key exchange did not name. A server that is
+        /// known to sign and does not is either not the server, or one whose
+        /// signing keys somebody else has; and where it was asked, its signed
+        /// word is what the time handed out on its strength is to rest on.
         /// </remarks>
         public static Boolean CanBeTrusted(NTSMeasurementResult Result)
 
             => Result.Success                          &&
                Result.NTP is not null                  &&
                Result.NTP.Success                      &&
-               Result.NTP.NTSAuthenticationValid;
+               Result.NTP.NTSAuthenticationValid       &&
+               Result.SignedResponse is not { Verified: not true };
+
+        #endregion
+
+        #region (static) SignatureProblem(Result)
+
+        /// <summary>
+        /// Why the signed response a server was asked for does not count - or
+        /// null where it was not asked for one, or its signature checked.
+        /// </summary>
+        public static String? SignatureProblem(NTSMeasurementResult Result)
+
+            => Result.SignedResponse switch {
+                   null                     => null,
+                   { Verified: true }       => null,
+                   { Success: false } none  => $"asked for a signed response, and got none: {none.ErrorMessage ?? "no answer"}",
+                   { Verified: false } bad  => $"its signed response is not signed by its key {bad.KeyId}: {bad.ErrorMessage ?? "the signature does not check"}",
+                   var notChecked           => $"its signed response could not be checked: {notChecked.ErrorMessage ?? $"its key exchange named no key {notChecked.KeyId}"}"
+               };
 
         #endregion
 
