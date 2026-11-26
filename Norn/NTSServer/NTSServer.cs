@@ -589,9 +589,34 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             this.advertiseExternalURLs        = ExternalURLs is not null;
             this.ntpRequestSemaphore          = new SemaphoreSlim(this.MaxConcurrentNTPRequests);
             this.ntskeConnectionSemaphore     = new SemaphoreSlim(this.MaxConcurrentNTSKEConnections);
-            this.tlsCertificate               = TLSCertificate;
-            this.tlsPrivateKey                = TLSPrivateKey;
-            this.tlsServerSubjectName         = TLSServerSubjectName;
+            if ((TLSCertificate is null) != (TLSPrivateKey is null))
+                throw new ArgumentException("TLS certificate and private key must be provided together.");
+
+            if (TLSCertificate is not null && TLSPrivateKey is not null)
+            {
+                this.tlsCertificate       = TLSCertificate;
+                this.tlsPrivateKey        = TLSPrivateKey;
+            }
+            else if (this.NTSKEOverTLS)
+            {
+                // Generate the fallback self-signed certificate once per server instance rather
+                // than on every accepted TCP connection (avoids per-connection ECDSA keygen CPU
+                // amplification and keeps the presented certificate consistent across handshakes).
+                var defaultSANs           = TLSServerSubjectName.IsNotNullOrEmpty()
+                                                ? new[] { TLSServerSubjectName }
+                                                : new[] { "ntpKE1.example.org", "ntpKE2.example.org" };
+
+                (this.tlsCertificate,
+                 this.tlsPrivateKey)      = NTSKE_TLSService.GenerateSelfSignedServerCertificate(
+                                                TLSServerSubjectName.IsNotNullOrEmpty()
+                                                    ? $"CN={TLSServerSubjectName}"
+                                                    : "CN=ntpKE.example.org",
+                                                defaultSANs,
+                                                this.TimeProvider
+                                            );
+            }
+
+            this.tlsServerSubjectName     = TLSServerSubjectName;
 
             // What this server can honestly say about its own clock (RFC 5905 § 7.3).
             //
@@ -1075,7 +1100,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             if (advertiseExternalURLs)
             {
-                foreach (var externalURL in ExternalURLs.Where(url => url.Scheme == URIScheme.udp))
+                // RFC 8915 § 4.1.7 / § 4.1.8: a response MUST NOT contain more than one
+                // NTPv4 Server Negotiation and more than one NTPv4 Port Negotiation record.
+                foreach (var externalURL in ExternalURLs.Where(url => url.Scheme == URIScheme.udp).Take(1))
                 {
 
                     // The record carries a bare ASCII host, so any brackets around an IPv6
@@ -1520,17 +1547,26 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                 now = TimeProvider.GetUtcNow();
 
+                var prunedExpiredKeys = false;
+
                 foreach (var masterKey in masterKeys.Values)
                 {
-                    if (masterKey.NotAfter <= now - MasterKeyRotationGracePeriod)
-                        masterKeys.TryRemove(masterKey.Id, out _);
+                    if (masterKey.NotAfter <= now - MasterKeyRotationGracePeriod &&
+                        masterKeys.TryRemove(masterKey.Id, out _))
+                    {
+                        prunedExpiredKeys = true;
+                    }
                 }
 
                 // Another thread may have replaced the key while this one waited for the lock.
                 current = currentMasterKey;
 
                 if (current?.IsValidAt(now) == true)
+                {
+                    if (prunedExpiredKeys)
+                        WriteMasterKeys();
                     return current.Key;
+                }
 
                 current = null;
 
@@ -1577,7 +1613,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 }
 
                 else
+                {
                     currentMasterKey   = current;
+
+                    if (prunedExpiredKeys)
+                        WriteMasterKeys();
+                }
 
                 return current.Key;
 
@@ -1618,6 +1659,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                 if (ForgetTheOthers)
                     masterKeys.Clear();
+                else
+                {
+                    foreach (var masterKey in masterKeys.Values)
+                    {
+                        if (masterKey.NotAfter <= now - MasterKeyRotationGracePeriod)
+                            masterKeys.TryRemove(masterKey.Id, out _);
+                    }
+                }
 
                 // Above every id ever seen, not only above those still kept: see the constructor.
                 highestMasterKeyId = Math.Max(highestMasterKeyId,
@@ -1963,19 +2012,39 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                         }
 
                         // The datagram itself, and no more: the worker keeps it, and the
-                        // buffer is about to receive the next one.
-                        var datagram = buffer.AsSpan(0, udpPacketLocal.ReceivedBytes).ToArray();
+                        // buffer is about to receive the next one. Capture the socket locally
+                        // so shutdown clearing the field cannot cause a NullReferenceException
+                        // in an in-flight worker, and do not pass cts.Token to Task.Run so the
+                        // finally block always releases the semaphore permit.
+                        var datagram       = buffer.AsSpan(0, udpPacketLocal.ReceivedBytes).ToArray();
+                        var activeSocket   = udpSocket;
 
                         _ = Task.Run(async () => {
 
                             try
                             {
 
+                                if (activeSocket is null)
+                                    return;
+
                                 if (NTPRequest.TryParse(datagram,
                                                         out var requestPacket,
                                                         out var errorResponse,
                                                         MasterKeys: masterKeys))
                                 {
+
+                                    var isNtsRequest       = requestPacket.Extensions.Any(
+                                                                 extension => extension.Type is ExtensionTypes.UniqueIdentifier
+                                                                                             or ExtensionTypes.NTSCookie
+                                                                                             or ExtensionTypes.NTSCookiePlaceholder
+                                                                                             or ExtensionTypes.AuthenticatorAndEncrypted);
+
+                                    var isAuthenticatedNts = requestPacket.Extensions.Any(
+                                                                 extension => extension is AuthenticatorAndEncryptedExtension) &&
+                                                             requestPacket.Extensions.Count(
+                                                                 extension => extension.Type == ExtensionTypes.NTSCookie &&
+                                                                              !extension.Encrypted) == 1 &&
+                                                             requestPacket.NTSCookieExtension()?.Cookie is not null;
 
                                     // Only a request the authenticator covers may ask for a
                                     // second, signed datagram: honouring the extension outside
@@ -1991,7 +2060,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                     // valid. Signed with another, or with one that is past its
                                     // last day, the response would carry a signature the client
                                     // has to refuse; better none, which it can see at once.
-                                    var signingKeyPair   = requestPacket.NTSRequestSignedResponse() is { Authenticated: true } signatureRequest
+                                    var signingKeyPair   = isAuthenticatedNts &&
+                                                           requestPacket.NTSRequestSignedResponse() is { Authenticated: true } signatureRequest
                                                                ? SigningKeyFor(signatureRequest.KeyId)
                                                                : null;
 
@@ -2000,8 +2070,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                     // RFC 9769 § 2 decides here which of this server's earlier
                                     // timestamps the answer carries, before anything is built:
                                     // the header has to be final before the NTS authenticator
-                                    // is computed over it.
-                                    var exchange         = InterleavedTimestamps is not null &&
+                                    // is computed over it. A failed NTS request that will draw
+                                    // an NTS NAK (RFC 8915 § 5.7) must neither pollute the
+                                    // interleaved store nor receive an interleaved-mode NAK.
+                                    var isNtsFailure     = isNtsRequest && !isAuthenticatedNts;
+
+                                    var exchange         = !isNtsFailure &&
+                                                           InterleavedTimestamps is not null &&
                                                            udpPacketLocal.RemoteEndPoint is IPEndPoint remoteIPEndPoint
 
                                                                ? InterleavedTimestamps.BeginExchange(
@@ -2009,11 +2084,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                                      receivedAt,
                                                                      requestPacket,
                                                                      TimeProvider,
-                                                                     // TryParse yields the typed extension only for an
-                                                                     // authenticator that verified; one that did not is
-                                                                     // kept as an opaque field, and does not count.
-                                                                     Authenticated: requestPacket.Extensions.Any(
-                                                                                        extension => extension is AuthenticatorAndEncryptedExtension)
+                                                                     Authenticated: isAuthenticatedNts
                                                                  )
 
                                                                : InterleavedExchange.Basic(
@@ -2028,7 +2099,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                                toBeSigned
                                                            );
 
-                                    await udpSocket.SendToAsync(
+                                    await activeSocket.SendToAsync(
                                                new ArraySegment<Byte>(responsePacket1.ToByteArray()),
                                                SocketFlags.None,
                                                udpPacketLocal.RemoteEndPoint,
@@ -2039,7 +2110,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                     // reporting is the one taken once the packet has actually
                                     // gone, after building, encrypting and writing it. It cannot
                                     // travel in this response, so it travels in the next one.
-                                    exchange.RecordTransmission(NTPPacket.GetCurrentNTPTimestamp(TimeProvider));
+                                    if (!isNtsFailure)
+                                        exchange.RecordTransmission(NTPPacket.GetCurrentNTPTimestamp(TimeProvider));
 
                                     System.Threading.Interlocked.Increment(ref ntpResponsesSent);
 
@@ -2051,7 +2123,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                         // as a scheduled security confirmation once the digital signature is ready.
                                         var responsePacket2 = SignResponse(responsePacket1, signingKeyPair);
 
-                                        await udpSocket.SendToAsync(
+                                        await activeSocket.SendToAsync(
                                                   new ArraySegment<Byte>(responsePacket2.ToByteArray()),
                                                   SocketFlags.None,
                                                   udpPacketLocal.RemoteEndPoint,
@@ -2078,7 +2150,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                 ntpRequestSemaphore.Release();
                             }
 
-                        }, cts.Token);
+                        });
 
                     }
                 }
@@ -2113,7 +2185,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     )
                 );
 
-                tcpSocket.Listen(backlog: 20);
+                tcpSocket.Listen(backlog: Math.Max(64, MaxConcurrentNTSKEConnections));
 
                 DebugX.Log($"NTP/NTS-KE Server started on port {TCPPort}/TCP");
 
@@ -2223,7 +2295,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                     // to become readable and only then descends into the TLS stream,
                                     // so a truncated request expires with the TLS connection still
                                     // healthy and the Error record below can actually be written.
-                                    clientSocket.ReceiveTimeout = (Int32) (NTSKERequestTimeout + TimeSpan.FromSeconds(5)).TotalMilliseconds;
+                                    // Bound blocking writes (e.g. a peer advertising a zero TCP window)
+                                    // as well as reads, so a stalled peer cannot hold a worker thread
+                                    // and a semaphore slot past the request budget.
+                                    clientSocket.ReceiveTimeout = (Int32) Math.Min(Int32.MaxValue, (NTSKERequestTimeout + TimeSpan.FromSeconds(5)).TotalMilliseconds);
+                                    clientSocket.SendTimeout    = (Int32) Math.Min(Int32.MaxValue, Math.Max(1000, NTSKERequestTimeout.TotalMilliseconds));
 
                                     var (requestBytes, errorMessage) = await NTSKEMessageReader.ReadAsync(
                                                                             tlsServerProtocol.Stream,

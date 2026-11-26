@@ -502,7 +502,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </summary>
         public override String ToString()
 
-            => $"{Type.Description()} ({Type}, {(IsCritical ? "critical" : "non critical")}, Length={Body.Length} Body=[{BitConverter.ToString(Body)}]";
+            => Type is NTSKE_RecordTypes.NewCookieForNTPv4 or NTSKE_RecordTypes.SSHKeyBinding
+                   ? $"{Type.Description()} ({Type}, {(IsCritical ? "critical" : "non critical")}, Length={Body.Length}, Body=<redacted>)"
+                   : $"{Type.Description()} ({Type}, {(IsCritical ? "critical" : "non critical")}, Length={Body.Length}, Body=[{BitConverter.ToString(Body)}])";
 
         #endregion
 

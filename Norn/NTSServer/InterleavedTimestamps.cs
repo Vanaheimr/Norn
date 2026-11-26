@@ -306,11 +306,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                  Boolean       Authenticated   = false)
         {
 
-            // Nothing is remembered about a client that may not use the mode, so an
-            // unauthenticated flood cannot occupy the table under this policy.
-            if (Policy == InterleavedModePolicy.AuthenticatedOnly && !Authenticated)
+            // Nothing is remembered about a client when the mode is disabled or when the client
+            // does not qualify under AuthenticatedOnly, so an unauthenticated flood cannot occupy
+            // the table under this policy.
+            if (Policy == InterleavedModePolicy.Disabled ||
+                (Policy == InterleavedModePolicy.AuthenticatedOnly && !Authenticated))
                 return InterleavedExchange.Basic(RequestPacket, ReceiveTimestamp, TimeProvider);
 
+            var normalizedAddress = RemoteAddress.IsIPv4MappedToIPv6
+                                        ? RemoteAddress.MapToIPv4()
+                                        : RemoteAddress.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 && RemoteAddress.ScopeId != 0
+                                              ? new IPAddress(RemoteAddress.GetAddressBytes())
+                                              : RemoteAddress;
 
             var requestOrigin    = RequestPacket.OriginateTimestamp;
             var requestReceive   = RequestPacket.ReceiveTimestamp;
@@ -320,13 +327,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                             Authenticated
                                 ? authenticatedClients
                                 : unauthenticatedClients,
-                            RemoteAddress
+                            normalizedAddress
                         );
 
             lock (table.Padlock)
             {
 
-                var client = GetOrAddClient(table, RemoteAddress);
+                var client = GetOrAddClient(table, normalizedAddress);
 
                 // Condition 1, and the shortcut of § 2's closing paragraph: a zero origin
                 // timestamp is the first request of an association and can match nothing.
@@ -365,7 +372,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 // order to reliably detect whether received packets conform to the interleaved
                 // mode." The RFC's own remedy: "increment the transmit timestamp by 1 unit".
                 if (transmitTimestamp == receiveTimestamp)
-                    transmitTimestamp++;
+                    transmitTimestamp = MakeUnique(client, transmitTimestamp + 1);
 
                 var exchange = new Exchange { ReceiveTimestamp = receiveTimestamp };
 
@@ -586,7 +593,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
     {
 
         private readonly Action<UInt64>? onTransmitted;
-        private          Boolean         transmissionRecorded;
+        private          Int32           transmissionRecorded;
 
 
         internal InterleavedExchange(UInt64           OriginTimestamp,
@@ -655,10 +662,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public void RecordTransmission(UInt64 ActualTransmitTimestamp)
         {
 
-            if (transmissionRecorded)
+            if (Interlocked.Exchange(ref transmissionRecorded, 1) != 0)
                 return;
-
-            transmissionRecorded = true;
 
             onTransmitted?.Invoke(ActualTransmitTimestamp);
 

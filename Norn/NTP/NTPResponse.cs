@@ -343,6 +343,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
             #region Parse NTP packet
 
+            if (ExpectedUniqueId is { Length: > 0 })
+            {
+                var responseUniqueId = extensions.OfType<UniqueIdentifierExtension>().FirstOrDefault()?.Value;
+                if (responseUniqueId is null ||
+                    !System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(responseUniqueId, ExpectedUniqueId))
+                {
+                    ErrorResponse = "The NTP response Unique Identifier does not match the expected value!";
+                    return false;
+                }
+            }
+
             NTPResponse = new NTPResponse(
 
                             LI:                     (Byte) ((Buffer[0] >> 6) & 0x03),

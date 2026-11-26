@@ -404,6 +404,65 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.TimeSync
 
         #endregion
 
+        #region TighterClusterBeatsRogueServerOnEqualSize()
+
+        /// <summary>
+        /// When two honest servers are close together (+59.0s and +60.1s) and one rogue
+        /// server sits at 0.0s (within MaxDeviation=60s of the first honest server), both
+        /// 2-server windows have equal size. The tighter cluster must win rather than letting
+        /// the rogue server hijack the offset by ~30s.
+        /// </summary>
+        [Test]
+        public void TighterClusterBeatsRogueServerOnEqualSize()
+        {
+
+            var verdict = TimeSyncVerdict.From(
+                              [
+                                  Answer("rogue",   0.0),
+                                  Answer("honest1", 59_000.0),
+                                  Answer("honest2", 60_100.0)
+                              ],
+                              MinServers:    2,
+                              MaxDeviation:  oneMinute
+                          );
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(verdict.Outcome,   Is.EqualTo(TimeSyncOutcome.Usable));
+                Assert.That(verdict.Agreeing,  Is.EqualTo(2));
+                Assert.That(verdict.Offset,    Is.EqualTo(TimeSpan.FromMilliseconds(59_550.0)));
+            });
+
+        }
+
+        /// <summary>
+        /// Two equal-size, equal-spread competing clusters are ambiguous and must be reported
+        /// as ServersDisagree rather than picking one arbitrarily.
+        /// </summary>
+        [Test]
+        public void EqualSpreadTieIsServersDisagree()
+        {
+
+            var verdict = TimeSyncVerdict.From(
+                              [
+                                  Answer("a", 0.0),
+                                  Answer("b", 30_000.0),
+                                  Answer("c", 60_000.0)
+                              ],
+                              MinServers:    2,
+                              MaxDeviation:  oneMinute
+                          );
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(verdict.Outcome,  Is.EqualTo(TimeSyncOutcome.ServersDisagree));
+                Assert.That(verdict.Offset,   Is.Null);
+            });
+
+        }
+
+        #endregion
+
     }
 
 }

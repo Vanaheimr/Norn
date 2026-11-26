@@ -567,11 +567,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             => new (
                    MasterKeyId,
-                   C2SKey.ToHexString().FromHEX(),
-                   S2CKey.ToHexString().FromHEX(),
+                   (Byte[]) C2SKey.Clone(),
+                   (Byte[]) S2CKey.Clone(),
                    Timestamp,
                    AEADAlgorithm,
-                   Nonce. ToHexString().FromHEX()
+                   (Byte[]) Nonce. Clone()
                );
 
         #endregion
@@ -596,18 +596,27 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                             nameof(MasterKey));
 
             // Re-stamp the cookie when it is sealed under a newer master key than it was created with.
-            var ntsCookie      = MasterKey.Id != this.MasterKeyId
+            // Keep the timestamp inside the new master key's validity window and mint a fresh nonce
+            // so the re-sealed cookie passes validation under the rotated key without nonce reuse.
+            NTSCookie ntsCookie;
+            if (MasterKey.Id != this.MasterKeyId)
+            {
+                var reStampedTimestamp = Timestamp.ToUnixTimestamp() <  MasterKey.NotBefore.ToUnixTimestamp() ||
+                                         Timestamp.ToUnixTimestamp() >= MasterKey.NotAfter. ToUnixTimestamp()
+                                             ? MasterKey.NotBefore
+                                             : Timestamp;
 
-                                     ? new NTSCookie(
-                                           MasterKey.Id,
-                                           C2SKey,
-                                           S2CKey,
-                                           Timestamp,
-                                           AEADAlgorithm,
-                                           Nonce
-                                       )
-
-                                     : this;
+                ntsCookie = new NTSCookie(
+                                MasterKey.Id,
+                                C2SKey,
+                                S2CKey,
+                                reStampedTimestamp,
+                                AEADAlgorithm,
+                                RandomNumberGenerator.GetBytes(NonceLength)
+                            );
+            }
+            else
+                ntsCookie = this;
 
             var body           = ntsCookie.ToByteArray();
             var aeadLength     = SyntheticIVLength + body.Length;
@@ -619,7 +628,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             header[SealedOffsetAEADLength]     = (Byte) (aeadLength >> 8);
             header[SealedOffsetAEADLength + 1] = (Byte)  aeadLength;
 
-            var aeadOutput     = new AES_SIV(MasterKey.Value).
+            var aeadOutput     = (MasterKey.Cipher ?? new AES_SIV(MasterKey.Value)).
                                      Encrypt(
                                          [ header ],
                                          ntsCookie.Nonce,
@@ -703,14 +712,26 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             try
             {
 
-                var aeadLength  = (SealedCookie[SealedOffsetAEADLength] << 8) | SealedCookie[SealedOffsetAEADLength + 1];
+                var aeadLength   = (SealedCookie[SealedOffsetAEADLength] << 8) | SealedCookie[SealedOffsetAEADLength + 1];
+                var sealedEnd    = SealedOffsetAEAD + aeadLength;
+                var paddingBytes = SealedCookie.Length - sealedEnd;
 
                 if (aeadLength < SyntheticIVLength ||
-                    SealedOffsetAEAD + aeadLength > SealedCookie.Length)
+                    paddingBytes < 0 ||
+                    paddingBytes > 3)
                 {
                     ErrorResponse = $"The NTS cookie declares {aeadLength} bytes of ciphertext, which does not fit " +
                                     $"its {SealedCookie.Length} bytes!";
                     return false;
+                }
+
+                for (var i = sealedEnd; i < SealedCookie.Length; i++)
+                {
+                    if (SealedCookie[i] != 0)
+                    {
+                        ErrorResponse = "The NTS cookie contains non-zero trailing padding bytes!";
+                        return false;
+                    }
                 }
 
                 // Sliced to the declared length, so any RFC 7822 padding the extension field
@@ -724,7 +745,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 var aeadOutput  = new Byte[aeadLength];
                 Buffer.BlockCopy(SealedCookie, SealedOffsetAEAD, aeadOutput, 0, aeadLength);
 
-                var body        = new AES_SIV(MasterKey.Value).
+                var body        = (MasterKey.Cipher ?? new AES_SIV(MasterKey.Value)).
                                       Decrypt(
                                           [ header ],
                                           nonce,

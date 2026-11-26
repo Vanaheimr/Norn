@@ -458,8 +458,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             => new (
                    Id,
-                   PrivateKey.ToHexString().FromHEX(),
-                   PublicKey. ToHexString().FromHEX(),
+                   (Byte[]) PrivateKey.Clone(),
+                   (Byte[]) PublicKey. Clone(),
                    Description?.      Clone(),
                    EllipticCurve.     CloneString(),
                    SignatureAlgorithm.CloneString(),
@@ -479,7 +479,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             => new (
                    Id,
-                   PublicKey.ToHexString().FromHEX(),
+                   (Byte[]) PublicKey.Clone(),
                    Description?.      Clone(),
                    EllipticCurve.     CloneString(),
                    SignatureAlgorithm.CloneString(),
@@ -560,10 +560,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <param name="KeyPair1">A key pair.</param>
         /// <param name="KeyPair2">Another key pair.</param>
         /// <returns>true|false</returns>
-        public static Boolean operator == (KeyPair KeyPair1,
-                                           KeyPair KeyPair2)
+        public static Boolean operator == (KeyPair? KeyPair1,
+                                           KeyPair? KeyPair2)
 
-            => KeyPair1.Equals(KeyPair2);
+            => ReferenceEquals(KeyPair1, KeyPair2) ||
+               (KeyPair1 is not null && KeyPair1.Equals(KeyPair2));
 
         #endregion
 
@@ -575,10 +576,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <param name="KeyPair1">A key pair.</param>
         /// <param name="KeyPair2">Another key pair.</param>
         /// <returns>true|false</returns>
-        public static Boolean operator != (KeyPair KeyPair1,
-                                           KeyPair KeyPair2)
+        public static Boolean operator != (KeyPair? KeyPair1,
+                                           KeyPair? KeyPair2)
 
-            => !KeyPair1.Equals(KeyPair2);
+            => !(KeyPair1 == KeyPair2);
 
         #endregion
 

@@ -100,20 +100,36 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
 
             #region Inital checks
 
-            if (Value.Length < 16)
-                throw new ArgumentOutOfRangeException(nameof(Value), "The value must be at least 16 bytes long! See rfc5905 section 7.5 and rfc7822 section 3!");
+            if (Value is null)
+                throw new ArgumentNullException(nameof(Value));
+
+            // RFC 7822 § 7.5.1.4 sets a 16-octet minimum for unencrypted extension fields
+            // (4-octet header + at least 12 octets of value). RFC 8915 § 5.6 explicitly lifts
+            // that minimum for encrypted extension fields inside the Authenticator, where only
+            // the 4-octet header and 4-octet alignment apply.
+            var minValueLength = Encrypted ? 0 : 12;
+
+            if (Value.Length < minValueLength)
+                throw new ArgumentOutOfRangeException(
+                              nameof(Value),
+                              Encrypted
+                                  ? "The encrypted extension value must not be null!"
+                                  : "The value must be at least 12 bytes long (16 bytes including header)! See RFC 5905 § 7.5 and RFC 7822 § 7.5.1.4!"
+                          );
+
+            if (Value.Length > UInt16.MaxValue - 7)
+                throw new ArgumentOutOfRangeException(
+                              nameof(Value),
+                              $"The extension value length ({Value.Length}) exceeds the 16-bit NTP extension length limit!"
+                          );
 
             #endregion
 
             this.Type           = Type;
             this.Value          = Value;
-            this.Length         = (UInt16) (4 + Value.Length);
+            this.Length         = (UInt16) ((4 + Value.Length + 3) & ~3);
             this.Authenticated  = Authenticated;
             this.Encrypted      = Encrypted;
-
-            // Must be multiple of 4, so if needed, pad up
-            while ((this.Length % 4) != 0)
-                this.Length++;
 
         }
 
@@ -145,9 +161,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
             var type   = (UInt16) ((ByteArray[0] << 8) | ByteArray[1]);
             var length = (UInt16) ((ByteArray[2] << 8) | ByteArray[3]);
 
-            if (length < 4)
+            if (length < 16 || (length % 4) != 0)
             {
-                ErrorResponse = "Extension field too short!";
+                ErrorResponse = "Extension field length must be at least 16 bytes and a multiple of 4!";
                 return false;
             }
 

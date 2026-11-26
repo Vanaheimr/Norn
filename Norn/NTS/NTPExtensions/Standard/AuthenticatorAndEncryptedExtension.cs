@@ -130,6 +130,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 var nonceLength                  = (UInt16) ((ReceivedValue[0] << 8) | ReceivedValue[1]);
                 var ciphertextLength             = (UInt16) ((ReceivedValue[2] << 8) | ReceivedValue[3]);
 
+                if (nonceLength == 0)
+                {
+                    ErrorResponse = "NTS Authenticator and Encrypted extension nonce must not be empty (RFC 8915 § 5.6)!";
+                    return false;
+                }
+
                 var paddedNonceLength            = (nonceLength      + 3) & ~3;
                 var paddedCiphertextLength       = (ciphertextLength + 3) & ~3;
 
@@ -138,6 +144,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 {
                     ErrorResponse = "NTS Authenticator and Encrypted extension value has unexpected length!";
                     return false;
+                }
+
+                // RFC 8915 § 5.6: any additional padding octets appended to meet minimum extension
+                // length requirements MUST be zero.
+                for (var i = expectedTotalLength; i < ReceivedValue.Length; i++)
+                {
+                    if (ReceivedValue[i] != 0)
+                    {
+                        ErrorResponse = "NTS Authenticator and Encrypted extension contains non-zero trailing padding!";
+                        return false;
+                    }
                 }
 
                 var receivedNonce             = new Byte[nonceLength];
@@ -160,14 +177,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     var type   = (ExtensionTypes) ((computedOutput[offset]     << 8) | computedOutput[offset + 1]);
                     var length = (UInt16)         ((computedOutput[offset + 2] << 8) | computedOutput[offset + 3]);
 
-                    if (length < 4)
+                    if (length < 4 || (length % 4) != 0)
                     {
-                        ErrorResponse = $"Illegal length of extension {length} at offset {offset}!";
+                        ErrorResponse = $"Illegal length of encrypted extension {length} at offset {offset}!";
                         return false;
                     }
 
                     if (offset + length > computedOutput.Length)
-                        break;
+                    {
+                        ErrorResponse = $"Truncated encrypted extension of length {length} at offset {offset}!";
+                        return false;
+                    }
 
                     var data = new Byte[length - 4];
                     Array.Copy(computedOutput, offset + 4, data, 0, length - 4);
@@ -191,21 +211,24 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                             break;
 
                         case ExtensionTypes.Debug:
-                            if (DebugExtension.TryParse(data,
-                                                        out var debugExtension,
-                                                        out     ErrorResponse,
-                                                        Authenticated: true,
-                                                        Encrypted:     true))
+                            if (!DebugExtension.TryParse(data,
+                                                         out var debugExtension,
+                                                         out     ErrorResponse,
+                                                         Authenticated: true,
+                                                         Encrypted:     true))
                             {
-                                extensions.Add(debugExtension);
+                                return false;
                             }
+                            extensions.Add(debugExtension);
                             break;
 
                         default:
                             extensions.Add(
                                 new NTPExtension(
                                     type,
-                                    data
+                                    data,
+                                    Authenticated: true,
+                                    Encrypted:     true
                                 )
                             );
                             break;
@@ -214,6 +237,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                     offset += length;
 
+                }
+
+                if (offset != computedOutput.Length)
+                {
+                    ErrorResponse = $"Encrypted extension plaintext has {computedOutput.Length - offset} trailing byte(s)!";
+                    return false;
                 }
 
                 foreach (var authenticatedExtension in AuthenticatedExtensions)

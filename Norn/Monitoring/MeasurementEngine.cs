@@ -60,6 +60,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         private readonly MonitoringConfig                                    config        = Configuration;
         private readonly TimeProvider                                        timeProvider  = TimeProvider ?? System.TimeProvider.System;
         private readonly Random                                              random        = Random       ?? System.Random.Shared;
+        private readonly Lock                                                randomLock    = new();
 
         /// <summary>
         /// What each server has told this engine about how welcome it is, per RFC 5905 § 7.4.
@@ -535,13 +536,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
             if (Server.ConnectOverSSH is not null)
                 return await MeasureNTSKEOverSSH(Server, Server.ConnectOverSSH, DNSClient, CancellationToken).ConfigureAwait(false);
 
+            var certificateValidator = BuildCertificateValidator(Server);
+
             // At the endpoint's own key exchange server, where it names one, asking it for the
             // endpoint's host name as the NTP server.
             var ntsClient = new NTSClient(
                                 Server.NTSKEHost ?? Server.Hostname,
                                 Server.NTSKEPort,
                                 Server.NTPPort,
-                                RemoteCertificateValidator:  Server.RemoteCertificateValidator,
+                                RemoteCertificateValidator:  certificateValidator,
                                 OfferedAEADAlgorithms:       Server.OfferedAEADAlgorithms,
                                 Timeout:                     config.NTSKETimeout,
                                 DNSClient:                   DNSClient,
@@ -621,7 +624,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                        TLSHandshakeDuration    = tlsDuration,
                        NTSKEProtocolDuration   = ntskeDuration,
                        NumberOfCookies         = (UInt16) ntskeResponse.Cookies.Count(),
-                       AEADAlgorithm           = "AES-SIV-CMAC-256",    // Currently only option in Norn
+                       AEADAlgorithm           = ntskeResponse.AEADAlgorithm.ToString(),
                        NTPServerNegotiated     = ntskeResponse.NTPv4Servers.FirstOrDefault(),
                        NTPPortNegotiated       = ntskeResponse.NTPv4Ports.Any()
                                                      ? ntskeResponse.NTPv4Ports.First()
@@ -811,6 +814,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
             if (certificate is null)
                 return null;
 
+            Int32? publicKeySize;
+            using (var rsa = certificate.PublicKey.GetRSAPublicKey())
+            using (var ecdsa = certificate.PublicKey.GetECDsaPublicKey())
+                publicKeySize = rsa?.KeySize ?? ecdsa?.KeySize;
+
             return new TLSCertificateInfo {
                        Subject                  = certificate.Subject,
                        Issuer                   = certificate.Issuer,
@@ -820,9 +828,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                        SerialNumber             = certificate.SerialNumber,
                        Thumbprint               = certificate.Thumbprint,
                        SignatureAlgorithm       = certificate.SignatureAlgorithm.FriendlyName,
-                       PublicKeyAlgorithm       = certificate.PublicKey.Oid.FriendlyName,
-                       PublicKeySize            = certificate.PublicKey.GetRSAPublicKey()?.KeySize ??
-                                                  certificate.PublicKey.GetECDsaPublicKey()?.KeySize,
+                       PublicKeyAlgorithm       = certificate.PublicKey.Oid.FriendlyName ?? certificate.PublicKey.Oid.Value,
+                       PublicKeySize            = publicKeySize,
                        // Qualified because Styx and Hermod both offer this extension method,
                        // with the same signature and the same behaviour, and this file imports
                        // both namespaces. Styx's, to keep company with the GetDNSNames used for
@@ -865,12 +872,21 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
                 }
 
-                if (CertificateInfo.PublicKeyAlgorithm?.Contains("RSA", StringComparison.OrdinalIgnoreCase) == true &&
+                var publicKeyOid = TLSInfo?.ServerCertificate?.PublicKey.Oid.Value;
+
+                var isRsa = publicKeyOid == "1.2.840.113549.1.1.1" ||
+                            CertificateInfo.PublicKeyAlgorithm?.Contains("RSA", StringComparison.OrdinalIgnoreCase) == true;
+
+                if (isRsa &&
                     CertificateInfo.PublicKeySize.HasValue &&
                     CertificateInfo.PublicKeySize.Value < 2048)
                     errors.Add($"RSA public key is too small: {CertificateInfo.PublicKeySize.Value} bit.");
 
-                if (CertificateInfo.PublicKeyAlgorithm?.Contains("ECC", StringComparison.OrdinalIgnoreCase) == true &&
+                var isEcc = publicKeyOid == "1.2.840.10045.2.1" ||
+                            CertificateInfo.PublicKeyAlgorithm?.Contains("ECC", StringComparison.OrdinalIgnoreCase) == true ||
+                            CertificateInfo.PublicKeyAlgorithm?.Contains("ecPublicKey", StringComparison.OrdinalIgnoreCase) == true;
+
+                if (isEcc &&
                     CertificateInfo.PublicKeySize.HasValue &&
                     CertificateInfo.PublicKeySize.Value < 256)
                     errors.Add($"ECDSA public key is too small: {CertificateInfo.PublicKeySize.Value} bit.");
@@ -1434,7 +1450,58 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
             if (max <= min)
                 return min;
 
-            return min + (max - min) * random.NextDouble();
+            Double sample;
+            lock (randomLock)
+                sample = random.NextDouble();
+
+            return min + (max - min) * sample;
+
+        }
+
+        private static Hermod.RemoteTLSServerCertificateValidationHandler<NTSKE_TLSClient>? BuildCertificateValidator(NTSServerEndpoint Server)
+        {
+
+            var rootCAs = Server.RootCAs?.ToArray();
+
+            if (rootCAs is null || rootCAs.Length == 0)
+                return Server.RemoteCertificateValidator;
+
+            return (sender, certificate, chain, tlsClient, sslPolicyErrors) => {
+
+                if (certificate is null)
+                    return Hermod.TLSValidationResult.Failed("No server certificate was presented.");
+
+                // Hostname verification already ran against SANs in ValidatingTlsAuthentication.
+                var effectiveErrors = sslPolicyErrors & ~System.Net.Security.SslPolicyErrors.RemoteCertificateChainErrors;
+
+                using var customChain = new X509Chain {
+                                            ChainPolicy = ValidatingTlsAuthentication.ChainPolicyFor(AskHere: true)
+                                        };
+
+                customChain.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;
+
+                foreach (var rootCA in rootCAs)
+                    customChain.ChainPolicy.CustomTrustStore.Add(rootCA);
+
+                if (chain is not null)
+                {
+                    foreach (var extra in chain.ChainPolicy.ExtraStore)
+                        customChain.ChainPolicy.ExtraStore.Add(extra);
+                }
+
+                var built = customChain.Build(certificate);
+
+                if (ValidatingTlsAuthentication.ChainErrorsOf(built, customChain.ChainStatus.Select(status => status.Status)))
+                    effectiveErrors |= System.Net.Security.SslPolicyErrors.RemoteCertificateChainErrors;
+
+                if (Server.RemoteCertificateValidator is not null)
+                    return Server.RemoteCertificateValidator(sender, certificate, customChain, tlsClient, effectiveErrors);
+
+                return effectiveErrors == System.Net.Security.SslPolicyErrors.None
+                           ? Hermod.TLSValidationResult.Success()
+                           : Hermod.TLSValidationResult.Failed($"Certificate validation against configured RootCAs failed: {effectiveErrors}");
+
+            };
 
         }
 

@@ -17,6 +17,8 @@
 
 #region Usings
 
+using System.Security.Cryptography;
+
 using Org.BouncyCastle.Crypto;
 using Org.BouncyCastle.Crypto.Engines;
 using Org.BouncyCastle.Crypto.Modes;
@@ -161,7 +163,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 throw new ArgumentException($"An AES-GCM-SIV nonce must be exactly {NonceLength} bytes long (RFC 8452 § 6)!",
                                             nameof(Nonce));
 
-            var cipher = new GcmSivBlockCipher(new AesEngine());
+            var cipher = new GcmSivBlockCipher(AesUtilities.CreateEngine());
 
             cipher.Init(
                 ForEncryption,
@@ -176,9 +178,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             var input   = Input ?? [];
             var output  = new Byte[cipher.GetOutputSize(input.Length)];
 
-            var written = cipher.ProcessBytes(input, 0, input.Length, output, 0);
+            Int32 written;
 
-            written += cipher.DoFinal(output, written);
+            try
+            {
+                written  = cipher.ProcessBytes(input, 0, input.Length, output, 0);
+                written += cipher.DoFinal(output, written);
+            }
+            catch (InvalidCipherTextException e)
+            {
+                CryptographicOperations.ZeroMemory(output);
+                throw new CryptographicException("AES-GCM-SIV authentication failed: tag mismatch!", e);
+            }
 
             if (written == output.Length)
                 return output;

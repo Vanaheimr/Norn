@@ -163,7 +163,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 return NTSKEErrorCategory.TCPConnect;
 
 
-            if (ErrorMessage.Contains("timeout",                    StringComparison.OrdinalIgnoreCase))
+            if (ErrorMessage.Contains("timeout",                    StringComparison.OrdinalIgnoreCase) ||
+                ErrorMessage.Contains("timed out",                  StringComparison.OrdinalIgnoreCase))
                 return NTSKEErrorCategory.Timeout;
 
 

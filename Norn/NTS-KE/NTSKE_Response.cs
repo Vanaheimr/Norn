@@ -318,11 +318,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                               : "",
 
                          C2SKey.Length > 0
-                             ? $", C2S-Key: {BitConverter.ToString(C2SKey)}"
+                             ? $", C2S-Key: <{C2SKey.Length} bytes redacted>"
                              : "",
 
                          S2CKey.Length > 0
-                             ? $", S2C-Key: {BitConverter.ToString(S2CKey)}"
+                             ? $", S2C-Key: <{S2CKey.Length} bytes redacted>"
                              : ""
 
                      );

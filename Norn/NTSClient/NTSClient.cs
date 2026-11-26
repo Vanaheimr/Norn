@@ -58,8 +58,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         private       readonly Queue<Byte[]>            cookieQueue            = new();
         private       readonly HashSet<String>          knownCookies           = [];
         private       readonly HashSet<NTSKE_Response>  seededNTSKEResponses   = [];
+        private                NTSKE_Response?          activeCookiePoolResponse;
         private       readonly Lock                     responseHistoryLock    = new();
         private       readonly Lock                     renegotiationLock      = new();
+        private                Task<NTSKE_Response?>?   inFlightRenegotiation;
         private                DateTimeOffset?          lastAutomaticKeyExchange;
         private                Int64                    automaticKeyExchanges  = 0;
         private       readonly Queue<String>            recentResponseQueue    = new();
@@ -1164,6 +1166,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             RetirePoolLocked();
 
+            activeCookiePoolResponse = NTSKEResponse;
             AddCookiesLocked(NTSKEResponse.Cookies, IsSeeded: true);
 
         }
@@ -1242,6 +1245,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         private Boolean TryTakeCookie(NTSKE_Response? NTSKEResponse,
                                       out Byte[]?     Cookie)
+
+            => TryTakeCookieWithGeneration(NTSKEResponse, out Cookie, out _);
+
+        private Boolean TryTakeCookieWithGeneration(NTSKE_Response?      NTSKEResponse,
+                                                    out Byte[]?          Cookie,
+                                                    out NTSKE_Response?  PoolResponse)
         {
 
             lock (cookieLock)
@@ -1254,13 +1263,58 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 {
                     knownCookies.Remove(Convert.ToBase64String(Cookie));
                     cookiesConsumed++;
+                    PoolResponse = activeCookiePoolResponse ?? NTSKEResponse;
                     return true;
                 }
 
             }
 
-            Cookie = null;
+            Cookie       = null;
+            PoolResponse = null;
             return false;
+
+        }
+
+        private void ReturnUnusedCookie(NTSKE_Response?  PoolResponse,
+                                        Byte[]?          Cookie)
+        {
+
+            if (Cookie is null || Cookie.Length == 0)
+                return;
+
+            lock (cookieLock)
+            {
+
+                if (PoolResponse is not null &&
+                    activeCookiePoolResponse is not null &&
+                    !ReferenceEquals(activeCookiePoolResponse, PoolResponse))
+                {
+                    return;
+                }
+
+                var key = Convert.ToBase64String(Cookie);
+                if (knownCookies.Add(key))
+                {
+                    cookieQueue.Enqueue(Cookie);
+                    if (cookiesConsumed > 0)
+                        cookiesConsumed--;
+                }
+
+            }
+
+        }
+
+        private static Boolean EndpointsMatch(System.Net.IPEndPoint  Received,
+                                              System.Net.IPEndPoint  Expected)
+        {
+
+            if (Received.Port != Expected.Port)
+                return false;
+
+            var receivedAddr = Received.Address.IsIPv4MappedToIPv6 ? Received.Address.MapToIPv4() : Received.Address;
+            var expectedAddr = Expected.Address.IsIPv4MappedToIPv6 ? Expected.Address.MapToIPv4() : Expected.Address;
+
+            return receivedAddr.Equals(expectedAddr);
 
         }
 
@@ -1284,31 +1338,72 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// one thing, and the request being built is about to need both.
         /// </para>
         /// </remarks>
-        private async Task<NTSKE_Response?> RenegotiateExhaustedPool(CancellationToken CancellationToken)
+        private async Task<NTSKE_Response?> RenegotiateExhaustedPool(Boolean            RequestNTSPublicKeys,
+                                                                     CancellationToken  CancellationToken)
         {
 
             if (!CookiePoolPolicy.RenegotiateWhenExhausted)
                 return null;
 
+            Task<NTSKE_Response?>? sharedTask;
+            var startedHere = false;
+
             lock (renegotiationLock)
             {
 
-                var now = TimeProvider.GetUtcNow();
-
-                if (lastAutomaticKeyExchange.HasValue &&
-                    now - lastAutomaticKeyExchange.Value < CookiePoolPolicy.MinimumRenegotiationInterval)
+                if (inFlightRenegotiation is not null)
                 {
-                    return null;
+                    sharedTask = inFlightRenegotiation;
                 }
+                else
+                {
 
-                lastAutomaticKeyExchange = now;
+                    var now = TimeProvider.GetUtcNow();
+
+                    if (lastAutomaticKeyExchange.HasValue &&
+                        now - lastAutomaticKeyExchange.Value < CookiePoolPolicy.MinimumRenegotiationInterval)
+                    {
+                        return null;
+                    }
+
+                    lastAutomaticKeyExchange = now;
+                    startedHere              = true;
+                    Interlocked.Increment(ref automaticKeyExchanges);
+
+                    sharedTask               = RunAutomaticKeyExchangeAsync(RequestNTSPublicKeys, CancellationToken);
+                    inFlightRenegotiation    = sharedTask;
+
+                }
 
             }
 
-            Interlocked.Increment(ref automaticKeyExchanges);
+            try
+            {
+                return startedHere
+                           ? await sharedTask.ConfigureAwait(false)
+                           : await sharedTask.WaitAsync(CancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                if (startedHere)
+                {
+                    lock (renegotiationLock)
+                    {
+                        if (ReferenceEquals(inFlightRenegotiation, sharedTask))
+                            inFlightRenegotiation = null;
+                    }
+                }
+            }
+
+        }
+
+        private async Task<NTSKE_Response?> RunAutomaticKeyExchangeAsync(Boolean            RequestNTSPublicKeys,
+                                                                         CancellationToken  CancellationToken)
+        {
 
             var result = await GetNTSKERecords(
-                                   CancellationToken: CancellationToken
+                                   RequestNTSPublicKeys:  RequestNTSPublicKeys,
+                                   CancellationToken:     CancellationToken
                                ).ConfigureAwait(false);
 
             return result.Success
@@ -1685,36 +1780,51 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             #endregion
 
             var cookie = default(Byte[]?);
+            var activePoolResponse = default(NTSKE_Response?);
             var cookiePlaceholderCount = (UInt16) 0;
 
-            if (NTSKEResponse is not null &&
-                !TryTakeCookie(NTSKEResponse, out cookie))
+            if (NTSKEResponse is not null)
             {
 
-                // RFC 8915 § 5.7: "If the client does not have any cookies that it has not
-                // already sent, it SHOULD initiate a rerun of the NTS-KE protocol." Nothing else
-                // recovers from this. A cookie only arrives in answer to a request, and there is
-                // nothing left to make one with — so a pool that empties, empties for good.
-                var renegotiated = await RenegotiateExhaustedPool(CancellationToken).ConfigureAwait(false);
-
-                if (renegotiated is null ||
-                    !TryTakeCookie(renegotiated, out cookie))
+                if (TryTakeCookieWithGeneration(NTSKEResponse, out cookie, out activePoolResponse))
+                {
+                    // Keep the cookie paired with the exact NTS-KE generation that minted it,
+                    // even if another thread renegotiated while this caller held an older response.
+                    if (activePoolResponse is not null)
+                        NTSKEResponse = activePoolResponse;
+                }
+                else
                 {
 
-                    return NTSQueryResult.FailedWithPacket(
-                               "No NTS cookie available!",
-                               NTSQueryErrorCategory.Cookie,
-                               RemainingCookiesAfterQuery: AvailableCookieCount,
-                               CookiePoolDiagnostics:      CookiePoolDiagnostics
-                           );
+                    // RFC 8915 § 5.7: "If the client does not have any cookies that it has not
+                    // already sent, it SHOULD initiate a rerun of the NTS-KE protocol." Nothing else
+                    // recovers from this. A cookie only arrives in answer to a request, and there is
+                    // nothing left to make one with — so a pool that empties, empties for good.
+                    var requestPublicKeys = SignedResponseMode != SignedResponseMode.None ||
+                                            NTSKEResponse.PublicKeys.Any();
+
+                    var renegotiated = await RenegotiateExhaustedPool(requestPublicKeys, CancellationToken).ConfigureAwait(false);
+
+                    if (renegotiated is null ||
+                        !TryTakeCookieWithGeneration(renegotiated, out cookie, out activePoolResponse))
+                    {
+
+                        return NTSQueryResult.FailedWithPacket(
+                                   "No NTS cookie available!",
+                                   NTSQueryErrorCategory.Cookie,
+                                   RemainingCookiesAfterQuery: AvailableCookieCount,
+                                   CookiePoolDiagnostics:      CookiePoolDiagnostics
+                               );
+
+                    }
+
+                    // The new keys go with the new cookies. Using the caller's response from here on
+                    // would seal the request under the previous exchange's C2S key while the cookie
+                    // hands the server the new one, and every packet would be NAKed — which is worse
+                    // than the failure this just recovered from, because it looks like an attack.
+                    NTSKEResponse = activePoolResponse ?? renegotiated;
 
                 }
-
-                // The new keys go with the new cookies. Using the caller's response from here on
-                // would seal the request under the previous exchange's C2S key while the cookie
-                // hands the server the new one, and every packet would be NAKed — which is worse
-                // than the failure this just recovered from, because it looks like an attack.
-                NTSKEResponse = renegotiated;
 
             }
 
@@ -1757,6 +1867,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             if (remoteEndPoint is null &&
                 NTSKEResponse?.NTPv4ServerNames.Any() == true)
             {
+
+                ReturnUnusedCookie(activePoolResponse, cookie);
 
                 return NTSQueryResult.FailedWithPacket(
                            $"The NTS-KE server directed this client to {remoteDescription}, which could not be resolved.",
@@ -1947,9 +2059,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                         var receiveResult1              = receiveResult1WithTimeout.Result.Value;
 
                         // The socket is not connected, so anyone can send to it.
-                        // Only the server that was asked can have the answer.
-                        if (remoteEndPoint is not null &&
-                            !receiveResult1.RemoteEndPoint.Equals(remoteEndPoint))
+                        // Only the server that was asked can have the answer (using destination,
+                        // which is always populated even when falling back to system DNS).
+                        if (!EndpointsMatch(receiveResult1.RemoteEndPoint, destination))
                         {
                             continue;
                         }
@@ -1966,7 +2078,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                  out var errorResponse1,
                                                  Request:                    requestPacket,
                                                  NTSKey:                     NTSKEResponse?.S2CKey,
-                                                 ExpectedUniqueId:           requestPacket.UniqueIdentifier(),
+                                                 ExpectedUniqueId:           null,
                                                  DestinationTimestamp:       destinationTimestamp1,
                                                  SendStopwatchTimestamp:     sendStopwatchTimestamp,
                                                  ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp1,
@@ -2009,9 +2121,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                 // does. Returning here would let anyone who can reach this
                                 // socket end the query with a single forged datagram, and
                                 // with a forged NTS NAK throw the cookies away as well.
-                                // The first such datagram is kept, to be reported should
-                                // the valid answer never come.
-                                if (rejectedResult is null)
+                                // Keep the first rejected datagram, unless a later one is a
+                                // matching NTS NAK so a stray garbage packet cannot mask it.
+                                var isMatchingNtsNak = NTPKissOfDeath.TryRead(ntpResponse1, requestPacket, out var rejectedKiss) &&
+                                                       rejectedKiss.Action == NTPKissAction.RenegotiateNTS;
+
+                                var hadMatchingNtsNak = rejectedResponse is not null &&
+                                                        NTPKissOfDeath.TryRead(rejectedResponse, requestPacket, out var previousKiss) &&
+                                                        previousKiss.Action == NTPKissAction.RenegotiateNTS;
+
+                                if (rejectedResult is null || (isMatchingNtsNak && !hadMatchingNtsNak))
                                 {
 
                                     rejectedResponse = ntpResponse1;
@@ -2072,8 +2191,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                     if (receiveResult2WithTimeout.Result is not UdpReceiveResult candidate2)
                                         break;
 
-                                    if (remoteEndPoint is not null &&
-                                        !candidate2.RemoteEndPoint.Equals(remoteEndPoint))
+                                    if (!EndpointsMatch(candidate2.RemoteEndPoint, destination))
                                     {
                                         continue;
                                     }
@@ -2134,7 +2252,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                          out var errorResponse2,
                                                          Request:                    requestPacket,
                                                          NTSKey:                     NTSKEResponse?.S2CKey,
-                                                         ExpectedUniqueId:           requestPacket.UniqueIdentifier(),
+                                                         ExpectedUniqueId:           null,
                                                          DestinationTimestamp:       destinationTimestamp2,
                                                          SendStopwatchTimestamp:     sendStopwatchTimestamp,
                                                          ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp2,
@@ -2147,7 +2265,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                           requestPacket,
                                                           requestPacket.UniqueIdentifier(),
                                                           NTSKEResponse?.S2CKey,
-                                                          RequireNTS: NTSKEResponse is not null
+                                                          RequireNTS:   NTSKEResponse is not null,
+                                                          Interleaved:  responseMode == InterleavedResponseMode.Interleaved
                                                       );
 
                                     if (!validation2.IsValid)
@@ -2180,8 +2299,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                                     requestPacket,
                                                                     requestPacket.UniqueIdentifier(),
                                                                     NTSKEResponse?.S2CKey,
-                                                                    RequireNTS:  NTSKEResponse is not null,
-                                                                    IsReplay:    true
+                                                                    RequireNTS:   NTSKEResponse is not null,
+                                                                    IsReplay:     true,
+                                                                    Interleaved:  responseMode == InterleavedResponseMode.Interleaved
                                                                 );
 
                                         return NTSQueryResult.Failed(
@@ -2202,6 +2322,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                     }
 
                                     AddCookies(ntpResponse2);
+
+                                    var measurement2 = responseMode == InterleavedResponseMode.Interleaved
+                                                           ? interleaved?.MeasurementFor(ntpResponse2)
+                                                           : null;
+
+                                    interleaved?.RecordValidResponse(
+                                        ntpResponse2,
+                                        actualRequestTransmit,
+                                        destinationTimestamp1
+                                    );
 
                                     var (signature2, signatureKeyId2) = VerifySignature(ntpResponse2, NTSKEResponse, SignedResponseMode, SignedResponseKeyId, TimeProvider);
 
@@ -2233,8 +2363,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                ntpResponse2.Extensions.Any(extension => extension is NTSCookieExtension { Encrypted: true }),
                                                CookiePoolDiagnostics,
                                                validation2,
-                                               SignatureVerification:  signature2,
-                                               SignatureKeyId:         signatureKeyId2
+                                               InterleavedMeasurement:  measurement2,
+                                               SignatureVerification:   signature2,
+                                               SignatureKeyId:          signatureKeyId2
                                            );
                                 }
 
@@ -2264,8 +2395,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                         requestPacket,
                                                         requestPacket.UniqueIdentifier(),
                                                         NTSKEResponse?.S2CKey,
-                                                        RequireNTS:  NTSKEResponse is not null,
-                                                        IsReplay:    true
+                                                        RequireNTS:   NTSKEResponse is not null,
+                                                        IsReplay:     true,
+                                                        Interleaved:  responseMode == InterleavedResponseMode.Interleaved
                                                     );
 
                                 return NTSQueryResult.Failed(
@@ -2371,6 +2503,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 }
                 catch (OperationCanceledException)
                 {
+                    if (!requestSent)
+                        ReturnUnusedCookie(activePoolResponse, cookie);
+
                     return NTSQueryResult.FailedWithPacket(
                                "NTP query operation canceled.",
                                NTSQueryErrorCategory.Canceled,
@@ -2383,6 +2518,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 }
                 catch (Exception e)
                 {
+                    if (!requestSent)
+                        ReturnUnusedCookie(activePoolResponse, cookie);
+
                     // Until the request has left there is the address to send to, the
                     // socket being bound, the request being built and the send itself.
                     return NTSQueryResult.FailedWithPacket(

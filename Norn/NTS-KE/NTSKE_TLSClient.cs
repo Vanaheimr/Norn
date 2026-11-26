@@ -279,6 +279,34 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         //           CipherSuite.TLS_AES_128_GCM_SHA256,
         //       };
 
+        #region (protected override) GetSniServerNames()
+
+        /// <summary>
+        /// Advertise the target hostname via TLS SNI (RFC 6066 § 3) when connecting by DNS name.
+        /// Literal IP addresses are omitted as RFC 6066 § 3 forbids them in host_name SNI entries.
+        /// </summary>
+        protected override IList<ServerName>? GetSniServerNames()
+        {
+
+            var host = ExpectedHostname?.ToString().Trim('[', ']');
+
+            if (String.IsNullOrWhiteSpace(host) ||
+                System.Net.IPAddress.TryParse(host, out _))
+            {
+                return null;
+            }
+
+            return [
+                       new ServerName(
+                           NameType.host_name,
+                           System.Text.Encoding.ASCII.GetBytes(host)
+                       )
+                   ];
+
+        }
+
+        #endregion
+
         #region (override) GetClientExtensions()
 
         public override IDictionary<Int32, Byte[]> GetClientExtensions()
@@ -481,9 +509,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </remarks>
         private static Boolean HostnameMatches(X509Certificate2  Certificate,
                                                String            Hostname)
+        {
 
-            => DomainName.TryParse(Hostname, out var hostName, out _) &&
-               Certificate.MatchesHostName(hostName);
+            var trimmed = Hostname.Trim('[', ']');
+
+            if (System.Net.IPAddress.TryParse(trimmed, out var ipAddress))
+                return Certificate.MatchesIPAddress(ipAddress);
+
+            return DomainName.TryParse(Hostname, out var hostName, out _) &&
+                   Certificate.MatchesHostName(hostName);
+
+        }
 
     }
 

@@ -169,6 +169,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </summary>
         public DateTimeOffset  NotAfter     { get; }
 
+        /// <summary>
+        /// Precomputed AES-SIV context for this master key, shared across cookie encrypt/decrypt
+        /// operations so CMAC subkeys are not recomputed on every packet.
+        /// </summary>
+        internal AES_SIV?      Cipher       { get; }
+
         #endregion
 
         #region Constructor(s)
@@ -191,6 +197,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             this.Value      = Value;
             this.NotBefore  = NotBefore;
             this.NotAfter   = NotAfter;
+            this.Cipher     = Value is { Length: 32 } ? new AES_SIV(Value) : null;
 
             unchecked
             {
@@ -484,7 +491,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             => new (
                    Id,
-                   Value.ToHexString().FromHEX(),
+                   (Byte[]) Value.Clone(),
                    NotBefore,
                    NotAfter
                );
@@ -615,7 +622,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             var c = Id.                  CompareTo(MasterKey.Id);
 
             if (c == 0)
-                c = Value.    ToHexString().CompareTo(MasterKey.Value.    ToHexString());
+                c = Value.AsSpan().SequenceCompareTo(MasterKey.Value);
 
             if (c == 0)
                 c = NotBefore.ToISO8601().  CompareTo(MasterKey.NotBefore.ToISO8601());

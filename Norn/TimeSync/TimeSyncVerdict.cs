@@ -248,7 +248,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.TimeSync
             if (deviationExceeded)
             {
 
-                agreeingCount = 1;
+                agreeingCount       = 1;
+                var agreeingSpread  = TimeSpan.MaxValue;
+                var ambiguousTie    = false;
 
                 for (Int32 first = 0, last = 0; last < offsets.Length; last++)
                 {
@@ -256,18 +258,37 @@ namespace org.GraphDefined.Vanaheimr.Norn.TimeSync
                     while (offsets[last] - offsets[first] >= MaxDeviation && first < last)
                         first++;
 
-                    if (last - first + 1 > agreeingCount)
+                    var count        = last - first + 1;
+                    var windowSpread = offsets[last] - offsets[first];
+
+                    if (count > agreeingCount)
                     {
                         agreeingFrom   = first;
-                        agreeingCount  = last - first + 1;
+                        agreeingCount  = count;
+                        agreeingSpread = windowSpread;
+                        ambiguousTie   = false;
+                    }
+                    else if (count == agreeingCount)
+                    {
+                        if (windowSpread < agreeingSpread)
+                        {
+                            agreeingFrom   = first;
+                            agreeingSpread = windowSpread;
+                            ambiguousTie   = false;
+                        }
+                        else if (windowSpread == agreeingSpread && first != agreeingFrom)
+                        {
+                            ambiguousTie   = true;
+                        }
                     }
 
                 }
 
-                // They have to be more than half, or it is not they who are outvoted
-                // by the rest but the rest by them - and as many as the group insists
-                // on, because the others have said nothing that could be used.
-                if (agreeingCount * 2 <= offsets.Length ||
+                // They have to be more than half, unambiguously tighter than any equal-size
+                // competing cluster, and as many as the group insists on, because the others
+                // have said nothing that could be used.
+                if (ambiguousTie                      ||
+                    agreeingCount * 2 <= offsets.Length ||
                     agreeingCount     <  required)
                 {
                     return new TimeSyncVerdict(

@@ -58,6 +58,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// timeout. A server sets this, so that such clients cost it threads of their own
         /// and none of those that answer NTP requests.
         /// </param>
+        /// <summary>
+        /// The maximum plaintext length of a single TLS 1.3 record (RFC 8446 § 5.1) plus one
+        /// octet, so one Read drains a complete decrypted TLS record without leaving buffered
+        /// plaintext behind while the underlying socket reports zero readable bytes.
+        /// </summary>
+        private const Int32 ReadBufferSize = 16385;
+
+        /// <summary>
+        /// Read one complete NTS-KE message.
+        /// </summary>
         public static async Task<(Byte[]? ResponseBytes, String? ErrorMessage)> ReadAsync(Stream             TLSStream,
                                                                                           TimeSpan           Timeout,
                                                                                           Int32              MaxResponseSize,
@@ -66,40 +76,47 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                                                           Boolean            BlockingReadsOnOwnThread   = false)
         {
 
-            using var memoryStream = new MemoryStream();
-            var buffer             = new Byte[4096];
-            var deadline           = DateTime.UtcNow + Timeout;
+            var deadline = DateTime.UtcNow + Timeout;
 
-            while (true)
+            if (BlockingReadsOnOwnThread)
             {
 
+                // Hold zero threads while a client says nothing at all: only once the first
+                // bytes arrive (or the peer closes) do we dedicate a single thread for the
+                // remainder of this message, rather than spawning a new OS thread per Read().
                 if (WaitForDataOn is not null &&
                     !await WaitForReadableAsync(WaitForDataOn, deadline, CancellationToken).ConfigureAwait(false))
                 {
-                    return memoryStream.Length > 0
-                               ? (null, "Read operation timed out before a complete NTS-KE message arrived.")
-                               : (null, "Read operation timed out.");
+                    return (null, "Read operation timed out.");
                 }
 
+                var readTask = Task.Factory.StartNew(
+                                   () => ReadBlockingLoop(
+                                             TLSStream,
+                                             deadline,
+                                             MaxResponseSize,
+                                             CancellationToken,
+                                             WaitForDataOn
+                                         ),
+                                   CancellationToken,
+                                   TaskCreationOptions.LongRunning,
+                                   TaskScheduler.Default
+                               );
 
-                Int32 bytesRead;
+                // When WaitForDataOn is given, Poll() + ReceiveTimeout bound every blocking call
+                // cleanly on that thread so it always finishes before we return — avoiding any
+                // concurrent read/write race on a non-thread-safe TLS stream.
+                if (WaitForDataOn is not null)
+                    return await readTask.ConfigureAwait(false);
+
+                var remainingForTask = deadline - DateTime.UtcNow;
+
+                if (remainingForTask <= TimeSpan.Zero)
+                    return (null, "Read operation timed out.");
 
                 try
                 {
-                    bytesRead = await (BlockingReadsOnOwnThread
-
-                                           ? Task.Factory.StartNew(
-                                                 () => TLSStream.Read(buffer, 0, buffer.Length),
-                                                 CancellationToken,
-                                                 TaskCreationOptions.LongRunning,
-                                                 TaskScheduler.Default
-                                             )
-
-                                           : TLSStream.
-                                                 ReadAsync(buffer, 0, buffer.Length, CancellationToken)).
-
-                                          WaitAsync(Timeout, CancellationToken).
-                                          ConfigureAwait(false);
+                    return await readTask.WaitAsync(remainingForTask, CancellationToken).ConfigureAwait(false);
                 }
                 catch (TimeoutException)
                 {
@@ -109,11 +126,55 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 {
                     return (null, "Read operation timed out.");
                 }
+
+            }
+
+            using var memoryStream   = new MemoryStream();
+            var buffer               = new Byte[ReadBufferSize];
+            var scannedOffset        = 0;
+            var maybeMoreBuffered    = false;
+
+            while (true)
+            {
+
+                var remaining = deadline - DateTime.UtcNow;
+
+                if (remaining <= TimeSpan.Zero)
+                    return TimeoutResult(memoryStream.Length);
+
+                if (WaitForDataOn is not null && !maybeMoreBuffered &&
+                    !await WaitForReadableAsync(WaitForDataOn, deadline, CancellationToken).ConfigureAwait(false))
+                {
+                    return TimeoutResult(memoryStream.Length);
+                }
+
+                remaining = deadline - DateTime.UtcNow;
+
+                if (remaining <= TimeSpan.Zero)
+                    return TimeoutResult(memoryStream.Length);
+
+                Int32 bytesRead;
+
+                try
+                {
+                    bytesRead = await TLSStream.
+                                          ReadAsync(buffer, 0, buffer.Length, CancellationToken).
+                                          WaitAsync(remaining, CancellationToken).
+                                          ConfigureAwait(false);
+                }
+                catch (TimeoutException)
+                {
+                    return TimeoutResult(memoryStream.Length);
+                }
+                catch (OperationCanceledException) when (!CancellationToken.IsCancellationRequested)
+                {
+                    return TimeoutResult(memoryStream.Length);
+                }
                 catch (IOException e) when (e.InnerException is SocketException { SocketErrorCode: SocketError.TimedOut })
                 {
                     // A socket-level receive timeout. Unlike an abandoned Task.WaitAsync this
                     // leaves no read pending, so the caller can still write a reply.
-                    return (null, "Read operation timed out.");
+                    return TimeoutResult(memoryStream.Length);
                 }
 
                 if (bytesRead <= 0)
@@ -121,27 +182,200 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                ? (null, "NTS-KE connection closed before EndOfMessage.")
                                : (null, "No response received.");
 
+                maybeMoreBuffered = bytesRead == buffer.Length;
+
                 memoryStream.Write(buffer, 0, bytesRead);
 
                 if (memoryStream.Length > MaxResponseSize)
                     return (null, $"NTS-KE response exceeded the maximum size of {MaxResponseSize} bytes.");
 
-                var data = memoryStream.ToArray();
-
-                if (TryGetCompleteMessageLength(data, data.Length, out var messageLength, out var errorResponse))
-                {
-
-                    if (messageLength != data.Length)
-                        Array.Resize(ref data, messageLength);
-
-                    return (data, null);
-
-                }
+                if (TryFinishCompleteMessage(memoryStream, ref scannedOffset, out var completeMessage, out var errorResponse))
+                    return (completeMessage, null);
 
                 if (errorResponse is not null)
                     return (null, errorResponse);
 
             }
+
+        }
+
+        private static (Byte[]? ResponseBytes, String? ErrorMessage) ReadBlockingLoop(Stream             TLSStream,
+                                                                                      DateTime           Deadline,
+                                                                                      Int32              MaxResponseSize,
+                                                                                      CancellationToken  CancellationToken,
+                                                                                      Socket?            WaitForDataOn)
+        {
+
+            using var memoryStream   = new MemoryStream();
+            var buffer               = new Byte[ReadBufferSize];
+            var scannedOffset        = 0;
+            var maybeMoreBuffered    = false;
+
+            while (true)
+            {
+
+                if (CancellationToken.IsCancellationRequested)
+                    CancellationToken.ThrowIfCancellationRequested();
+
+                var remaining = Deadline - DateTime.UtcNow;
+
+                if (remaining <= TimeSpan.Zero)
+                    return TimeoutResult(memoryStream.Length);
+
+                if (WaitForDataOn is not null && !maybeMoreBuffered)
+                {
+
+                    if (!WaitForReadableBlocking(WaitForDataOn, Deadline, CancellationToken))
+                        return TimeoutResult(memoryStream.Length);
+
+                    remaining = Deadline - DateTime.UtcNow;
+
+                    if (remaining <= TimeSpan.Zero)
+                        return TimeoutResult(memoryStream.Length);
+
+                }
+
+                if (WaitForDataOn is not null)
+                {
+                    try
+                    {
+                        WaitForDataOn.ReceiveTimeout = Math.Max(
+                                                           1,
+                                                           (Int32) Math.Min(Int32.MaxValue, Math.Ceiling(remaining.TotalMilliseconds))
+                                                       );
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        return TimeoutResult(memoryStream.Length);
+                    }
+                    catch (SocketException)
+                    {
+                        return TimeoutResult(memoryStream.Length);
+                    }
+                }
+
+                Int32 bytesRead;
+
+                try
+                {
+                    bytesRead = TLSStream.Read(buffer, 0, buffer.Length);
+                }
+                catch (IOException e) when (e.InnerException is SocketException { SocketErrorCode: SocketError.TimedOut })
+                {
+                    return TimeoutResult(memoryStream.Length);
+                }
+                catch (SocketException e) when (e.SocketErrorCode == SocketError.TimedOut)
+                {
+                    return TimeoutResult(memoryStream.Length);
+                }
+
+                if (bytesRead <= 0)
+                    return memoryStream.Length > 0
+                               ? (null, "NTS-KE connection closed before EndOfMessage.")
+                               : (null, "No response received.");
+
+                maybeMoreBuffered = bytesRead == buffer.Length;
+
+                memoryStream.Write(buffer, 0, bytesRead);
+
+                if (memoryStream.Length > MaxResponseSize)
+                    return (null, $"NTS-KE response exceeded the maximum size of {MaxResponseSize} bytes.");
+
+                if (TryFinishCompleteMessage(memoryStream, ref scannedOffset, out var completeMessage, out var errorResponse))
+                    return (completeMessage, null);
+
+                if (errorResponse is not null)
+                    return (null, errorResponse);
+
+            }
+
+        }
+
+        private static Boolean WaitForReadableBlocking(Socket             Socket,
+                                                       DateTime           Deadline,
+                                                       CancellationToken  CancellationToken)
+        {
+
+            while (true)
+            {
+
+                if (CancellationToken.IsCancellationRequested)
+                    CancellationToken.ThrowIfCancellationRequested();
+
+                var remaining = Deadline - DateTime.UtcNow;
+
+                if (remaining <= TimeSpan.Zero)
+                    return false;
+
+                var pollMicros = (Int32) Math.Min(250_000, Math.Max(1_000, remaining.TotalMilliseconds * 1000.0));
+
+                try
+                {
+                    if (Socket.Poll(pollMicros, SelectMode.SelectRead))
+                        return true;
+                }
+                catch (ObjectDisposedException)
+                {
+                    return false;
+                }
+                catch (SocketException)
+                {
+                    return false;
+                }
+
+            }
+
+        }
+
+        private static (Byte[]? ResponseBytes, String? ErrorMessage) TimeoutResult(Int64 BytesReceived)
+
+            => BytesReceived > 0
+                   ? (null, "Read operation timed out before a complete NTS-KE message arrived.")
+                   : (null, "Read operation timed out.");
+
+        private static Boolean TryFinishCompleteMessage(MemoryStream  MemoryStream,
+                                                        ref Int32     ScannedOffset,
+                                                        out Byte[]?   CompleteMessage,
+                                                        out String?   ErrorResponse)
+        {
+
+            CompleteMessage  = null;
+            ErrorResponse    = null;
+
+            if (!MemoryStream.TryGetBuffer(out var segment) || segment.Array is null)
+                return false;
+
+            var buffer       = segment.Array;
+            var bufferLength = segment.Offset + segment.Count;
+            var offset       = segment.Offset + ScannedOffset;
+
+            while (offset + 4 <= bufferLength)
+            {
+
+                var type       = (NTSKE_RecordTypes) (((buffer[offset] & 0x7F) << 8) | buffer[offset + 1]);
+                var bodyLength = (UInt16)             ((buffer[offset + 2]     << 8) | buffer[offset + 3]);
+                var nextOffset = offset + 4 + bodyLength;
+
+                if (nextOffset > bufferLength)
+                {
+                    ScannedOffset = offset - segment.Offset;
+                    return false;
+                }
+
+                offset = nextOffset;
+
+                if (type == NTSKE_RecordTypes.EndOfMessage)
+                {
+                    var messageLength = offset - segment.Offset;
+                    CompleteMessage   = new Byte[messageLength];
+                    Buffer.BlockCopy(buffer, segment.Offset, CompleteMessage, 0, messageLength);
+                    return true;
+                }
+
+            }
+
+            ScannedOffset = offset - segment.Offset;
+            return false;
 
         }
 

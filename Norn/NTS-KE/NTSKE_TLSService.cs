@@ -118,11 +118,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             else
             {
 
+                var defaultSANs = SubjectName.IsNotNullOrEmpty()
+                                      ? new[] { SubjectName }
+                                      : new[] { "ntpKE1.example.org", "ntpKE2.example.org" };
+
                 (this.Certificate, this.PrivateKey)  = GenerateSelfSignedServerCertificate(
                                                            SubjectName.IsNotNullOrEmpty()
                                                                ? $"CN={SubjectName}"
                                                                : "CN=ntpKE.example.org",
-                                                           [ "ntpKE1.example.org", "ntpKE2.example.org" ],
+                                                           defaultSANs,
                                                            TimeProvider
                                                        );
 
@@ -401,7 +405,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 var generalNames = new List<Asn1Encodable>();
                 foreach (var name in SubjectAlternativeNames)
                 {
-                    generalNames.Add(new GeneralName(GeneralName.DnsName, name));
+                    if (System.Net.IPAddress.TryParse(name, out var ipAddress))
+                        generalNames.Add(new GeneralName(GeneralName.IPAddress, ipAddress.ToString()));
+                    else
+                        generalNames.Add(new GeneralName(GeneralName.DnsName, name));
                 }
 
                 certGenerator.AddExtension(

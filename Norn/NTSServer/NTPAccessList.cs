@@ -170,11 +170,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             if (Address is null)
                 return false;
 
-            // An IPv4 client that a dual-stack socket reports as ::ffff:a.b.c.d is matched by its
-            // IPv4 address: IPNetwork.Contains does that for an IPv4 network, and a test holds it
-            // to it.
+            // An IPv4 client that a dual-stack socket reports as ::ffff:a.b.c.d must be normalized
+            // to its IPv4 address before matching: in .NET, IPNetwork.Parse("::/0").Contains(...)
+            // returns true for ::ffff:a.b.c.d, which would silently deny every IPv4 client when
+            // only IPv6 was denied.
+            var normalized = Address.IsIPv4MappedToIPv6
+                                 ? Address.MapToIPv4()
+                                 : Address;
+
             foreach (var (network, allowed) in rules)
-                if (network.Contains(Address))
+                if (network.Contains(normalized))
                     return allowed;
 
             return true;
