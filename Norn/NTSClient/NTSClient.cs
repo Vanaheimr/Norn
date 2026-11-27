@@ -2200,7 +2200,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                         // from two different clocks would be meaningless. The Stopwatch reading
                         // beside it measures the network, not the clock; see the TimeProvider
                         // property for why that one stays where it is.
-                        var destinationTimestamp1       = NTPPacket.GetCurrentNTPTimestamp(TimeProvider);
+                        var destinationTime1            = TimeProvider.GetUtcNow().UtcDateTime;
+                        var destinationTimestamp1       = NTPPacket.GetCurrentNTPTimestamp(destinationTime1);
                         var receiveStopwatchTimestamp1  = Stopwatch.GetTimestamp();
 
                         if (NTPResponse.TryParse(receiveResult1.Buffer,
@@ -2219,7 +2220,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                  // it — see NTPPacket.RequestTransmitTimestamp. Null for a
                                                  // plain client, where the echo is the very same reading.
                                                  AEADAlgorithm:              NTSKEResponse?.AEADAlgorithm ?? NTSAEAD.Default,
-                                                 RequestTransmitTimestamp:   interleaved is not null ? actualRequestTransmit : null))
+                                                 RequestTransmitTimestamp:   interleaved is not null ? actualRequestTransmit : null,
+                                                 // T4 as a date, which the era of T1 to T4 is resolved against.
+                                                 DestinationTime:            destinationTime1))
                         {
 
                             // RFC 9769 § 2: which of the request's two timestamps came back as the
@@ -2374,7 +2377,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                 }
 
                                 var receiveResult2              = receiveResult2WithTimeout.Result.Value;
-                                var destinationTimestamp2       = NTPPacket.GetCurrentNTPTimestamp(TimeProvider);
+                                var destinationTime2            = TimeProvider.GetUtcNow().UtcDateTime;
+                                var destinationTimestamp2       = NTPPacket.GetCurrentNTPTimestamp(destinationTime2);
                                 var receiveStopwatchTimestamp2  = Stopwatch.GetTimestamp();
 
                                 if (NTPResponse.TryParse(receiveResult2.Buffer,
@@ -2387,7 +2391,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                          SendStopwatchTimestamp:     sendStopwatchTimestamp,
                                                          ReceiveStopwatchTimestamp:  receiveStopwatchTimestamp2,
                                                          AEADAlgorithm:              NTSKEResponse?.AEADAlgorithm ?? NTSAEAD.Default,
-                                                         RequestTransmitTimestamp:   interleaved is not null ? actualRequestTransmit : null))
+                                                         RequestTransmitTimestamp:   interleaved is not null ? actualRequestTransmit : null,
+                                                         DestinationTime:            destinationTime2))
                                 {
 
                                     var validation2 = NTSResponseValidator.Validate(

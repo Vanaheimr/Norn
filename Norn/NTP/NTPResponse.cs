@@ -103,7 +103,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                            String?                     ErrorMessage           = null,
                            Int64?                      SendStopwatchTimestamp = null,
                            Int64?                      ReceiveStopwatchTimestamp = null,
-                           UInt64?                     RequestTransmitTimestamp = null)
+                           UInt64?                     RequestTransmitTimestamp = null,
+                           DateTime?                   DestinationTime        = null)
 
             : base(LI,
                     VN,
@@ -128,7 +129,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                     ErrorMessage,
                     SendStopwatchTimestamp,
                     ReceiveStopwatchTimestamp,
-                    RequestTransmitTimestamp)
+                    RequestTransmitTimestamp,
+                    DestinationTime)
 
         { }
 
@@ -161,7 +163,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                    NTPPacket.ErrorMessage,
                    NTPPacket.SendStopwatchTimestamp,
                    NTPPacket.ReceiveStopwatchTimestamp,
-                   NTPPacket.RequestTransmitTimestamp)
+                   NTPPacket.RequestTransmitTimestamp,
+                   NTPPacket.DestinationTime)
 
         {
 
@@ -194,7 +197,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                                        Int64?                                 SendStopwatchTimestamp = null,
                                        Int64?                                 ReceiveStopwatchTimestamp = null,
                                        AEADAlgorithms                         AEADAlgorithm = NTSAEAD.Default,
-                                       UInt64?                                RequestTransmitTimestamp = null)
+                                       UInt64?                                RequestTransmitTimestamp = null,
+                                       DateTime?                              DestinationTime = null)
         {
 
             #region Initial checks
@@ -392,7 +396,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                             ResponseBytes:          Buffer,
                             SendStopwatchTimestamp: SendStopwatchTimestamp,
                             ReceiveStopwatchTimestamp: ReceiveStopwatchTimestamp,
-                            RequestTransmitTimestamp: RequestTransmitTimestamp
+                            RequestTransmitTimestamp: RequestTransmitTimestamp,
+                            DestinationTime:        DestinationTime
 
                         );
 

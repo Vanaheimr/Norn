@@ -141,7 +141,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                            String?                     ErrorMessage                = null,
                            Int64?                      SendStopwatchTimestamp      = null,
                            Int64?                      ReceiveStopwatchTimestamp   = null,
-                           UInt64?                     RequestTransmitTimestamp    = null)
+                           UInt64?                     RequestTransmitTimestamp    = null,
+                           DateTime?                   DestinationTime             = null)
 
     {
 
@@ -151,6 +152,21 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         /// The NTP prime epoch, 1900-01-01T00:00:00Z — the start of era 0 (RFC 5905 § 6).
         /// </summary>
         public static readonly DateTime  NTPEpoch        = new (1900, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        /// <summary>
+        /// The earliest instant an era is resolved against, whatever the clock says: 2026-01-01.
+        /// </summary>
+        /// <remarks>
+        /// RFC 5905 § 6 leaves the era to context, and the context is the clock - but the clock
+        /// asking NTP for the time is the clock that may be wrong. Embedded gear without a
+        /// battery-backed clock boots at the Unix epoch, and the era nearest 1970 puts every
+        /// time after 2038-01-19 into the early 1900s. No correct clock can read earlier than
+        /// the day this was written, so a reading before it is taken as it: within
+        /// 68 years of it, 1958 to 2094, a timestamp resolves to its own era whatever the clock
+        /// said. ntpd pivots on its build date and chrony on configure --with-ntp-era for the
+        /// same reason.
+        /// </remarks>
+        public static readonly DateTime  EraFloor        = new (2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
 
         /// <summary>
         /// Seconds per era, 2^32. The 32-bit second count on the wire wraps this often —
@@ -286,6 +302,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
         public UInt64?                     RequestTransmitTimestamp { get; } = RequestTransmitTimestamp;
 
         /// <summary>
+        /// The client's own clock when the response arrived, T4 as a date rather than as the
+        /// 64 bits on the wire, from the same reading as <see cref="DestinationTimestamp"/>.
+        /// </summary>
+        /// <remarks>
+        /// The context the era of T1 to T4 is resolved against in <see cref="ClockOffset"/> and
+        /// <see cref="RoundTripDelay"/>. Without it they fell back to the machine's own clock,
+        /// which is not the clock a client given a TimeProvider stamped its timestamps from.
+        /// Null where the packet was not received by a client, and then that fallback is used.
+        /// </remarks>
+        public DateTime?                   DestinationTime          { get; } = DestinationTime;
+
+        /// <summary>
         /// High-resolution round-trip time measured via Stopwatch.
         /// </summary>
         public TimeSpan?                   StopwatchRoundTripTime
@@ -325,10 +353,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                 // The client's own record of when the request went out, falling back to the
                 // server's echo of it. They differ only in the interleaved mode, and there the
                 // echo cannot be used — see RequestTransmitTimestamp.
-                var t1 = NTPTimestampToDateTime(RequestTransmitTimestamp ?? OriginateTimestamp);
-                var t2 = NTPTimestampToDateTime(ReceiveTimestamp);
-                var t3 = NTPTimestampToDateTime(TransmitTimestamp.Value);
-                var t4 = NTPTimestampToDateTime(DestinationTimestamp.Value);
+                // The era of each is resolved against the client's own clock at T4 - see
+                // DestinationTime - and NTPTimestampToDateTime keeps that from reaching back
+                // before EraFloor, so that a clock reset to 1970 still places the server's time
+                // after 2036 where it is.
+                var t1 = NTPTimestampToDateTime(RequestTransmitTimestamp ?? OriginateTimestamp, DestinationTime);
+                var t2 = NTPTimestampToDateTime(ReceiveTimestamp,                               DestinationTime);
+                var t3 = NTPTimestampToDateTime(TransmitTimestamp.Value,                        DestinationTime);
+                var t4 = NTPTimestampToDateTime(DestinationTimestamp.Value,                     DestinationTime);
 
                 return TimeSpan.FromTicks(
                            ((t2 - t1).Ticks + (t3 - t4).Ticks) / 2
@@ -355,10 +387,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                 // The client's own record of when the request went out, falling back to the
                 // server's echo of it. They differ only in the interleaved mode, and there the
                 // echo cannot be used — see RequestTransmitTimestamp.
-                var t1 = NTPTimestampToDateTime(RequestTransmitTimestamp ?? OriginateTimestamp);
-                var t2 = NTPTimestampToDateTime(ReceiveTimestamp);
-                var t3 = NTPTimestampToDateTime(TransmitTimestamp.Value);
-                var t4 = NTPTimestampToDateTime(DestinationTimestamp.Value);
+                // The era of each is resolved against the client's own clock at T4 - see
+                // DestinationTime - and NTPTimestampToDateTime keeps that from reaching back
+                // before EraFloor, so that a clock reset to 1970 still places the server's time
+                // after 2036 where it is.
+                var t1 = NTPTimestampToDateTime(RequestTransmitTimestamp ?? OriginateTimestamp, DestinationTime);
+                var t2 = NTPTimestampToDateTime(ReceiveTimestamp,                               DestinationTime);
+                var t3 = NTPTimestampToDateTime(TransmitTimestamp.Value,                        DestinationTime);
+                var t4 = NTPTimestampToDateTime(DestinationTimestamp.Value,                     DestinationTime);
 
                 return (t4 - t1) - (t3 - t2);
 
@@ -634,6 +670,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
             // generated: pick the era that places it nearest that instant. Within ±68 years
             // this is unambiguous, and no NTP timestamp worth reading is further out.
             var reference         = ApproximateTime ?? Illias.Timestamp.Now;
+
+            // A clock earlier than EraFloor is a clock that has not been set yet.
+            if (reference < EraFloor)
+                reference = EraFloor;
             var referenceSeconds  = (Int64) (reference - NTPEpoch).TotalSeconds;
 
             var era               = (Int64) Math.Round((Double) (referenceSeconds - secondsOnTheWire) / SecondsPerEra);
