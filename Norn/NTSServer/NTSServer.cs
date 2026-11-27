@@ -333,7 +333,28 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                ReferenceIdentifier  ReferenceIdentifier,
                                                TimeSpan             RootDelay,
                                                TimeSpan             RootDispersion,
-                                               Byte                 LeapIndicator);
+                                               Byte                 LeapIndicator,
+                                               NTPv5ReferenceIds    NTPv5ReferenceIds);
+
+        /// <summary>
+        /// draft-ietf-ntp-ntpv5-10 § 10: this server's reference ID for NTPv5, random, non-zero
+        /// and 56 bits, drawn once when the server is made. Not the NTPv4 reference identifier,
+        /// which names the source rather than the server.
+        /// </summary>
+        public UInt64                NTPv5ReferenceId              { get; } = NTPv5ReferenceIds.NewReferenceId();
+
+        /// <summary>
+        /// draft-ietf-ntp-ntpv5-10 § 7.9: the epoch of the monotonic clock a Monotonic Receive
+        /// Timestamp is read from. That clock is <see cref="TimeProvider"/>'s timestamp counter,
+        /// which counts from when the server was made and is never stepped, so one epoch, drawn
+        /// at random, lasts as long as the server.
+        /// </summary>
+        public UInt32                NTPv5MonotonicEpochId         { get; } = (UInt32) System.Security.Cryptography.RandomNumberGenerator.GetInt32(1, Int32.MaxValue);
+
+        /// <summary>
+        /// Where the monotonic clock of <see cref="NTPv5MonotonicEpochId"/> starts.
+        /// </summary>
+        private readonly Int64       ntpv5MonotonicStart;
 
         private volatile ClockDescription clockDescription;
 
@@ -673,7 +694,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                           ReferenceIdentifier,
                                                           RootDelay,
                                                           RootDispersion,
-                                                          LeapIndicator);
+                                                          LeapIndicator,
+                                                          null);
+            this.ntpv5MonotonicStart          = this.TimeProvider.GetTimestamp();
             this.ClockLastSynchronized        = this.TimeProvider.GetUtcNow();
 
             // Everyone by default, as in chrony: a client that does not ask for the mode cannot
@@ -1943,6 +1966,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                         // from the clock a moment later can be the next one.
                         var receivedAtTime  = TimeProvider.GetUtcNow().UtcDateTime;
                         var receivedAt      = NTPPacket.GetCurrentNTPTimestamp(receivedAtTime);
+                        var receivedAtTicks = TimeProvider.GetTimestamp();
 
                         System.Threading.Interlocked.Increment(ref ntpRequestsReceived);
 
@@ -2055,6 +2079,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                            datagram,
                                                            receivedAt,
                                                            receivedAtTime,
+                                                           receivedAtTicks,
                                                            udpPacketLocal.RemoteEndPoint,
                                                            cts.Token).ConfigureAwait(false);
 
@@ -2655,7 +2680,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         #endregion
 
 
-        #region (private) AnswerNTPv5Async(Socket, Datagram, ReceivedAt, ReceivedAtTime, RemoteEndPoint, CancellationToken)
+        #region (private) AnswerNTPv5Async(Socket, Datagram, ReceivedAt, ReceivedAtTime, ReceivedAtTicks, RemoteEndPoint, CancellationToken)
 
         /// <summary>
         /// Answer an NTPv5 request as <see cref="NTPv5Responder"/> has it, or not at all.
@@ -2664,6 +2689,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                             Byte[]             Datagram,
                                             UInt64             ReceivedAt,
                                             DateTime           ReceivedAtTime,
+                                            Int64              ReceivedAtTicks,
                                             EndPoint           RemoteEndPoint,
                                             CancellationToken  CancellationToken)
         {
@@ -2677,29 +2703,73 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             }
 
             // Read once, as for NTPv4: a Redescribe in between must not mix two descriptions.
-            var described  = clockDescription;
+            var described     = clockDescription;
 
-            var outcome    = NTPv5Responder.TryRespond(
-                                 Datagram,
-                                 ReceivedAt,
-                                 ReceivedAtTime,
-                                 new NTPv5ServerClock(
-                                     Stratum:         described.Stratum,
-                                     RootDelay:       described.RootDelay,
-                                     RootDispersion:  described.RootDispersion,
-                                     Synchronized:    IsSynchronized(described),
-                                     Precision:       ClockPrecisionExponent,
+            // Without authentication there is no NTPv5 request that qualifies under
+            // AuthenticatedOnly, and so this server offers the mode to NTPv5 only where it offers
+            // it to everyone.
+            var interleaving  = InterleavedTimestamps is { Policy: InterleavedModePolicy.Everyone } store
+                                    ? store
+                                    : null;
 
-                                     // § 10: the Poll of a response is the shortest interval
-                                     // this server allows, the same for every client - which
-                                     // is the rate limiter's, where there is one, and no limit
-                                     // at all where there is none.
-                                     MinimumPoll:     (SByte) (RateLimiter?.KissPollExponent ?? 0)
-                                 ),
-                                 () => NTPPacket.GetCurrentNTPTimestamp(TimeProvider),
-                                 out var response,
-                                 out var errorResponse
-                             );
+            // § 7.9: the monotonic clock as it read at reception, counted from its epoch.
+            var monotonic     = NTPv5Packet.ToTimestamp64(TimeProvider.GetElapsedTime(ntpv5MonotonicStart, ReceivedAtTicks));
+
+            InterleavedExchange? interleavedExchange = null;
+
+            var outcome       = NTPv5Responder.TryRespond(
+                                    Datagram,
+                                    ReceivedAtTime,
+                                    new NTPv5ServerClock(
+                                        Stratum:         described.Stratum,
+                                        RootDelay:       described.RootDelay,
+                                        RootDispersion:  described.RootDispersion,
+                                        Synchronized:    IsSynchronized(described),
+                                        Precision:       ClockPrecisionExponent,
+
+                                        // § 10: the Poll of a response is the shortest interval
+                                        // this server allows, the same for every client - which
+                                        // is the rate limiter's, where there is one, and no limit
+                                        // at all where there is none.
+                                        MinimumPoll:     (SByte) (RateLimiter?.KissPollExponent ?? 0)
+                                    ) {
+                                        SupportedFlags       = NTPv5Flags.Unsynchronized |
+                                                             (interleaving is not null ? NTPv5Flags.InterleavedMode : NTPv5Flags.None),
+                                        ReferenceIds         = described.NTPv5ReferenceIds,
+                                        ReferenceTimestamp   = NTPPacket.GetCurrentNTPTimestamp(ClockLastSynchronized.UtcDateTime),
+                                        MonotonicEpochId     = NTPv5MonotonicEpochId
+                                    },
+                                    request => {
+
+                                        // § 10: the store is touched only by a client that asked
+                                        // for the mode, so a basic client costs nothing here.
+                                        if (interleaving is not null &&
+                                            request.Flags.HasFlag(NTPv5Flags.InterleavedMode) &&
+                                            RemoteEndPoint is IPEndPoint remoteIPEndPoint)
+                                        {
+
+                                            interleavedExchange = interleaving.BeginNTPv5Exchange(remoteIPEndPoint.Address,
+                                                                                                  ReceivedAt,
+                                                                                                  request.ServerCookie,
+                                                                                                  TimeProvider);
+
+                                            if (interleavedExchange is not null)
+                                                return new NTPv5Exchange(ReceiveTimestamp:           interleavedExchange.ReceiveTimestamp,
+                                                                         TransmitTimestamp:          interleavedExchange.TransmitTimestamp,
+                                                                         ServerCookie:               interleavedExchange.ReceiveTimestamp,
+                                                                         Interleaved:                interleavedExchange.IsInterleaved,
+                                                                         MonotonicReceiveTimestamp:  monotonic);
+
+                                        }
+
+                                        return new NTPv5Exchange(ReceiveTimestamp:           ReceivedAt,
+                                                                 TransmitTimestamp:          NTPPacket.GetCurrentNTPTimestamp(TimeProvider),
+                                                                 MonotonicReceiveTimestamp:  monotonic);
+
+                                    },
+                                    out var response,
+                                    out var errorResponse
+                                );
 
             if (outcome != NTPv5RequestOutcome.Answered || response is null)
             {
@@ -2720,6 +2790,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                      SocketFlags.None,
                                      RemoteEndPoint,
                                      CancellationToken).ConfigureAwait(false);
+
+            // What the next interleaved response to this client will carry: when this one left,
+            // read once it has.
+            interleavedExchange?.RecordTransmission(NTPPacket.GetCurrentNTPTimestamp(TimeProvider));
 
             System.Threading.Interlocked.Increment(ref ntpResponsesSent);
 
@@ -2850,24 +2924,42 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <param name="RootDelay">The round trip to the reference, zero by default.</param>
         /// <param name="RootDispersion">The largest error relative to the reference, by default the clock resolution and a millisecond.</param>
         /// <param name="LeapIndicator">The leap indicator, 0 by default.</param>
-        public void Redescribe(Byte?                 Stratum              = null,
-                               ReferenceIdentifier?  ReferenceIdentifier  = null,
-                               TimeSpan?             RootDelay            = null,
-                               TimeSpan?             RootDispersion       = null,
-                               Byte?                 LeapIndicator        = null)
+        /// <param name="NTPv5Sources">
+        /// The sources this server takes its time from, with the reference IDs each reported
+        /// in NTPv5, for the list of draft-ietf-ntp-ntpv5-10 § 7.4 that lets a client see a
+        /// loop before it closes - none by default, so that the list holds this server alone.
+        /// </param>
+        public void Redescribe(Byte?                                 Stratum              = null,
+                               ReferenceIdentifier?                  ReferenceIdentifier  = null,
+                               TimeSpan?                             RootDelay            = null,
+                               TimeSpan?                             RootDispersion       = null,
+                               Byte?                                 LeapIndicator        = null,
+                               IEnumerable<NTPv5ReferenceIdSource>?  NTPv5Sources         = null)
         {
 
             clockDescription = Described(Stratum,
                                          ReferenceIdentifier,
                                          RootDelay,
                                          RootDispersion,
-                                         LeapIndicator);
+                                         LeapIndicator,
+                                         NTPv5Sources);
 
         }
 
         #endregion
 
-        #region (private) Described(Stratum, ReferenceIdentifier, RootDelay, RootDispersion, LeapIndicator)
+        #region NTPv5ReferenceIds
+
+        /// <summary>
+        /// draft-ietf-ntp-ntpv5-10 § 7.4: the list of reference IDs this server answers a
+        /// Reference IDs Request with, its own <see cref="NTPv5ReferenceId"/> first.
+        /// </summary>
+        public NTPv5ReferenceIds NTPv5ReferenceIds
+            => clockDescription.NTPv5ReferenceIds;
+
+        #endregion
+
+        #region (private) Described(Stratum, ReferenceIdentifier, RootDelay, RootDispersion, LeapIndicator, NTPv5Sources)
 
         /// <summary>
         /// The description of the clock with the given values, and the defaults for those not
@@ -2878,7 +2970,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                            ReferenceIdentifier?  ReferenceIdentifier,
                                            TimeSpan?             RootDelay,
                                            TimeSpan?             RootDispersion,
-                                           Byte?                 LeapIndicator)
+                                           Byte?                 LeapIndicator,
+                                           IEnumerable<NTPv5ReferenceIdSource>? NTPv5Sources)
         {
 
             // Two bits in the header: a larger value would not be reported as given, but as
@@ -2890,7 +2983,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                         ReferenceIdentifier  ?? NTP.ReferenceIdentifier.From("LOCL"),
                         RootDelay            ?? TimeSpan.Zero,
                         RootDispersion       ?? ClockResolution + TimeSpan.FromMilliseconds(1),
-                        LeapIndicator        ?? 0);
+                        LeapIndicator        ?? 0,
+
+                        // Combined here, once per description, rather than for every request.
+                        Norn.NTPv5.NTPv5ReferenceIds.Of(NTPv5ReferenceId, NTPv5Sources));
 
         }
 

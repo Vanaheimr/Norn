@@ -313,11 +313,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 (Policy == InterleavedModePolicy.AuthenticatedOnly && !Authenticated))
                 return InterleavedExchange.Basic(RequestPacket, ReceiveTimestamp, TimeProvider);
 
-            var normalizedAddress = RemoteAddress.IsIPv4MappedToIPv6
-                                        ? RemoteAddress.MapToIPv4()
-                                        : RemoteAddress.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 && RemoteAddress.ScopeId != 0
-                                              ? new IPAddress(RemoteAddress.GetAddressBytes())
-                                              : RemoteAddress;
+            var normalizedAddress = Normalized(RemoteAddress);
 
             var requestOrigin    = RequestPacket.OriginateTimestamp;
             var requestReceive   = RequestPacket.ReceiveTimestamp;
@@ -395,6 +391,125 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             }
 
         }
+
+        #endregion
+
+        #region BeginNTPv5Exchange(RemoteAddress, ReceiveTimestamp, RequestServerCookie, TimeProvider, Authenticated = false)
+
+        /// <summary>
+        /// Decide how to answer an NTPv5 request that asked for the interleaved mode, and
+        /// reserve the timestamps and the cookie the answer will carry.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// draft-ietf-ntp-ntpv5-10 § 8 and § 10. What NTPv4 does with the origin timestamp,
+        /// NTPv5 does with a cookie: the server gives each response a server cookie, the client
+        /// sends it back, and the server answers with the transmit timestamp of the response
+        /// that cookie belongs to. Any value unique "in a sufficiently long interval" will do,
+        /// and § 8 suggests the very one used here: the server's unique receive timestamp. So
+        /// the bookkeeping of RFC 9769 carries over unchanged - per address, a handful of
+        /// exchanges, each cookie good for one answer - and a client switching between the two
+        /// versions cannot be answered with the timestamp of the other.
+        /// </para>
+        /// <para>
+        /// The cookie is the receive timestamp as this server reports it, made unique among
+        /// the ones still kept for this address, and so it is never zero: zero is "no cookie".
+        /// </para>
+        /// </remarks>
+        /// <param name="RemoteAddress">The client's address; the mode is tracked per address, never per port.</param>
+        /// <param name="ReceiveTimestamp">When the datagram arrived.</param>
+        /// <param name="RequestServerCookie">The server cookie of the request, 0 for none.</param>
+        /// <param name="TimeProvider">The clock to read for a basic-mode transmit timestamp.</param>
+        /// <param name="Authenticated">Whether the request was authenticated, which decides whether it qualifies under <see cref="InterleavedModePolicy.AuthenticatedOnly"/>.</param>
+        public InterleavedExchange? BeginNTPv5Exchange(IPAddress     RemoteAddress,
+                                                       UInt64        ReceiveTimestamp,
+                                                       UInt64        RequestServerCookie,
+                                                       TimeProvider  TimeProvider,
+                                                       Boolean       Authenticated   = false)
+        {
+
+            // Null rather than a basic exchange: what the response says without the mode is a
+            // matter of NTPv5's own header, which this store knows nothing of.
+            if (Policy == InterleavedModePolicy.Disabled ||
+                (Policy == InterleavedModePolicy.AuthenticatedOnly && !Authenticated))
+                return null;
+
+            var normalizedAddress = Normalized(RemoteAddress);
+
+            var table = TableOf(
+                            Authenticated
+                                ? authenticatedClients
+                                : unauthenticatedClients,
+                            normalizedAddress
+                        );
+
+            lock (table.Padlock)
+            {
+
+                var client            = GetOrAddClient(table, normalizedAddress);
+
+                UInt64? previousTransmit = null;
+
+                // Consumed rather than merely read, as for NTPv4: a replayed request must not
+                // draw the same interleaved answer twice.
+                if (RequestServerCookie != 0)
+                {
+
+                    var match = FindByReceiveTimestamp(client, RequestServerCookie);
+
+                    if (match?.Value.TransmitTimestamp is not null)
+                    {
+                        previousTransmit = match.Value.TransmitTimestamp;
+                        client.Exchanges.Remove(match);
+                    }
+
+                }
+
+                var receiveTimestamp   = MakeUnique(client, ReceiveTimestamp);
+
+                var transmitTimestamp  = previousTransmit
+                                             ?? NTPPacket.GetCurrentNTPTimestamp(TimeProvider);
+
+                var exchange           = new Exchange { ReceiveTimestamp = receiveTimestamp };
+
+                client.Exchanges.AddLast(exchange);
+
+                while (client.Exchanges.Count > MaxExchangesPerClient)
+                    client.Exchanges.RemoveFirst();
+
+                return new InterleavedExchange(
+                           // NTPv5 has no origin timestamp. Its server cookie is the receive
+                           // timestamp this exchange is filed under, which the next request
+                           // will hand back.
+                           OriginTimestamp:    0,
+                           ReceiveTimestamp:   receiveTimestamp,
+                           TransmitTimestamp:  transmitTimestamp,
+                           IsInterleaved:      previousTransmit is not null,
+                           OnTransmitted:      actualTransmitTimestamp => {
+                                                   lock (table.Padlock)
+                                                       exchange.TransmitTimestamp = actualTransmitTimestamp;
+                                               }
+                       );
+
+            }
+
+        }
+
+        #endregion
+
+        #region (private static) Normalized(RemoteAddress)
+
+        /// <summary>
+        /// The address a client is filed under: IPv4 as IPv4 however it came in, and IPv6
+        /// without the scope of the interface it came in on.
+        /// </summary>
+        private static IPAddress Normalized(IPAddress RemoteAddress)
+
+            => RemoteAddress.IsIPv4MappedToIPv6
+                   ? RemoteAddress.MapToIPv4()
+                   : RemoteAddress.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 && RemoteAddress.ScopeId != 0
+                         ? new IPAddress(RemoteAddress.GetAddressBytes())
+                         : RemoteAddress;
 
         #endregion
 

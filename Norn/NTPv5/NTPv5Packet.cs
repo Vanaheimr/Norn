@@ -331,6 +331,30 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPv5
         #endregion
 
 
+        #region (static) ToTimestamp64(Elapsed)
+
+        /// <summary>
+        /// A duration in the timestamp64 format of § 5, 32.32 fixed point in seconds - for a
+        /// clock that counts from an epoch of its own, as the monotonic one of § 7.9 does.
+        /// Truncated to 32 bits of seconds, as an NTP timestamp is.
+        /// </summary>
+        public static UInt64 ToTimestamp64(TimeSpan Elapsed)
+        {
+
+            if (Elapsed <= TimeSpan.Zero)
+                return 0;
+
+            var seconds   = Elapsed.Ticks / TimeSpan.TicksPerSecond;
+            var remainder = Elapsed.Ticks % TimeSpan.TicksPerSecond;
+
+            return ((UInt64) (UInt32) seconds << 32) |
+                   (UInt32) ((UInt64) remainder * 0x100000000UL / (UInt64) TimeSpan.TicksPerSecond);
+
+        }
+
+        #endregion
+
+
         #region (static) TryParse(Buffer, out Packet, out ErrorResponse)
 
         /// <summary>

@@ -35,7 +35,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPv5
     /// to the next 4 octets of the message, so a field's length need not be a multiple of 4 -
     /// the Draft Identification is the one that usually is not.
     /// </remarks>
-    public sealed class NTPv5ExtensionField
+    public sealed partial class NTPv5ExtensionField
     {
 
         #region Properties
