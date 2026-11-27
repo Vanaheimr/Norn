@@ -150,6 +150,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
                 Assert.That(NTSServer.ToShortFormat(TimeSpan.Zero),                   Is.EqualTo(0u));
                 Assert.That(NTSServer.ToShortFormat(TimeSpan.FromSeconds(-1)),        Is.EqualTo(0u));
                 Assert.That(NTSServer.ToShortFormat(TimeSpan.FromTicks(655_359_900_000)), Is.EqualTo(4294966641u));
+                // The last value that still fits, and the first that rounds up past the field:
+                // 152 ticks under 65536 s that once wrapped round to 0.
+                Assert.That(NTSServer.ToShortFormat(TimeSpan.FromTicks(655_359_999_847)), Is.EqualTo(4294967295u));
+                Assert.That(NTSServer.ToShortFormat(TimeSpan.FromTicks(655_359_999_848)), Is.EqualTo(UInt32.MaxValue), "rounded up past the field wraps");
+                Assert.That(NTSServer.ToShortFormat(TimeSpan.FromTicks(655_359_999_999)), Is.EqualTo(UInt32.MaxValue), "rounded up past the field wraps");
                 Assert.That(NTSServer.ToShortFormat(TimeSpan.FromSeconds(65536)),     Is.EqualTo(UInt32.MaxValue), "too large wraps");
                 Assert.That(NTSServer.ToShortFormat(TimeSpan.FromDays(10)),           Is.EqualTo(UInt32.MaxValue), "too large wraps");
             });

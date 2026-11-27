@@ -2951,11 +2951,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             if (Value <= TimeSpan.Zero)
                 return 0;
 
-            // 65536 s are 2^32 units, one more than the field holds.
+            // 65536 s are 2^32 units, one more than the field holds. Checked first so that the
+            // product below stays far from the end of an Int64, not because it is the bound.
             if (Value.Ticks >= 65536L * TimeSpan.TicksPerSecond)
                 return UInt32.MaxValue;
 
-            return (UInt32) ((Value.Ticks * 65536L + TimeSpan.TicksPerSecond - 1) / TimeSpan.TicksPerSecond);
+            // The bound is the rounded value: the last 152 ticks under 65536 s round up to 2^32
+            // as well, and cast as they are they would wrap round to 0 - a perfect clock.
+            var units = (Value.Ticks * 65536L + TimeSpan.TicksPerSecond - 1) / TimeSpan.TicksPerSecond;
+
+            return units > UInt32.MaxValue
+                       ? UInt32.MaxValue
+                       : (UInt32) units;
 
         }
 
