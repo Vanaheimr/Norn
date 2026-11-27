@@ -37,6 +37,7 @@ using org.GraphDefined.Vanaheimr.Hermod.SSH;
 using org.GraphDefined.Vanaheimr.Hermod.SSH.Server;
 
 using org.GraphDefined.Vanaheimr.Norn.NTP;
+using org.GraphDefined.Vanaheimr.Norn.NTPv5;
 
 #endregion
 
@@ -223,6 +224,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// failed is still told so, by an NTS NAK.
         /// </summary>
         public Boolean           PlainNTP        { get; }
+
+        /// <summary>
+        /// Whether NTPv5 is answered (default: no). With <see cref="NTPv5Support.Draft"/> a
+        /// request of version 5 is answered as <see cref="NTPv5Draft.Identification"/> has it,
+        /// in the basic mode and without authentication - so only by a server that answers
+        /// <see cref="PlainNTP"/> - and an NTPv4 client asking whether NTPv5 is there is told
+        /// so (§ 12). With <see cref="NTPv5Support.Disabled"/> nothing changes.
+        /// </summary>
+        public NTPv5Support      NTPv5           { get; }
 
         /// <summary>
         /// The NTP UDP port.
@@ -527,6 +537,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <param name="AccessList">Who may query this server at all, RFC 8633 § 5.1 (default: everyone).</param>
         /// <param name="NTSKEOverTLS">Whether NTS-KE is served over TLS on <paramref name="NTSKEPort"/> (default: yes); no where the key exchange goes over SSH alone.</param>
         /// <param name="PlainNTP">Whether a plain NTP request without NTS is answered (default: yes); no for a server of NTS alone.</param>
+        /// <param name="NTPv5">Whether NTPv5 is answered, after the draft of <see cref="NTPv5Draft.Identification"/> (default: no).</param>
         public NTSServer(I18NString?        Description    = null,
                          IPPort?            NTSKEPort      = null,
                          IPPort?            NTSPort        = null,
@@ -565,7 +576,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                          TimeSpan?                 PublicKeyLeadTime      = null,
                          Boolean                   NTSKEOverTLS           = true,
                          IEnumerable<X509Certificate>? TLSCertificateChain = null,
-                         Boolean                   PlainNTP               = true)
+                         Boolean                   PlainNTP               = true,
+                         NTPv5Support              NTPv5                  = NTPv5Support.Disabled)
         {
 
             // An SSH listener hands out cookies to whoever logs in, so who that may be is never a
@@ -613,6 +625,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             this.TCPPort                      = NTSKEPort                    ?? IPPort.NTSKE;
             this.NTSKEOverTLS                 = NTSKEOverTLS;
             this.PlainNTP                     = PlainNTP;
+            this.NTPv5                        = NTPv5;
             this.UDPPort                      = NTSPort                      ?? IPPort.NTP;
             this.ExternalURLs                 = ExternalURLs                 ?? [ URL.Parse($"udp://localhost:{this.UDPPort}") ];
             this.ownsDNSClient                = DNSClient is null;
@@ -1926,7 +1939,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                         // taken at the end of all that reports this server as slower than it is.
                         // RFC 5905 § 8 wants the timestamp at the end of reception; this is as
                         // close as a user-space socket gets.
-                        var receivedAt      = NTPPacket.GetCurrentNTPTimestamp(TimeProvider);
+                        // One reading, twice: NTPv5 also says which era it is, and an era read
+                        // from the clock a moment later can be the next one.
+                        var receivedAtTime  = TimeProvider.GetUtcNow().UtcDateTime;
+                        var receivedAt      = NTPPacket.GetCurrentNTPTimestamp(receivedAtTime);
 
                         System.Threading.Interlocked.Increment(ref ntpRequestsReceived);
 
@@ -2028,6 +2044,23 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                                 if (activeSocket is null)
                                     return;
+
+                                // NTPv5 has a header of its own: read by the NTPv4 code below,
+                                // its client cookie would pass for a reference timestamp.
+                                if (NTPv5 != NTPv5Support.Disabled &&
+                                    NTPv5Packet.IsNTPv5(datagram))
+                                {
+
+                                    await AnswerNTPv5Async(activeSocket,
+                                                           datagram,
+                                                           receivedAt,
+                                                           receivedAtTime,
+                                                           udpPacketLocal.RemoteEndPoint,
+                                                           cts.Token).ConfigureAwait(false);
+
+                                    return;
+
+                                }
 
                                 if (NTPRequest.TryParse(datagram,
                                                         out var requestPacket,
@@ -2622,6 +2655,120 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         #endregion
 
 
+        #region (private) AnswerNTPv5Async(Socket, Datagram, ReceivedAt, ReceivedAtTime, RemoteEndPoint, CancellationToken)
+
+        /// <summary>
+        /// Answer an NTPv5 request as <see cref="NTPv5Responder"/> has it, or not at all.
+        /// </summary>
+        private async Task AnswerNTPv5Async(Socket             Socket,
+                                            Byte[]             Datagram,
+                                            UInt64             ReceivedAt,
+                                            DateTime           ReceivedAtTime,
+                                            EndPoint           RemoteEndPoint,
+                                            CancellationToken  CancellationToken)
+        {
+
+            // There is no NTS for NTPv5 yet, so every NTPv5 request is a plain one, and a server
+            // of NTS alone has nothing to give it.
+            if (!PlainNTP)
+            {
+                System.Threading.Interlocked.Increment(ref ntpPlainRequestsIgnored);
+                return;
+            }
+
+            // Read once, as for NTPv4: a Redescribe in between must not mix two descriptions.
+            var described  = clockDescription;
+
+            var outcome    = NTPv5Responder.TryRespond(
+                                 Datagram,
+                                 ReceivedAt,
+                                 ReceivedAtTime,
+                                 new NTPv5ServerClock(
+                                     Stratum:         described.Stratum,
+                                     RootDelay:       described.RootDelay,
+                                     RootDispersion:  described.RootDispersion,
+                                     Synchronized:    IsSynchronized(described),
+                                     Precision:       ClockPrecisionExponent,
+
+                                     // § 10: the Poll of a response is the shortest interval
+                                     // this server allows, the same for every client - which
+                                     // is the rate limiter's, where there is one, and no limit
+                                     // at all where there is none.
+                                     MinimumPoll:     (SByte) (RateLimiter?.KissPollExponent ?? 0)
+                                 ),
+                                 () => NTPPacket.GetCurrentNTPTimestamp(TimeProvider),
+                                 out var response,
+                                 out var errorResponse
+                             );
+
+            if (outcome != NTPv5RequestOutcome.Answered || response is null)
+            {
+
+                // Only what the client got wrong is an invalid request; an unsynchronized clock
+                // is this server's own state.
+                if (outcome is NTPv5RequestOutcome.Invalid
+                            or NTPv5RequestOutcome.NotARequest
+                            or NTPv5RequestOutcome.OtherDraft)
+                    System.Threading.Interlocked.Increment(ref ntpRequestsInvalid);
+
+                DebugX.Log($"NTPv5 request from {RemoteEndPoint} not answered ({outcome}): {errorResponse}");
+                return;
+
+            }
+
+            await Socket.SendToAsync(new ArraySegment<Byte>(response),
+                                     SocketFlags.None,
+                                     RemoteEndPoint,
+                                     CancellationToken).ConfigureAwait(false);
+
+            System.Threading.Interlocked.Increment(ref ntpResponsesSent);
+
+        }
+
+        #endregion
+
+        #region (private static) IsSynchronized(Description)
+
+        /// <summary>
+        /// Whether the described clock is fit to synchronize to, in the terms of NTPv4: a leap
+        /// indicator other than 3, the alarm condition, and a stratum from 1 to 15, since 0 is
+        /// a kiss and 16 unsynchronized (RFC 5905 § 7.3). NTPv5 says the same in its
+        /// Unsynchronized flag.
+        /// </summary>
+        private static Boolean IsSynchronized(ClockDescription Description)
+
+            => Description.LeapIndicator != 3 &&
+               Description.Stratum is >= 1 and <= 15;
+
+        #endregion
+
+        #region (private) AdvertisesNTPv5To(RequestPacket)
+
+        /// <summary>
+        /// draft-ietf-ntp-ntpv5-10 § 12: whether the response to this NTPv4 request echoes the
+        /// reference timestamp that asks whether the server speaks NTPv5 - a plain client
+        /// request carrying the draft's magic, to a server that answers NTPv5 in plain.
+        /// </summary>
+        /// <remarks>
+        /// Not to a request of NTS: § 12 has the magic used only where no other negotiation is,
+        /// and for NTS the key exchange is it. Nor to one of the final magic, which asks for the
+        /// RFC this draft is not.
+        /// </remarks>
+        private Boolean AdvertisesNTPv5To(NTPPacket RequestPacket)
+
+            => NTPv5 != NTPv5Support.Disabled &&
+               PlainNTP &&
+               RequestPacket.VN                 == 4 &&
+               RequestPacket.Mode               == 3 &&
+               RequestPacket.ReferenceTimestamp == NTPv5Draft.NegotiationMagic &&
+              !RequestPacket.Extensions.Any(extension => extension.Type is ExtensionTypes.UniqueIdentifier
+                                                                        or ExtensionTypes.NTSCookie
+                                                                        or ExtensionTypes.NTSCookiePlaceholder
+                                                                        or ExtensionTypes.AuthenticatorAndEncrypted);
+
+        #endregion
+
+
         #region (private) BuildResponseHeader(RequestPacket, Extensions, ...)
 
         /// <summary>
@@ -2659,8 +2806,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                    ReferenceIdentifier:  described.ReferenceIdentifier,
 
                    // When the clock was last set, per § 7.3 — not the moment of this reply,
-                   // which said nothing about synchronization at all.
-                   ReferenceTimestamp:   NTPPacket.GetCurrentNTPTimestamp(ClockLastSynchronized.UtcDateTime),
+                   // which said nothing about synchronization at all. Except where the client
+                   // asked in it whether NTPv5 is spoken here, and the echo is the answer.
+                   ReferenceTimestamp:   AdvertisesNTPv5To(RequestPacket)
+                                             ? NTPv5Draft.NegotiationMagic
+                                             : NTPPacket.GetCurrentNTPTimestamp(ClockLastSynchronized.UtcDateTime),
 
                    // All three come from the exchange, because RFC 9769 makes them a set: which
                    // timestamp is echoed as the origin is the only signal telling the client
