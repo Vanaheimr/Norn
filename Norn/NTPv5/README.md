@@ -113,7 +113,8 @@ implementation, which is what chrony and ntpd-rs do anyway.
 | § 11 | NTS for NTPv5 | [`NTPv5NTS.cs`](NTPv5NTS.cs) |
 | § 12 | Version negotiation from NTPv4 | [`NTPv5VersionNegotiation.cs`](NTPv5VersionNegotiation.cs) |
 | § 7.6, § 11, § 12 | Monitoring: an optional, hourly probe of what a server supports | [`MeasurementEngine.NTPv5.cs`](../Monitoring/MeasurementEngine.NTPv5.cs), [`NTPv5CapabilityResult.cs`](../Monitoring/Results/NTPv5CapabilityResult.cs) |
-| § 7.3, § 7.5, § 7.10 | MAC, Time Sources, Secondary Receive Timestamp | not yet |
+| § 7.5 | Time Sources, answered only where the server was given its sources | [`NTPv5TimeSources.cs`](NTPv5TimeSources.cs) |
+| § 7.3, § 7.10 | MAC, Secondary Receive Timestamp | not yet |
 
 The [NTS conformance suite](https://github.com/Vanaheimr/NTSConformanceTests) tests these
 against its own codec, written independently from the text of -10.

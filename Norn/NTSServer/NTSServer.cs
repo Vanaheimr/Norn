@@ -334,7 +334,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                TimeSpan             RootDelay,
                                                TimeSpan             RootDispersion,
                                                Byte                 LeapIndicator,
-                                               NTPv5ReferenceIds    NTPv5ReferenceIds);
+                                               NTPv5ReferenceIds    NTPv5ReferenceIds,
+                                               IReadOnlyList<NTPv5TimeSource>?  NTPv5TimeSources);
 
         /// <summary>
         /// draft-ietf-ntp-ntpv5-10 § 10: this server's reference ID for NTPv5, random, non-zero
@@ -2766,6 +2767,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                                NTPv5Flags.AuthenticationNAK |
                                                                (interleaving is not null ? NTPv5Flags.InterleavedMode : NTPv5Flags.None),
                                         ReferenceIds         = described.NTPv5ReferenceIds,
+                                        TimeSources          = described.NTPv5TimeSources,
                                         ReferenceTimestamp   = NTPPacket.GetCurrentNTPTimestamp(ClockLastSynchronized.UtcDateTime),
                                         MonotonicEpochId     = NTPv5MonotonicEpochId,
                                         AnswersPlain         = PlainNTP
@@ -2975,12 +2977,20 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// in NTPv5, for the list of draft-ietf-ntp-ntpv5-10 § 7.4 that lets a client see a
         /// loop before it closes - none by default, so that the list holds this server alone.
         /// </param>
+        /// <param name="NTPv5TimeSources">
+        /// The time sources this server tells a client of who asks with a Time Sources Request
+        /// (draft-ietf-ntp-ntpv5-10 § 7.5), for monitoring and debugging - by default none, and
+        /// then the request is not answered at all: where a server gets its time from is not
+        /// everybody's business unless its operator says so. An empty list answers it, with
+        /// no source.
+        /// </param>
         public void Redescribe(Byte?                                 Stratum              = null,
                                ReferenceIdentifier?                  ReferenceIdentifier  = null,
                                TimeSpan?                             RootDelay            = null,
                                TimeSpan?                             RootDispersion       = null,
                                Byte?                                 LeapIndicator        = null,
-                               IEnumerable<NTPv5ReferenceIdSource>?  NTPv5Sources         = null)
+                               IEnumerable<NTPv5ReferenceIdSource>?  NTPv5Sources         = null,
+                               IEnumerable<NTPv5TimeSource>?         NTPv5TimeSources     = null)
         {
 
             clockDescription = Described(Stratum,
@@ -2988,7 +2998,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                          RootDelay,
                                          RootDispersion,
                                          LeapIndicator,
-                                         NTPv5Sources);
+                                         NTPv5Sources,
+                                         NTPv5TimeSources);
 
         }
 
@@ -3005,7 +3016,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #endregion
 
-        #region (private) Described(Stratum, ReferenceIdentifier, RootDelay, RootDispersion, LeapIndicator, NTPv5Sources)
+        #region NTPv5TimeSources
+
+        /// <summary>
+        /// draft-ietf-ntp-ntpv5-10 § 7.5: the time sources this server answers a Time Sources
+        /// Request with, or null where it answers none - see <see cref="Redescribe"/>.
+        /// </summary>
+        public IReadOnlyList<NTPv5TimeSource>? NTPv5TimeSources
+            => clockDescription.NTPv5TimeSources;
+
+        #endregion
+
+        #region (private) Described(Stratum, ReferenceIdentifier, RootDelay, RootDispersion, LeapIndicator, NTPv5Sources, NTPv5TimeSources)
 
         /// <summary>
         /// The description of the clock with the given values, and the defaults for those not
@@ -3017,7 +3039,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                            TimeSpan?             RootDelay,
                                            TimeSpan?             RootDispersion,
                                            Byte?                 LeapIndicator,
-                                           IEnumerable<NTPv5ReferenceIdSource>? NTPv5Sources)
+                                           IEnumerable<NTPv5ReferenceIdSource>? NTPv5Sources,
+                                           IEnumerable<NTPv5TimeSource>?        NTPv5TimeSources = null)
         {
 
             // Two bits in the header: a larger value would not be reported as given, but as
@@ -3032,7 +3055,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                         LeapIndicator        ?? 0,
 
                         // Combined here, once per description, rather than for every request.
-                        Norn.NTPv5.NTPv5ReferenceIds.Of(NTPv5ReferenceId, NTPv5Sources));
+                        Norn.NTPv5.NTPv5ReferenceIds.Of(NTPv5ReferenceId, NTPv5Sources),
+
+                        // A copy, so that the list the caller keeps changing is not the one
+                        // being answered from.
+                        NTPv5TimeSources?.ToArray());
 
         }
 

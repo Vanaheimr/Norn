@@ -52,6 +52,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPv5
         public NTPv5ReferenceIds?  ReferenceIds        { get; init; }
 
         /// <summary>
+        /// § 7.5: the server's current time sources, or null where it answers no Time Sources
+        /// Request - the field is "supported and enabled" only where a list is given.
+        /// </summary>
+        public IReadOnlyList<NTPv5TimeSource>?  TimeSources  { get; init; }
+
+        /// <summary>
         /// § 7.8: when the clock was last set, or 0 where the server answers no Reference Timestamp.
         /// </summary>
         public UInt64              ReferenceTimestamp  { get; init; }
@@ -393,6 +399,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPv5
                     case NTPv5ExtensionTypes.ReferenceIDsRequest when Clock.ReferenceIds is not null:
                         if (Clock.ReferenceIds.TryAnswer(field, out var referenceIds))
                             responseFields.Add(referenceIds);
+                        break;
+
+                    // § 7.5: the sources from the index on, no longer than the request - and
+                    // empty for an index that is none of a source.
+                    case NTPv5ExtensionTypes.TimeSourcesRequest when Clock.TimeSources is not null:
+                        if (NTPv5TimeSources.TryAnswer(Clock.TimeSources, field, out var timeSources))
+                            responseFields.Add(timeSources);
                         break;
 
                     // § 7.8.

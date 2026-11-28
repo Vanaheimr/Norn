@@ -828,6 +828,22 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPv5
 
         #endregion
 
+        #region TimeSourcesOf(Response)
+
+        /// <summary>
+        /// § 7.5: the time sources a response carries, from the index its request asked for;
+        /// empty where the index was none of a source, and null where the response carries no
+        /// Time Sources Response that reads - the server does not answer it, or did not here.
+        /// </summary>
+        public static IReadOnlyList<NTPv5TimeSource>? TimeSourcesOf(NTPv5Packet Response)
+
+            => Response.Find(NTPv5ExtensionTypes.TimeSourcesResponse) is NTPv5ExtensionField field &&
+               NTPv5TimeSources.TryRead(field.Value, out var sources)
+                   ? sources
+                   : null;
+
+        #endregion
+
         #region IsLoop(Entries, OwnReferenceId, MaximumShare = 0)
 
         /// <summary>

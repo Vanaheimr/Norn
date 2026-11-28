@@ -109,6 +109,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                    ? (versions, flags)
                    : null;
 
+        /// <summary>
+        /// The server's time sources, where the request asked for them with a Time Sources
+        /// Request (draft-ietf-ntp-ntpv5-10 § 7.5) and the response carried them.
+        /// </summary>
+        public IReadOnlyList<NTPv5TimeSource>? TimeSources
+            => Success && Response is not null
+                   ? NTPv5Client.TimeSourcesOf(Response)
+                   : null;
+
         /// <inheritdoc/>
         public override String ToString()
 
