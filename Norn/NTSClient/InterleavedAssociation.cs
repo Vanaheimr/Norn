@@ -66,10 +66,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
     /// <param name="T2">The server's receive timestamp from the previous response.</param>
     /// <param name="T3">The server's transmit timestamp from the latest response — the accurate one.</param>
     /// <param name="T4">The client's receive timestamp of the previous response.</param>
-    public readonly record struct InterleavedMeasurement(UInt64 T1,
-                                                         UInt64 T2,
-                                                         UInt64 T3,
-                                                         UInt64 T4)
+    /// <param name="EraReference">
+    /// The client's own clock when the latest response arrived, which the era of the four is
+    /// resolved against - see <see cref="NTPPacket.DestinationTime"/>. Null for the machine's
+    /// clock.
+    /// </param>
+    public readonly record struct InterleavedMeasurement(UInt64     T1,
+                                                         UInt64     T2,
+                                                         UInt64     T3,
+                                                         UInt64     T4,
+                                                         DateTime?  EraReference = null)
     {
 
         /// <summary>
@@ -94,19 +100,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// The difference between two NTP timestamps as a signed interval.
         /// </summary>
         /// <remarks>
-        /// Computed on the unsigned 64-bit values rather than by converting each to a date
-        /// first, so that a pair straddling the 2036 era boundary still yields the right
-        /// interval: the subtraction wraps exactly as the format intends.
+        /// Each is placed in its era first, as <see cref="NTPPacket.ClockOffset"/> does, and the
+        /// dates are subtracted. The wrapping subtraction of the 64-bit values this replaced is
+        /// right only for timestamps less than 68 years apart, and a client whose clock was
+        /// reset to 1970 is further than that from a server after 2038: it measured the server
+        /// 66 years behind instead of 70 ahead. Resolved against <see cref="EraReference"/> and
+        /// no earlier than <see cref="NTPPacket.EraFloor"/>, a pair straddling the 2036
+        /// rollover still comes out right, as the wrapping did.
         /// </remarks>
-        private static TimeSpan Difference(UInt64 A, UInt64 B)
-        {
+        private TimeSpan Difference(UInt64 A, UInt64 B)
 
-            var difference = unchecked((Int64) (A - B));
-
-            // 2^32 units to the second, and 10^7 ticks to the second.
-            return TimeSpan.FromTicks((Int64) (difference / 4294967296.0 * TimeSpan.TicksPerSecond));
-
-        }
+            => NTPPacket.NTPTimestampToDateTime(A, EraReference) -
+               NTPPacket.NTPTimestampToDateTime(B, EraReference);
 
     }
 
@@ -366,8 +371,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 return new InterleavedMeasurement(
                            T1: previousRequestTransmit.Value,
                            T2: previousServerReceive.Value,
-                           T3: Response.TransmitTimestamp.Value,
-                           T4: previousOwnReceive.Value
+                           T3:            Response.TransmitTimestamp.Value,
+                           T4:            previousOwnReceive.Value,
+                           EraReference:  Response.DestinationTime
                        );
 
             }

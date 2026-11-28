@@ -21,6 +21,7 @@
 using NUnit.Framework;
 
 using org.GraphDefined.Vanaheimr.Norn.NTP;
+using org.GraphDefined.Vanaheimr.Norn.NTS;
 
 #endregion
 
@@ -98,6 +99,35 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTP
             var in2100 = new DateTime(2100, 1, 1, 0, 0, 0, DateTimeKind.Utc);
 
             Assert.That(NTPPacket.NTPTimestampToDateTime(OnTheWire(in2100), in2060), Is.EqualTo(in2100));
+
+        }
+
+        #endregion
+
+        #region InterleavedMeasurement_AcrossMoreThan68Years()
+
+        /// <summary>
+        /// The interleaved measurement places its timestamps in their eras as ClockOffset does:
+        /// subtracting the wrapping 64-bit values is right only within 68 years, and a client
+        /// reset to 1970 measured a server in 2040 66 years behind instead of 70 ahead.
+        /// </summary>
+        [Test]
+        public void InterleavedMeasurement_AcrossMoreThan68Years()
+        {
+
+            var client = unixEpoch;
+            var server = new DateTime(2040, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
+            var measurement = new InterleavedMeasurement(T1:            OnTheWire(client),
+                                                         T2:            OnTheWire(server),
+                                                         T3:            OnTheWire(server),
+                                                         T4:            OnTheWire(client),
+                                                         EraReference:  client);
+
+            Assert.Multiple(() => {
+                Assert.That(measurement.ClockOffset,    Is.EqualTo(server - client));
+                Assert.That(measurement.RoundtripDelay, Is.EqualTo(TimeSpan.Zero));
+            });
 
         }
 
