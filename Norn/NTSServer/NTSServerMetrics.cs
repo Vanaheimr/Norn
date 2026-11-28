@@ -41,7 +41,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                   Int64 NTPv5ResponsesSent               = 0,
                                   Int64 NTPv5AuthenticatedResponsesSent  = 0,
                                   Int64 NTPv5InterleavedResponsesSent    = 0,
-                                  Int64 NTPv5AuthenticationNAKsSent      = 0)
+                                  Int64 NTPv5AuthenticationNAKsSent      = 0,
+                                  Int64 NTPOverTLSConnectionsAccepted    = 0,
+                                  Int64 NTPOverTLSConnectionsDenied      = 0,
+                                  Int64 NTPOverTLSConnectionsRejected    = 0,
+                                  Int64 NTPOverTLSHandshakeFailures      = 0,
+                                  Int64 NTPOverTLSRequestsReceived       = 0,
+                                  Int64 NTPOverTLSRequestsInvalid        = 0,
+                                  Int64 NTPOverTLSResponsesSent          = 0)
     {
 
         public Int64 NTPRequestsReceived       { get; } = NTPRequestsReceived;
@@ -115,6 +122,47 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </summary>
         public Int64 NTPv5AuthenticationNAKsSent      { get; } = NTPv5AuthenticationNAKsSent;
 
+        /// <summary>
+        /// How many connections the NTP-over-TLS listener of BSI TR-03109-5 § 7 accepted - see
+        /// <see cref="NTSServer.NTPOverTLSPort"/>. Counted apart from NTS-KE and from NTP over
+        /// UDP: the requests of this listener are in none of the other counters.
+        /// </summary>
+        public Int64 NTPOverTLSConnectionsAccepted    { get; } = NTPOverTLSConnectionsAccepted;
+
+        /// <summary>
+        /// How many NTP-over-TLS connections the access list of RFC 8633 § 5.1 turned away,
+        /// before the TLS handshake.
+        /// </summary>
+        public Int64 NTPOverTLSConnectionsDenied      { get; } = NTPOverTLSConnectionsDenied;
+
+        /// <summary>
+        /// How many NTP-over-TLS connections were closed because too many were open, in all or
+        /// from the one client.
+        /// </summary>
+        public Int64 NTPOverTLSConnectionsRejected    { get; } = NTPOverTLSConnectionsRejected;
+
+        /// <summary>
+        /// How many NTP-over-TLS connections ended in their TLS handshake: no version or cipher
+        /// suite in common, no client certificate where one is required, or one refused.
+        /// </summary>
+        public Int64 NTPOverTLSHandshakeFailures      { get; } = NTPOverTLSHandshakeFailures;
+
+        /// <summary>
+        /// How many 48-octet NTP requests arrived over TLS.
+        /// </summary>
+        public Int64 NTPOverTLSRequestsReceived       { get; } = NTPOverTLSRequestsReceived;
+
+        /// <summary>
+        /// How many of them were left unanswered: not a client request (mode 3) of NTPv1 to
+        /// NTPv4, or refused by the rate limiter.
+        /// </summary>
+        public Int64 NTPOverTLSRequestsInvalid        { get; } = NTPOverTLSRequestsInvalid;
+
+        /// <summary>
+        /// How many NTP responses went out over TLS.
+        /// </summary>
+        public Int64 NTPOverTLSResponsesSent          { get; } = NTPOverTLSResponsesSent;
+
 
         /// <summary>
         /// The counters that are not zero, in one line.
@@ -148,7 +196,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                ("v5-sent",          NTPv5ResponsesSent),
                                ("v5-nts",           NTPv5AuthenticatedResponsesSent),
                                ("v5-interleaved",   NTPv5InterleavedResponsesSent),
-                               ("v5-naks",          NTPv5AuthenticationNAKsSent)
+                               ("v5-naks",          NTPv5AuthenticationNAKsSent),
+                               ("tls-accepted",     NTPOverTLSConnectionsAccepted),
+                               ("tls-denied",       NTPOverTLSConnectionsDenied),
+                               ("tls-rejected",     NTPOverTLSConnectionsRejected),
+                               ("tls-handshakes",   NTPOverTLSHandshakeFailures),
+                               ("tls-received",     NTPOverTLSRequestsReceived),
+                               ("tls-invalid",      NTPOverTLSRequestsInvalid),
+                               ("tls-sent",         NTPOverTLSResponsesSent)
                            }.
                            Where (counter => counter.Value != 0).
                            Select(counter => $"{counter.Name}: {counter.Value}").

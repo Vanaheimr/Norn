@@ -442,7 +442,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         }
 
-        private static Int32 ResolveECDsaSignatureScheme(ECPrivateKeyParameters Key)
+        internal static Int32 ResolveECDsaSignatureScheme(ECPrivateKeyParameters Key)
         {
 
             if (Key.Parameters is ECNamedDomainParameters named)
@@ -487,7 +487,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         }
 
-        private static Int32 SelectRsaPssSignatureScheme(X509Certificate                    LeafCertificate,
+        internal static Int32 SelectRsaPssSignatureScheme(X509Certificate                    LeafCertificate,
                                                          IList<SignatureAndHashAlgorithm>?  ClientSigAlgs)
         {
 
@@ -521,7 +521,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         }
 
-        private static void EnsureClientSupportsSignatureScheme(IList<SignatureAndHashAlgorithm>?  ClientSigAlgs,
+        internal static void EnsureClientSupportsSignatureScheme(IList<SignatureAndHashAlgorithm>?  ClientSigAlgs,
                                                                 Int32                              RequiredScheme)
         {
 

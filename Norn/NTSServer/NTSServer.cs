@@ -38,6 +38,7 @@ using org.GraphDefined.Vanaheimr.Hermod.SSH.Server;
 
 using org.GraphDefined.Vanaheimr.Norn.NTP;
 using org.GraphDefined.Vanaheimr.Norn.NTPv5;
+using org.GraphDefined.Vanaheimr.Norn.NTPOverTLS;
 
 #endregion
 
@@ -48,7 +49,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
     /// A Network Time Secure (NTS) Server.
     /// It will serve a NTS-KeyEstablishment (NTS-KE) TLS Server and a NTP UDP Server.
     /// </summary>
-    public class NTSServer : IDisposable,
+    public partial class NTSServer : IDisposable,
                              IAsyncDisposable
     {
 
@@ -128,6 +129,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         private                  CancellationTokenSource?                 cts;
         private                  Task?                                    tcpLoopTask;
         private                  Task?                                    udpLoopTask;
+        private                  Socket?                                  ntpOverTLSSocket;
+        private                  Task?                                    ntpOverTLSLoopTask;
+        private readonly         SemaphoreSlim                            ntpOverTLSConnectionSemaphore;
+        private readonly         ConcurrentDictionary<System.Net.IPAddress, Int32>  ntpOverTLSConnectionsPerClient = [];
+
+        /// <summary>
+        /// The NTP-over-TLS connections that are open, so that a shutdown can end them: they
+        /// last as long as their clients keep asking, not a single exchange like NTS-KE.
+        /// </summary>
+        private readonly         ConcurrentDictionary<Socket, Byte>       ntpOverTLSConnections          = [];
+        private readonly         RemoteTLSClientCertificateValidationHandler<NTSServer>?  ntpOverTLSClientCertificateValidator;
 
         private readonly         ConcurrentDictionary<UInt64, MasterKey>  masterKeys             = [];
         private        readonly  Lock                                     currentMasterKeyLock   = new();
@@ -177,6 +189,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         private                  SshServer?                               sshServer;
 
         private                  Int64                                    ntpRequestsReceived;
+        private                  Int64                                    ntpOverTLSConnectionsAccepted;
+        private                  Int64                                    ntpOverTLSConnectionsDenied;
+        private                  Int64                                    ntpOverTLSConnectionsRejected;
+        private                  Int64                                    ntpOverTLSHandshakeFailures;
+        private                  Int64                                    ntpOverTLSRequestsReceived;
+        private                  Int64                                    ntpOverTLSRequestsInvalid;
+        private                  Int64                                    ntpOverTLSResponsesSent;
         private                  Int64                                    ntpRequestsDenied;
         private                  Int64                                    ntpPlainRequestsIgnored;
         private                  Int64                                    ntpRequestsRejected;
@@ -447,6 +466,31 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         public TimeSpan              MasterKeyLifetime             { get; }
 
+        /// <summary>
+        /// The TCP port of NTP over TLS after chapter 7 of BSI TR-03109-5, or none, which is the
+        /// default: NTPv4 requests of 48 octets, answered in the TLS connection they came in.
+        /// </summary>
+        /// <remarks>
+        /// The listener shows the certificate NTS-KE over TLS shows - see <see cref="RenewTLSIdentity"/>.
+        /// It answers any number of requests on one connection, until the client closes it or
+        /// says nothing for <see cref="NTPOverTLSIdleTimeout"/>. Neither the interleaved mode nor
+        /// NTS is offered on it: § 7.1.1 has the client/server mode alone, and the TLS
+        /// connection is what authenticates. <see cref="PlainNTP"/> does not concern it.
+        /// </remarks>
+        public IPPort?               NTPOverTLSPort                { get; }
+
+        /// <summary>
+        /// How long an NTP-over-TLS connection may stay silent before the server closes it.
+        /// </summary>
+        public TimeSpan              NTPOverTLSIdleTimeout         { get; }
+
+        /// <summary>
+        /// Whether an NTP-over-TLS client has to show a certificate, which it does where a
+        /// validator for it was given.
+        /// </summary>
+        public Boolean               NTPOverTLSRequiresClientCertificate
+            => ntpOverTLSClientCertificateValidator is not null;
+
         public TimeSpan              MasterKeyRotationGracePeriod  { get; }
 
         public TimeSpan              NTSKEHandshakeTimeout         { get; }
@@ -530,7 +574,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                    NTPv5ResponsesSent:               System.Threading.Interlocked.Read(ref ntpv5ResponsesSent),
                    NTPv5AuthenticatedResponsesSent:  System.Threading.Interlocked.Read(ref ntpv5AuthenticatedResponsesSent),
                    NTPv5InterleavedResponsesSent:    System.Threading.Interlocked.Read(ref ntpv5InterleavedResponsesSent),
-                   NTPv5AuthenticationNAKsSent:      System.Threading.Interlocked.Read(ref ntpv5AuthenticationNAKsSent)
+                   NTPv5AuthenticationNAKsSent:      System.Threading.Interlocked.Read(ref ntpv5AuthenticationNAKsSent),
+                   NTPOverTLSConnectionsAccepted:    System.Threading.Interlocked.Read(ref ntpOverTLSConnectionsAccepted),
+                   NTPOverTLSConnectionsDenied:      System.Threading.Interlocked.Read(ref ntpOverTLSConnectionsDenied),
+                   NTPOverTLSConnectionsRejected:    System.Threading.Interlocked.Read(ref ntpOverTLSConnectionsRejected),
+                   NTPOverTLSHandshakeFailures:      System.Threading.Interlocked.Read(ref ntpOverTLSHandshakeFailures),
+                   NTPOverTLSRequestsReceived:       System.Threading.Interlocked.Read(ref ntpOverTLSRequestsReceived),
+                   NTPOverTLSRequestsInvalid:        System.Threading.Interlocked.Read(ref ntpOverTLSRequestsInvalid),
+                   NTPOverTLSResponsesSent:          System.Threading.Interlocked.Read(ref ntpOverTLSResponsesSent)
                );
 
         #endregion
@@ -571,6 +622,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <param name="NTSKEOverTLS">Whether NTS-KE is served over TLS on <paramref name="NTSKEPort"/> (default: yes); no where the key exchange goes over SSH alone.</param>
         /// <param name="PlainNTP">Whether a plain NTP request without NTS is answered (default: yes); no for a server of NTS alone.</param>
         /// <param name="NTPv5">Whether NTPv5 is answered, after the draft of <see cref="NTPv5Draft.Identification"/> (default: no).</param>
+        /// <param name="NTPOverTLSPort">The TCP port of NTP over TLS after BSI TR-03109-5 § 7 (default: none).</param>
+        /// <param name="NTPOverTLSClientCertificateValidator">Where given, an NTP-over-TLS client has to show a certificate, and this decides whether it is answered (default: no client certificate asked for).</param>
+        /// <param name="NTPOverTLSIdleTimeout">How long an NTP-over-TLS connection may stay silent (default: 30 seconds).</param>
         public NTSServer(I18NString?        Description    = null,
                          IPPort?            NTSKEPort      = null,
                          IPPort?            NTSPort        = null,
@@ -610,8 +664,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                          Boolean                   NTSKEOverTLS           = true,
                          IEnumerable<X509Certificate>? TLSCertificateChain = null,
                          Boolean                   PlainNTP               = true,
-                         NTPv5Support              NTPv5                  = NTPv5Support.Disabled)
+                         NTPv5Support              NTPv5                  = NTPv5Support.Disabled,
+                         IPPort?                   NTPOverTLSPort         = null,
+                         RemoteTLSClientCertificateValidationHandler<NTSServer>? NTPOverTLSClientCertificateValidator = null,
+                         TimeSpan?                 NTPOverTLSIdleTimeout  = null)
         {
+
+            if (NTPOverTLSClientCertificateValidator is not null && !NTPOverTLSPort.HasValue)
+                throw new ArgumentException("A validator of NTP-over-TLS client certificates needs an NTP-over-TLS port to judge them on.",
+                                            nameof(NTPOverTLSClientCertificateValidator));
 
             // An SSH listener hands out cookies to whoever logs in, so who that may be is never a
             // default: there is no SSH server here that lets everybody in by accident.
@@ -659,6 +720,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             this.NTSKEOverTLS                 = NTSKEOverTLS;
             this.PlainNTP                     = PlainNTP;
             this.NTPv5                        = NTPv5;
+            this.NTPOverTLSPort               = NTPOverTLSPort;
+            this.NTPOverTLSIdleTimeout        = NTPOverTLSIdleTimeout        ?? TimeSpan.FromSeconds(30);
+            this.ntpOverTLSClientCertificateValidator = NTPOverTLSClientCertificateValidator;
             this.UDPPort                      = NTSPort                      ?? IPPort.NTP;
             this.ExternalURLs                 = ExternalURLs                 ?? [ URL.Parse($"udp://localhost:{this.UDPPort}") ];
             this.ownsDNSClient                = DNSClient is null;
@@ -682,6 +746,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             this.ntpRequestSemaphore          = new SemaphoreSlim(this.MaxConcurrentNTPRequests);
             this.ntskeConnectionSemaphore     = new SemaphoreSlim(this.MaxConcurrentNTSKEConnections);
             this.sshNtskeConnectionSemaphore  = new SemaphoreSlim(this.MaxConcurrentNTSKEConnections);
+            this.ntpOverTLSConnectionSemaphore= new SemaphoreSlim(this.MaxConcurrentNTSKEConnections);
             this.tlsIdentity                  = Identity(TLSCertificate,
                                                          TLSPrivateKey,
                                                          TLSServerSubjectName,
@@ -1947,7 +2012,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed) != 0, this);
 
-            if (udpSocket is not null || tcpSocket is not null)
+            if (udpSocket is not null || tcpSocket is not null || ntpOverTLSSocket is not null)
                 return;
 
             cts       = CancellationTokenSource.CreateLinkedTokenSource(CancellationToken);
@@ -2541,6 +2606,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             #endregion
 
+            #region Start NTP-over-TLS server
+
+            if (NTPOverTLSPort.HasValue)
+                StartNTPOverTLS(NTPOverTLSPort.Value);
+
+            #endregion
+
             #region Start NTS-KE SSH server
 
             // A special-purpose SSH server, section 8.1 of the white paper: the NTS-KE subsystem
@@ -2616,6 +2688,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             try { udpSocket?.Close(); } catch { }
             try { tcpSocket?.Close(); } catch { }
+            try { ntpOverTLSSocket?.Close(); } catch { }
+
+            foreach (var connection in ntpOverTLSConnections.Keys)
+            {
+                try { connection.Close(); } catch { }
+            }
 
             if (sshServer is not null)
             {
@@ -2625,7 +2703,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             var listenerTasks = new[] {
                                     udpLoopTask,
-                                    tcpLoopTask
+                                    tcpLoopTask,
+                                    ntpOverTLSLoopTask
                                 }.
                                 Where(task => task is not null).
                                 Select(task => task!).
@@ -2662,6 +2741,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             tcpSocket    = null;
             udpLoopTask  = null;
             tcpLoopTask  = null;
+            try { ntpOverTLSSocket?.Dispose(); } catch { }
+            ntpOverTLSSocket   = null;
+            ntpOverTLSLoopTask = null;
 
         }
 
@@ -2696,6 +2778,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 ntpRequestSemaphore.        Dispose();
                 ntskeConnectionSemaphore.   Dispose();
                 sshNtskeConnectionSemaphore.Dispose();
+                ntpOverTLSConnectionSemaphore.Dispose();
 
                 if (ownsDNSClient)
                     DNSClient.Dispose();
@@ -2719,6 +2802,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             ntpRequestSemaphore.        Dispose();
             ntskeConnectionSemaphore.   Dispose();
             sshNtskeConnectionSemaphore.Dispose();
+            ntpOverTLSConnectionSemaphore.Dispose();
 
             if (ownsDNSClient)
                 await DNSClient.DisposeAsync().ConfigureAwait(false);
@@ -3211,7 +3295,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 throw new ArgumentException("A TLS certificate chain cannot be provided without a leaf certificate and private key.",
                                             nameof(CertificateChain));
 
-            if (!NTSKEOverTLS)
+            if (!NTSKEOverTLS && !NTPOverTLSPort.HasValue)
                 return new (null, null, SubjectName, null, null, []);
 
             // Without a certificate of its own, the server shows one made self-signed here,
