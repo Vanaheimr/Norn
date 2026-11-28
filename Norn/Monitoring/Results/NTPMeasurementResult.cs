@@ -52,6 +52,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         public Boolean                  UniqueIdMatched               { get; init; }
 
         /// <summary>
+        /// How the answer was protected: by NTS - <see cref="NTSAuthenticationValid"/> then
+        /// says whether it authenticated -, by the TLS connection or the SSH channel it came
+        /// in, or not at all. What the endpoint was configured with, never negotiated.
+        /// </summary>
+        public NTPProtection            Protection                    { get; init; } = NTPProtection.NTS;
+
+
+        /// <summary>
         /// The version of NTP the server was asked in: 4, or 5 for NTPv5 of
         /// draft-ietf-ntp-ntpv5-10. In NTPv5 the timestamps are those of § 8, the offset and
         /// delay the corrected ones where the network corrected them, and there is no leap
@@ -305,6 +313,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                                  new JProperty("success",                      Success),
                                  new JProperty("ntsAuthValid",                 NTSAuthenticationValid),
                                  new JProperty("uniqueIdMatched",              UniqueIdMatched),
+                                 Protection != NTPProtection.NTS
+                                     ? new JProperty("protection",             Protection.ToString())
+                                     : null,
 
                                  new JProperty("t1_clientSend",                T1_ClientSend.     ToISO8601()),
                                  new JProperty("t2_serverReceive",             T2_ServerReceive.  ToISO8601()),

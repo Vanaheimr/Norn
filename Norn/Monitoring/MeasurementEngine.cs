@@ -152,8 +152,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         public Boolean ForgetKeyExchange(DomainName Hostname)
         {
 
+            // A server measured without NTS has no key exchange, but a channel and a
+            // negotiation of NTPv5 that were made under what has changed.
+            var withoutNTSForgotten = ForgetWithoutNTS(Hostname);
+
             if (!ntskeCache.TryRemove(Hostname, out var removed))
-                return false;
+                return withoutNTSForgotten;
 
             removed.NTSKEResponse?.Dispose();
             return true;
@@ -316,6 +320,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                                           Server.Hostname,
                                           CancellationToken
                                       );
+
+                // ──── Without NTS: over TLS, over SSH, or not protected at all ────
+                if (Server.Protection != NTPProtection.NTS)
+                    return await MeasureWithoutNTS(Server, RoundId, dnsResult, DNSClient, Preflight, totalStopwatch, CancellationToken).ConfigureAwait(false);
 
                 // ──── Step 2: NTS-KE (cached or fresh) ────
                 var ntskeFromCache  = true;
@@ -1773,6 +1781,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                     state.Dispose();
             }
 
+            DisposeWithoutNTS().AsTask().GetAwaiter().GetResult();
+
             GC.SuppressFinalize(this);
 
         }
@@ -1791,6 +1801,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                 if (ntskeCache.TryRemove(key, out var state))
                     await state.DisposeAsync().ConfigureAwait(false);
             }
+
+            await DisposeWithoutNTS().ConfigureAwait(false);
 
             GC.SuppressFinalize(this);
 

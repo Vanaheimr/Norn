@@ -194,13 +194,19 @@ namespace org.GraphDefined.Vanaheimr.Norn.TimeSync
         /// known to sign and does not is either not the server, or one whose
         /// signing keys somebody else has; and where it was asked, its signed
         /// word is what the time handed out on its strength is to rest on.
+        ///
+        /// A server configured for another protection than NTS has no NTS to
+        /// authenticate: NTP over TLS and NTP over SSH are protected by their
+        /// connection, which a measurement came through or did not, and NTP
+        /// without authentication was chosen as such by whoever configured it -
+        /// for a group no time of calibration law rests on.
         /// </remarks>
         public static Boolean CanBeTrusted(NTSMeasurementResult Result)
 
             => Result.Success                          &&
                Result.NTP is not null                  &&
                Result.NTP.Success                      &&
-               Result.NTP.NTSAuthenticationValid       &&
+               (Result.NTP.NTSAuthenticationValid || Result.NTP.Protection != NTPProtection.NTS) &&
                Result.SignedResponse is not { Verified: not true };
 
         #endregion

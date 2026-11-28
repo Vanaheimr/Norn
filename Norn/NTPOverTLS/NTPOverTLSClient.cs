@@ -130,6 +130,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPOverTLS
         private readonly AsymmetricKeyParameter?                                              clientPrivateKey;
         private readonly IReadOnlyList<BCX509Certificate>                                     clientCertificateChain;
         private readonly RemoteTLSServerCertificateValidationHandler<NTPOverTLS_TLSClient>?   remoteCertificateValidator;
+        private readonly IReadOnlyList<System.Net.IPAddress>                                  connectTo;
 
         #endregion
 
@@ -147,6 +148,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPOverTLS
         /// <param name="Timeout">How long the whole exchange may take (default: 5 seconds).</param>
         /// <param name="TimeProvider">The clock T1 and T4 are read from (default: the system's).</param>
         /// <param name="DataMinimization">Whether the request is minimized after Table 7.1 (default: yes).</param>
+        /// <param name="ConnectTo">
+        /// The addresses a server named by its name is connected to, in this order, as the
+        /// caller's own name servers resolved it - its name is still the one its certificate is
+        /// checked against. None has the platform resolve the name, which asks name servers
+        /// nobody chose.
+        /// </param>
         public NTPOverTLSClient(String                                                             Host,
                                 IPPort?                                                            Port                        = null,
                                 RemoteTLSServerCertificateValidationHandler<NTPOverTLS_TLSClient>? RemoteCertificateValidator  = null,
@@ -155,7 +162,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPOverTLS
                                 IEnumerable<BCX509Certificate>?                                    ClientCertificateChain      = null,
                                 TimeSpan?                                                          Timeout                     = null,
                                 TimeProvider?                                                      TimeProvider                = null,
-                                Boolean                                                            DataMinimization            = true)
+                                Boolean                                                            DataMinimization            = true,
+                                IEnumerable<System.Net.IPAddress>?                                 ConnectTo                   = null)
         {
 
             if (String.IsNullOrWhiteSpace(Host))
@@ -173,6 +181,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPOverTLS
             this.Timeout                     = Timeout      ?? TimeSpan.FromSeconds(5);
             this.TimeProvider                = TimeProvider ?? System.TimeProvider.System;
             this.DataMinimization            = DataMinimization;
+            this.connectTo                   = ConnectTo?.ToArray() ?? [];
 
         }
 
@@ -292,6 +301,34 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPOverTLS
 
                 if (literalAddress is not null)
                     await tcpClient.ConnectAsync(literalAddress, Port.ToUInt16(), timeoutCTS.Token).ConfigureAwait(false);
+
+                // The addresses the caller's name servers gave, one after the other.
+                else if (connectTo.Count > 0)
+                {
+
+                    Exception? last = null;
+
+                    foreach (var candidate in connectTo)
+                    {
+                        try
+                        {
+                            await tcpClient.ConnectAsync(candidate.AddressFamily == AddressFamily.InterNetwork ? candidate.MapToIPv6() : candidate,
+                                                         Port.ToUInt16(),
+                                                         timeoutCTS.Token).ConfigureAwait(false);
+                            last = null;
+                            break;
+                        }
+                        catch (SocketException e)
+                        {
+                            last = e;
+                        }
+                    }
+
+                    if (last is not null)
+                        throw last;
+
+                }
+
                 else
                     await tcpClient.ConnectAsync(Host, Port.ToUInt16(), timeoutCTS.Token).ConfigureAwait(false);
 

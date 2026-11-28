@@ -312,6 +312,44 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         [JsonIgnore]
         public Boolean                                          SSHConnectionIsShared  { get; set; }
 
+        /// <summary>
+        /// How the time of this server is protected: NTS, unless it is said to be
+        /// NTP over TLS, NTP over SSH or none at all.
+        /// </summary>
+        /// <remarks>
+        /// The Mode of an NTP client in the Secure Time Synchronization white paper,
+        /// without the version: NTS and NTSSSH are <see cref="NTPProtection.NTS"/>,
+        /// the latter with <see cref="ConnectOverSSH"/> for its key exchange. In the
+        /// other modes there is no key exchange, no cookie and no master key:
+        /// <list type="bullet">
+        /// <item><see cref="NTPProtection.NTPOverTLS"/> asks at <see cref="NTPPort"/>,
+        /// its certificate judged by <see cref="NTPOverTLSCertificateValidator"/>: NTPv4 as
+        /// chapter 7 of BSI TR-03109-5 has it, NTPv5 behind its length (section 6.1 of the
+        /// white paper "Secure Time Synchronization").</item>
+        /// <item><see cref="NTPProtection.NTPOverSSH"/> asks in a channel of the
+        /// connection <see cref="ConnectOverSSH"/> hands out, kept open from one round
+        /// to the next (section 10.5 of "NTS Key Establishment over SSH").</item>
+        /// <item><see cref="NTPProtection.None"/> asks at <see cref="NTPPort"/> over UDP.</item>
+        /// </list>
+        /// Over TLS, SSH and UDP <see cref="NTPVersions"/> is NTPv4, NTPv5, or NTPv4
+        /// offering NTPv5 (section 12 of draft-ietf-ntp-ntpv5-10) where it names both,
+        /// NTPv5 first. Signed responses, the probe of NTPv5 and everything of the
+        /// key exchange do not apply. A server whose way to its time fails is one
+        /// that did not answer: it is never asked another way instead.
+        /// </remarks>
+        public NTPProtection                                    Protection             { get; set; }
+
+        /// <summary>
+        /// What decides whether the certificate of a server of NTP over TLS is
+        /// believed, or none for the platform's chain and the name connected to.
+        /// </summary>
+        /// <remarks>
+        /// Never written into a configuration file, as RemoteCertificateValidator is not.
+        /// </remarks>
+        [JsonIgnore]
+        public RemoteTLSServerCertificateValidationHandler<NTPOverTLS.NTPOverTLS_TLSClient>?  NTPOverTLSCertificateValidator  { get; set; }
+
+
         public NTSServerEndpoint(DomainName                                                     Hostname,
                                  IPPort?                                                        NTSKEPort                    = null,
                                  IPPort?                                                        NTPPort                      = null,
@@ -327,7 +365,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                                  DomainName?                                                    NTSKEHost                    = null,
                                  Boolean                                                        SignedResponses              = false,
                                  Boolean                                                        ProbeNTPv5                   = false,
-                                 IEnumerable<Byte>?                                             NTPVersions                  = null)
+                                 IEnumerable<Byte>?                                             NTPVersions                  = null,
+                                 NTPProtection                                                  Protection                   = NTPProtection.NTS)
         {
 
             this.Hostname                    = Hostname;
@@ -346,6 +385,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
             this.SignedResponses             = SignedResponses;
             this.ProbeNTPv5                  = ProbeNTPv5;
             this.NTPVersions                 = NTPVersions?.ToArray() ?? [ 4 ];
+            this.Protection                  = Protection;
 
         }
 
