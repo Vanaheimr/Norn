@@ -250,6 +250,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         }
 
+        /// <summary>
+        /// Whether the key exchange agreed to NTPv4, alone or beside NTPv5. A response without
+        /// a Next Protocol Negotiation record is read as one of NTPv4, as RFC 8915 knew no other.
+        /// </summary>
+        private static Boolean AgreesToNTPv4(NTSKE_Response Response)
+        {
+            var protocols = Response.NextProtocols;
+            return protocols.Count == 0 || protocols.Contains((UInt16) 0);
+        }
+
         #endregion
 
         #region Constructor(s)
@@ -1995,6 +2005,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                            CookiePoolDiagnostics:      CookiePoolDiagnostics
                        );
 
+            // RFC 8915 § 4.1.2: the client proceeds with what the key exchange agreed to. One
+            // that agreed to NTPv5 alone left keys and cookies for NTPv5, and its cookies go into
+            // no NTPv4 request - even where the keys are the same, as they are under the draft.
+            if (NTSKEResponse is not null && !AgreesToNTPv4(NTSKEResponse))
+                return NTSQueryResult.FailedWithPacket(
+                           $"The key exchange negotiated next protocol {NTSKEResponse.NextProtocol}, not NTPv4 (0)!",
+                           NTSQueryErrorCategory.NTSKE,
+                           RemainingCookiesAfterQuery: AvailableCookieCount,
+                           CookiePoolDiagnostics:      CookiePoolDiagnostics
+                       );
+
             ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed) != 0, this);
 
             var timeout = Timeout ?? this.Timeout ?? DefaultTimeout;
@@ -2058,6 +2079,22 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     // hands the server the new one, and every packet would be NAKed — which is worse
                     // than the failure this just recovered from, because it looks like an attack.
                     NTSKEResponse = activePoolResponse ?? renegotiated;
+
+                    // A renewed key exchange that agreed to NTPv5 alone left cookies and keys
+                    // for NTPv5, which an NTPv4 request cannot use.
+                    if (!AgreesToNTPv4(NTSKEResponse))
+                    {
+
+                        ReturnUnusedCookie(activePoolResponse, cookie);
+
+                        return NTSQueryResult.FailedWithPacket(
+                                   $"The renewed key exchange negotiated next protocol {NTSKEResponse.NextProtocol}, not NTPv4 (0)!",
+                                   NTSQueryErrorCategory.NTSKE,
+                                   RemainingCookiesAfterQuery: AvailableCookieCount,
+                                   CookiePoolDiagnostics:      CookiePoolDiagnostics
+                               );
+
+                    }
 
                 }
 
