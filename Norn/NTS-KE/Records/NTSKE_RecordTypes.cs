@@ -42,9 +42,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                    6 => "NTPv4 Server Negotiation (ASCII address?)",
                    7 => "NTPv4 Port Negotiation",
 
-               16384 => "NTS Request PublicKey",
-               16385 => "NTS PublicKey",
-               16386 => "SSH Key Binding",
+              0x4E00 => "NTS Request PublicKey",
+              0x4E01 => "NTS PublicKey",
+              0x4E02 => "SSH Key Binding",
 
                 1024 => "Compliant AES-128-GCM-SIV Exporter Context",
 
@@ -105,26 +105,30 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         // Vendor extensions, in IANA's Private or Experimental Use range.
         //
         // 16384 to 32767 is the only part of the registry an implementation may take values from
-        // without asking. These two used to sit at 32 and 33, which is inside 0-1023 — the range
-        // reserved for IETF Review, where an implementation has no claim at all and where the
-        // pool draft has already been assigned 8 to 14. Had IANA reached 32, a Norn server would
-        // have read somebody else's record as a request for its public keys.
+        // without asking. These used to sit at 32 and 33, inside 0-1023 - the range reserved for
+        // IETF Review, where an implementation has no claim at all and where the pool draft has
+        // since been assigned 8 to 14 - and then at 0x4000 to 0x4002, the very first values of
+        // the private range and so the ones everybody else takes first: draft-ietf-ntp-ntpv5-10
+        // § 11 has every client of the draft send its Draft Identification in record 0x4001, and
+        // draft-venhoek-nts-pool used 0x4000 to 0x4005 before it was renumbered.
         //
-        // Collisions are possible here by construction: nothing coordinates the private range.
-        // They matter only between two implementations that both take values from it and then
-        // talk to each other, which for a vendor extension means two Norns — and both records go
-        // out non-critical, so a peer that has never heard of them ignores them either way.
+        // 0x4E00 ('N') to 0x4E02 is used by nothing known: not the NTPv5 draft, not the pool
+        // drafts, not ntpd-rs, not chrony, and IANA has nothing in the range. Collisions are still
+        // possible by construction, nothing coordinates the private range; they matter only
+        // between two implementations that both take values from it and then talk to each other.
+        // The two public-key records go out non-critical, so a peer that has never heard of them
+        // ignores them either way.
 
 
         /// <summary>
         /// NTS Request Public Key — a Norn extension, not an RFC 8915 record.
         /// </summary>
-        NTSRequestPublicKey        = 16384,
+        NTSRequestPublicKey        = 0x4E00,
 
         /// <summary>
         /// NTS Public Key — a Norn extension, not an RFC 8915 record.
         /// </summary>
-        NTSPublicKey               = 16385,
+        NTSPublicKey               = 0x4E01,
 
         /// <summary>
         /// SSH Key Binding — NTS-KE over SSH, not an RFC 8915 record: where the keys come from
@@ -142,7 +146,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// TLS on port 4460 must refuse it rather than hand out keys the client cannot derive.
         /// </para>
         /// </remarks>
-        SSHKeyBinding              = 16386,
+        SSHKeyBinding              = 0x4E02,
 
 
         /// <summary>

@@ -268,9 +268,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
             var bytes = NTSKE_Record.SSHKeyBindingRequest(SSHKeyBindingMethods.Exporter,
                                                           SSHKeyBindingMethods.Transport).ToByteArray();
 
-            // Critical bit and type 16386, eight octets of body: each method id with the data
+            // Critical bit and type 0x4E02, eight octets of body: each method id with the data
             // length 0 (Appendix A.2 of the white paper).
-            Assert.That(bytes.ToHexString(), Is.EqualTo("c002" + "0008" + "0001" + "0000" + "0002" + "0000"));
+            Assert.That(bytes.ToHexString(), Is.EqualTo("ce02" + "0008" + "0001" + "0000" + "0002" + "0000"));
 
             Assert.That(NTSKE_Record.TryParse(bytes, out var records, out var errorResponse), Is.True, errorResponse);
 
@@ -291,7 +291,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
             var bytes = NTSKE_Record.SSHKeyBindingResponse(SSHKeyBindingMethods.Transport, testSecret).ToByteArray();
 
-            Assert.That(bytes.ToHexString(), Is.EqualTo("c002" + "0022" + "0002" + testSecret.ToHexString()));
+            Assert.That(bytes.ToHexString(), Is.EqualTo("ce02" + "0022" + "0002" + testSecret.ToHexString()));
 
             Assert.That(NTSKE_Record.TryParse(bytes, out var records, out var errorResponse), Is.True, errorResponse);
 
@@ -309,7 +309,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
             // The server picks the first method it supports, so an unknown one before it is no
             // reason to refuse the list - and its data, which the length says, is skipped, not read
-            // as method ids (Appendix A.2 of the white paper: c002 000a 8001 0002 abcd 0002 0000).
+            // as method ids (Appendix A.2 of the white paper, under the type 0x4E02 of now: ce02 000a 8001 0002 abcd 0002 0000).
             var record = new SSHKeyBinding(true, [ 0x80, 0x01, 0x00, 0x02, 0xab, 0xcd, 0x00, 0x02, 0x00, 0x00 ]);
 
             Assert.That(record.TryGetOfferedMethods(out var methods, out var methodError), Is.True, methodError);
@@ -377,7 +377,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
             var bytes = NTSKE_Record.SSHKeyBindingResponse(SSHKeyBindingMethods.Exporter, testExporterNonce).ToByteArray();
 
             // Appendix B of the specification: T 0022 0001 <exporter_nonce, 32 octets>.
-            Assert.That(bytes.ToHexString(), Is.EqualTo("c002" + "0022" + "0001" + testExporterNonce.ToHexString()));
+            Assert.That(bytes.ToHexString(), Is.EqualTo("ce02" + "0022" + "0001" + testExporterNonce.ToHexString()));
 
             Assert.That(NTSKE_Record.TryParse(bytes, out var records, out var errorResponse), Is.True, errorResponse);
 

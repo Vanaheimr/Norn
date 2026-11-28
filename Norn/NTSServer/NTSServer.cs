@@ -935,15 +935,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                        );
 
             // § 4.1.3: "Clients MUST NOT include Error records in their request", § 4.1.4
-            // says the same of Warning records, and § 4.1.6 of cookies.
+            // says the same of Warning records, § 4.1.6 of cookies, and NTSPublicKey is
+            // likewise server-to-client only.
             //
-            // Not NTSPublicKey, though it is server-to-client only: its type, 16385 in the private
-            // range, is 0x4001, which draft-ietf-ntp-ntpv5-10 § 11 has a client of the draft send
-            // in every request to name its draft. In a request the record is that, whatever the
-            // server makes of it, and a client of an NTPv5 draft must not be refused for it.
+            // Record 0x4001 is not among them: draft-ietf-ntp-ntpv5-10 § 11 has every client of
+            // the draft name its draft in it, and NTSPublicKey moved to 0x4E01 to make room.
             var serversOnly = records.FirstOrDefault(record => record.Type is NTSKE_RecordTypes.Error
                                                                            or NTSKE_RecordTypes.Warning
-                                                                           or NTSKE_RecordTypes.NewCookieForNTPv4);
+                                                                           or NTSKE_RecordTypes.NewCookieForNTPv4
+                                                                           or NTSKE_RecordTypes.NTSPublicKey);
 
             if (serversOnly is not null)
                 return NTSKENegotiation.Refuse(
@@ -1158,9 +1158,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             // Everything below concerns an NTPv4 or NTPv5 association. Without one there is
             // nothing to point the client at and nothing a cookie could authenticate.
             //
-            // The Draft Identification of an NTPv5 client is not echoed: record 0x4001 is this
-            // server's NTSPublicKey record in a response, and a client of Norn would read the
-            // name of the draft as a public key.
+            // The Draft Identification of an NTPv5 client is not echoed: § 11 has the client name
+            // its draft, not the server, which says that it supports it by agreeing to NTPv5.
             if (!Negotiation.CookiesNegotiated)
             {
                 ntsKERecords.Add(NTSKE_Record.EndOfMessage);
