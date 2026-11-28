@@ -137,6 +137,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.Timings
         /// <summary>The server's marks.</summary>
         public static readonly MarkSet S = new();
 
+        /// <summary>
+        /// The index of the request a worker of the server answers, handed on from the loop
+        /// that received it to AnswerNTPRequestAsync. Null for NTP over SSH, which is not measured.
+        /// </summary>
+        public static readonly AsyncLocal<Int32?> SRequest = new();
+
         /// <summary>The counter-experiment: one UDP socket for all queries, not one for each.</summary>
         public static Boolean  KeepSocket;
 

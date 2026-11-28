@@ -63,7 +63,7 @@ public sealed class InsertMarks : Microsoft.Build.Utilities.Task
                     "var markedQuery = " + Marks + ".C.Begin(); " + C(0)),
 
         // 1: a cookie taken, the placeholders counted
-        Edit.Before("var remoteEndPoint     = await NTPRemoteEndPointResolver.ResolveAsync(",
+        Edit.Before("var remoteEndPoint     = OverSSH is not null ? OverSSH.RemoteEndPoint : await NTPRemoteEndPointResolver.ResolveAsync(",
                     C(1)),
 
         // 2: the remote end point resolved
@@ -71,7 +71,7 @@ public sealed class InsertMarks : Microsoft.Build.Utilities.Task
                     C(2)),
 
         // 3: the nonces drawn, the receive buffer rented, the socket made
-        Edit.Before("udpSocket.Bind(",
+        Edit.Before("udpSocket?.Bind(",
                     C(3)),
 
         // 4: the socket bound
@@ -91,7 +91,7 @@ public sealed class InsertMarks : Microsoft.Build.Utilities.Task
                     C(7)),
 
         // 8: the response is here
-        Edit.Before("var destinationTimestamp1       = NTPPacket.GetCurrentNTPTimestamp(TimeProvider);",
+        Edit.Before("var destinationTime1            = TimeProvider.GetUtcNow().UtcDateTime;",
                     C(8)),
 
         // 9: parsed and opened
@@ -129,30 +129,30 @@ public sealed class InsertMarks : Microsoft.Build.Utilities.Task
 
         // The counter-experiment --keep-socket: one socket for all queries.
         Edit.Replace("using (var receiveBuffer = new ReceiveBuffer())\n" +
-                     "using (var udpSocket     = new Socket(\n" +
+                     "using (var udpSocket     = OverSSH is not null ? null : new Socket(\n" +
                      "destination.AddressFamily,\n" +
                      "SocketType.Dgram,\n" +
                      "ProtocolType.Udp\n" +
                      "))",
 
-                     "var udpSocket = " + Marks + ".KeptSocket ?? new Socket(\n" +
+                     "var udpSocket = OverSSH is not null ? null : " + Marks + ".KeptSocket ?? new Socket(\n" +
                      "                    destination.AddressFamily,\n" +
                      "                    SocketType.Dgram,\n" +
                      "                    ProtocolType.Udp\n" +
                      "                );\n" +
-                     "if (" + Marks + ".KeepSocket)\n" +
+                     "if (" + Marks + ".KeepSocket && udpSocket is not null)\n" +
                      "    " + Marks + ".KeptSocket = udpSocket;\n" +
                      "using (var receiveBuffer = new ReceiveBuffer())\n" +
                      "using (" + Marks + ".KeepSocket ? null : udpSocket)"),
 
-        Edit.Replace("udpSocket.Bind(",
-                     "if (!udpSocket.IsBound) udpSocket.Bind("),
+        Edit.Replace("udpSocket?.Bind(",
+                     "if (udpSocket is not null && !udpSocket.IsBound) udpSocket.Bind("),
 
 
         // The counter-experiment --t1-after-the-send: offset and delay computed with the
         // clock as read after the send, in the basic mode as in the interleaved one.
-        Edit.Replace("RequestTransmitTimestamp:   interleaved is not null ? actualRequestTransmit : null))",
-                     "RequestTransmitTimestamp:   interleaved is not null || " + Marks + ".T1AfterTheSend ? actualRequestTransmit : null))",
+        Edit.Replace("RequestTransmitTimestamp:   interleaved is not null ? actualRequestTransmit : null,",
+                     "RequestTransmitTimestamp:   interleaved is not null || " + Marks + ".T1AfterTheSend ? actualRequestTransmit : null,",
                      Times: 2)
 
     };
@@ -164,10 +164,17 @@ public sealed class InsertMarks : Microsoft.Build.Utilities.Task
     private static String S(Int32 Number)
         => Marks + ".S.Mark(markedRequest, " + Number + ");";
 
+    // Marks 0 and 1 are in the loop that receives the datagrams, 2 in the worker it starts,
+    // and the others in AnswerNTPRequestAsync, which NTP over SSH calls as well: the worker
+    // hands the index of its request on in Marks.SRequest, and over SSH there is none (-1).
     private static readonly Edit[] server = new[] {
 
         // 0: the datagram is here
-        Edit.Before("var receivedAt      = NTPPacket.GetCurrentNTPTimestamp(TimeProvider);",
+        Edit.Before("var receivedAtTime  = TimeProvider.GetUtcNow().UtcDateTime;\n" +
+                    "var receivedAt      = NTPPacket.GetCurrentNTPTimestamp(receivedAtTime);\n" +
+                    "var receivedAtTicks = TimeProvider.GetTimestamp();\n" +
+                    "\n" +
+                    "System.Threading.Interlocked.Increment(ref ntpRequestsReceived);",
                     "var markedRequest = " + Marks + ".S.Begin(); " + S(0)),
 
         // 1: past the access list, the rate limit and the semaphore, the datagram copied
@@ -177,16 +184,18 @@ public sealed class InsertMarks : Microsoft.Build.Utilities.Task
                     "{\n" +
                     "\n" +
                     "if (activeSocket is null)\n" +
-                    "return;\n" +
-                    "\n" +
-                    "if (NTPRequest.TryParse(datagram,",
+                    "return;",
                     S(1)),
 
         // 2: the worker runs
-        Edit.Before("if (NTPRequest.TryParse(datagram,",
-                    S(2)),
+        Edit.Before("await AnswerNTPRequestAsync(datagram,",
+                    S(2) + " " + Marks + ".SRequest.Value = markedRequest;"),
 
         // 3: the request parsed, the cookie unsealed, the request opened
+        Edit.Replace("if (NTPRequest.TryParse(Datagram,",
+                     "var markedRequest = " + Marks + ".SRequest.Value ?? -1;\n" +
+                     "if (NTPRequest.TryParse(Datagram,"),
+
         Edit.Before("var isNtsRequest       = requestPacket.Extensions.Any(",
                     S(3)),
 
@@ -195,14 +204,12 @@ public sealed class InsertMarks : Microsoft.Build.Utilities.Task
                     S(4)),
 
         // 5: the response built and sealed; 6: serialised, about to send
-        Edit.Replace("await activeSocket.SendToAsync(\n" +
-                     "new ArraySegment<Byte>(responsePacket1.ToByteArray()),",
+        Edit.Replace("await Send(responsePacket1.ToByteArray(), CancellationToken).ConfigureAwait(false);",
 
                      S(5) + "\n" +
                      "var markedResponse = responsePacket1.ToByteArray();\n" +
                      S(6) + "\n" +
-                     "await activeSocket.SendToAsync(\n" +
-                     "new ArraySegment<Byte>(markedResponse),"),
+                     "await Send(markedResponse, CancellationToken).ConfigureAwait(false);"),
 
         // 7: sent
         Edit.Before("if (!isNtsFailure)\n" +
