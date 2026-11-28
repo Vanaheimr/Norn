@@ -104,6 +104,29 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests
 
         #endregion
 
+        #region APortRefusedWithAccessDeniedIsTakenToo()
+
+        /// <summary>
+        /// What Windows says of a port held for exclusive use by somebody else - AccessDenied,
+        /// not AddressAlreadyInUse - is a port taken as well, wrapped as deep as it may be;
+        /// another socket error is not.
+        /// </summary>
+        [Test]
+        public void APortRefusedWithAccessDeniedIsTakenToo()
+        {
+
+            var accessDenied = new SocketException((Int32) SocketError.AccessDenied);
+
+            Assert.Multiple(() => {
+                Assert.That(FreePorts.IsAPortTaken(accessDenied),                                                     Is.True);
+                Assert.That(FreePorts.IsAPortTaken(new AggregateException(new InvalidOperationException("start", accessDenied))), Is.True);
+                Assert.That(FreePorts.IsAPortTaken(new SocketException((Int32) SocketError.ConnectionRefused)),       Is.False);
+            });
+
+        }
+
+        #endregion
+
         #region AnythingElseIsNotTriedAgain()
 
         /// <summary>

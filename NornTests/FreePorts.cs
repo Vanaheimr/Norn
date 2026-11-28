@@ -34,9 +34,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests
     /// <remarks>
     /// A port found free is let go again before the server binds it, and on a machine running
     /// other test suites at the same time somebody else may take it in between: a test then
-    /// failed with AddressAlreadyInUse, and was green alone. <see cref="Start"/> makes the
-    /// server again, on ports found free anew, where - and only where - a port it was to bind
-    /// was taken. Any other reason not to start is the test's.
+    /// failed with AddressAlreadyInUse - on Windows also with AccessDenied -, and was green
+    /// alone. <see cref="Start"/> makes the server again, on ports found free anew, where -
+    /// and only where - a port it was to bind was taken. Any other reason not to start is
+    /// the test's.
     /// </remarks>
     internal static class FreePorts
     {
@@ -117,13 +118,20 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests
         /// Whether the given exception, or one it was thrown for, says that a port to be bound
         /// was taken - however many layers between the socket and the server wrapped it.
         /// </summary>
+        /// <remarks>
+        /// Windows says AccessDenied (WSAEACCES, 10013) rather than AddressAlreadyInUse where
+        /// the port is held by a socket bound for exclusive use - as .NET binds one there - or
+        /// lies in a range the system has set aside meanwhile: a port found free and taken
+        /// before it was bound, too.
+        /// </remarks>
         public static Boolean IsAPortTaken(Exception? Exception)
         {
 
             for (var e = Exception; e is not null; e = e.InnerException)
             {
 
-                if (e is SocketException { SocketErrorCode: SocketError.AddressAlreadyInUse })
+                if (e is SocketException { SocketErrorCode: SocketError.AddressAlreadyInUse or
+                                                            SocketError.AccessDenied })
                     return true;
 
                 if (e is AggregateException aggregate && aggregate.InnerExceptions.Any(IsAPortTaken))
