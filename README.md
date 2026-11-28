@@ -166,6 +166,7 @@ not what a server can carry.
 - [rfc7822 - Network Time Protocol Version 4 (NTPv4) Extension Fields](https://datatracker.ietf.org/doc/html/rfc7822)
 - [rfc8305 - Happy Eyeballs Version 2: Better Connectivity Using Concurrency](https://datatracker.ietf.org/doc/html/rfc8305) - the Resolution Delay of its section 3
 - [rfc8915 - Network Time Security for the Network Time Protocol](https://datatracker.ietf.org/doc/html/rfc8915)
+- [draft-ietf-ntp-ntpv5-10 - Network Time Protocol Version 5](https://datatracker.ietf.org/doc/draft-ietf-ntp-ntpv5/) - how it differs from NTPv4, and what Norn implements of it: [Norn/NTPv5/README.md](Norn/NTPv5/README.md)
 
 
 ### Project Security Policy
