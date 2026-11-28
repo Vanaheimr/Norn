@@ -63,8 +63,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
             // Invoke passes every parameter positionally — optional ones are not filled in — so
             // the list has to match the signature exactly, in order. The three nulls are, in
             // order, the transmit timestamp, and after it the RFC 9769 originate and receive
-            // timestamps; the trailing null is the TimeProvider, meaning "read the ambient clock".
-            var requestPacket  = methodInfo?.Invoke(null, [ ntsKEResponse, cookie, uniqueId, plaintext, SignedResponseMode.None, (UInt16) 0, null, null, null, (UInt16) 2, (UInt16) cookie.Length, null ]) as NTPRequest;
+            // timestamps; the 0 before the trailing null is the reference timestamp, which carries
+            // the NTPv5 negotiation magic only where it is asked for; the trailing null is the
+            // TimeProvider, meaning "read the ambient clock".
+            var requestPacket  = methodInfo?.Invoke(null, [ ntsKEResponse, cookie, uniqueId, plaintext, SignedResponseMode.None, (UInt16) 0, null, null, null, (UInt16) 2, (UInt16) cookie.Length, 0UL, null ]) as NTPRequest;
 
             var isValid        = NTPRequest.TryParse(requestPacket?.ToByteArray() ?? [], out var ntpPacket, out var errorRequest, ntsKEResponse.C2SKey);
             var uniqueId2      = (ntpPacket?.Extensions.FirstOrDefault(extension => extension.Type == ExtensionTypes.UniqueIdentifier) as UniqueIdentifierExtension)?.Value;

@@ -42,7 +42,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
     /// The Network Time Security (NTS) client.
     /// </summary>
     /// 
-    public class NTSClient : IDisposable,
+    public partial class NTSClient : IDisposable,
                              IAsyncDisposable
     {
 
@@ -427,6 +427,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                   UInt64?             ReceiveTimestamp        = null,
                                                   UInt16              CookiePlaceholderCount  = 0,
                                                   UInt16              CookiePlaceholderLength = 100,
+                                                  UInt64              ReferenceTimestamp      = 0,
                                                   TimeProvider?       TimeProvider            = null)
         {
 
@@ -435,6 +436,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             // given clock rather than the ambient one.
             var ntpPacket1  = new NTPRequest(
                                   OriginateTimestamp: OriginateTimestamp,
+                                  ReferenceTimestamp: ReferenceTimestamp,
                                   ReceiveTimestamp:   ReceiveTimestamp,
                                   TransmitTimestamp:  TransmitTimestamp
                                                           ?? NTPPacket.GetCurrentNTPTimestamp(TimeProvider ?? System.TimeProvider.System)
@@ -1863,11 +1865,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// pointing it at a server holding different master keys wastes it and
         /// reports the resulting NAK against the wrong machine.
         /// </remarks>
+        /// <param name="AdvertiseNTPv5">
+        /// Put the negotiation magic of draft-ietf-ntp-ntpv5-10 § 12 in the reference timestamp
+        /// of a plain request, so that a server supporting NTPv5 echoes it; see
+        /// <see cref="NTSQueryResult.ServerAdvertisesNTPv5"/>. Ignored under NTS, where the key
+        /// exchange negotiates the version.
+        /// </param>
         public async Task<NTSQueryResult> QueryTime(TimeSpan?           Timeout               = null,
                                                     NTSKE_Response?     NTSKEResponse         = null,
                                                     SignedResponseMode  SignedResponseMode    = SignedResponseMode.None,
                                                     UInt16              SignedResponseKeyId   = NTSRequestSignedResponseExtension.AnyKey,
                                                     String?             NTPServer             = null,
+                                                    Boolean             AdvertiseNTPv5        = false,
                                                     CancellationToken   CancellationToken     = default)
         {
 
@@ -2122,6 +2131,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                  ReceiveTimestamp:        requestReceive,
                                                  CookiePlaceholderCount:  cookiePlaceholderCount,
                                                  CookiePlaceholderLength: (UInt16) Math.Min(UInt16.MaxValue, Math.Max(0, cookie?.Length ?? 100)),
+                                                 ReferenceTimestamp:      AdvertiseNTPv5 && NTSKEResponse is null ? NTPv5Draft.NegotiationMagic : 0UL,
                                                  TimeProvider:            TimeProvider
                                              );
 

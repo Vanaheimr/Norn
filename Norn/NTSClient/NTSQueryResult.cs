@@ -110,6 +110,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         }
 
         /// <summary>
+        /// Whether the server echoed the NTPv5 negotiation magic of draft-ietf-ntp-ntpv5-10
+        /// § 12 that the request carried in its reference timestamp: it supports NTPv5.
+        /// </summary>
+        public Boolean                      ServerAdvertisesNTPv5
+
+            => Success &&
+               Response?.Request?.ReferenceTimestamp == NTPv5.NTPv5Draft.NegotiationMagic &&
+               Response.ReferenceTimestamp            == NTPv5.NTPv5Draft.NegotiationMagic;
+
+        /// <summary>
         /// Whether the response carried an NTS authenticator that verified under the S2C key.
         /// </summary>
         /// <remarks>

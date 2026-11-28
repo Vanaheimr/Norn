@@ -366,6 +366,98 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #endregion
 
+        #region ApplyNTPv5Poll(Poll, Now, Trust)
+
+        /// <summary>
+        /// The largest minimum poll exponent an unauthenticated NTPv5 response is followed in,
+        /// the example of draft-ietf-ntp-ntpv5-10 § 9: 2^15 seconds, about nine hours.
+        /// </summary>
+        public const SByte MaximumNTPv5PollUnauthenticated = 15;
+
+        /// <summary>
+        /// The largest minimum poll exponent an authenticated NTPv5 response is followed in,
+        /// the example of § 9: 2^18 seconds, about three days.
+        /// </summary>
+        public const SByte MaximumNTPv5PollAuthenticated   = 18;
+
+        /// <summary>
+        /// The poll field of a valid NTPv5 response, which supersedes the RATE and DENY kisses
+        /// of NTPv4 (§ 6): the minimum polling interval the server allows, or 127 where it
+        /// "does not want to hear from the client again". Returns whether the server may
+        /// still be queried at all.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// § 9: the client "SHOULD respect the minimum allowed polling interval provided by
+        /// the server in the poll field of the last valid response, but only up to a reasonable
+        /// maximum value", 2^15 without authentication and 2^18 with it. The interval counts
+        /// from now, the time of the response, and only lengthens the wait: a server allowing
+        /// a shorter one than a RATE kiss imposed does not lift it.
+        /// </para>
+        /// <para>
+        /// 127 is taken as a DENY kiss would be, by <paramref name="Trust"/>: from a plain
+        /// association or an authenticated response it ends the association; an NTS
+        /// association that received it unauthenticated pauses for
+        /// <see cref="UnauthenticatedDenyPause"/>.
+        /// </para>
+        /// </remarks>
+        public Boolean ApplyNTPv5Poll(SByte           Poll,
+                                      DateTimeOffset  Now,
+                                      NTPKissTrust    Trust   = NTPKissTrust.Unprotected)
+        {
+
+            lock (padlock)
+            {
+
+                if (Poll == NTPv5.NTPv5Packet.PollGoAway)
+                {
+
+                    if (Trust == NTPKissTrust.Unauthenticated)
+                    {
+                        if (UnauthenticatedDenyPause > TimeSpan.Zero)
+                            nextQueryNotBefore = Now + UnauthenticatedDenyPause;
+                        return true;
+                    }
+
+                    demobilized         = true;
+                    nextQueryNotBefore  = null;
+                    return false;
+
+                }
+
+                ntpv5MinimumPoll = Math.Min(Poll, Trust == NTPKissTrust.Authenticated
+                                                      ? MaximumNTPv5PollAuthenticated
+                                                      : MaximumNTPv5PollUnauthenticated);
+
+                if (ntpv5MinimumPoll > 0)
+                {
+
+                    var notBefore = Now + TimeSpan.FromSeconds(Math.Pow(2, ntpv5MinimumPoll.Value));
+
+                    if (nextQueryNotBefore is null || notBefore > nextQueryNotBefore.Value)
+                        nextQueryNotBefore = notBefore;
+
+                }
+
+                return !demobilized;
+
+            }
+
+        }
+
+        private SByte? ntpv5MinimumPoll;
+
+        /// <summary>
+        /// The minimum poll exponent of the last valid NTPv5 response, capped as § 9 has it;
+        /// null before the first.
+        /// </summary>
+        public SByte? NTPv5MinimumPoll
+        {
+            get { lock (padlock) return ntpv5MinimumPoll; }
+        }
+
+        #endregion
+
         #region Reset()
 
         /// <summary>
@@ -382,6 +474,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 demobilized         = false;
                 nextQueryNotBefore  = null;
                 lastKiss            = null;
+                ntpv5MinimumPoll    = null;
 
             }
 
