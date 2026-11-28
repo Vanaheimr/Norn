@@ -188,8 +188,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             }
 
+            // RFC 8915 § 4.1.2: the protocols of the response "MUST comprise a subset of those
+            // listed in the request", and "the client MAY proceed with one or more of them" - so
+            // a server that agrees to NTPv5 and NTPv4 at once, as chrony-ntp5 does, has said
+            // nothing wrong. What it may not do is agree to one this client did not offer.
             if (nextProtocolRecords.Count != 1 ||
-                !(IsNTPv4NextProtocol(nextProtocolRecords[0]) || (AcceptNTPv5 && IsNTPv5NextProtocol(nextProtocolRecords[0]))))
+                !AreOfferedProtocols(nextProtocolRecords[0], AcceptNTPv5))
             {
 
                 ErrorMessage   = "NTS-KE response negotiated an unsupported next protocol.";
@@ -371,26 +375,35 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #endregion
 
-        #region (private static) IsNTPv4NextProtocol(Record)
 
-        private static Boolean IsNTPv4NextProtocol(NTSKE_Record Record)
-
-            => Record.Body.Length == 2 &&
-               Record.Body[0]    == 0 &&
-               Record.Body[1]    == 0;
-
-        #endregion
-
-        #region (private static) IsNTPv5NextProtocol(Record)
+        #region (private static) AreOfferedProtocols(Record, AcceptNTPv5)
 
         /// <summary>
-        /// Whether the server agreed to NTPv5 under the draft's protocol ID - which is a
-        /// supported protocol only for a client that offered it, see <c>AcceptNTPv5</c>.
+        /// Whether the server agreed to at least one protocol, and to none this client did not
+        /// offer: NTPv4, and NTPv5 under the draft's protocol ID where the client offered it
+        /// (see <c>AcceptNTPv5</c>).
         /// </summary>
-        private static Boolean IsNTPv5NextProtocol(NTSKE_Record Record)
+        private static Boolean AreOfferedProtocols(NTSKE_Record  Record,
+                                                   Boolean       AcceptNTPv5)
+        {
 
-            => Record.Body.Length == 2 &&
-               ((Record.Body[0] << 8) | Record.Body[1]) == NTPv5.NTPv5Draft.NTSNextProtocolId;
+            if (Record.Body.Length < 2 || Record.Body.Length % 2 != 0)
+                return false;
+
+            for (var i = 0; i < Record.Body.Length; i += 2)
+            {
+
+                var protocol = (UInt16) ((Record.Body[i] << 8) | Record.Body[i + 1]);
+
+                if (protocol != 0 &&
+                    !(AcceptNTPv5 && protocol == NTPv5.NTPv5Draft.NTSNextProtocolId))
+                    return false;
+
+            }
+
+            return true;
+
+        }
 
         #endregion
 

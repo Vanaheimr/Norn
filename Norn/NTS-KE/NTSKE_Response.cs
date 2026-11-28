@@ -148,7 +148,29 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// protocol ID. Read from the records, as <see cref="AEADAlgorithm"/> is, and 0 where
         /// there is none to read.
         /// </summary>
+        /// <remarks>
+        /// RFC 8915 § 4.1.2 lets a server agree to more than one, and the client "MAY proceed
+        /// with one or more of them". Where NTPv5 is among them, it is the one: it is only there
+        /// because this client offered it, and offered it first.
+        /// </remarks>
         public UInt16                     NextProtocol
+        {
+            get
+            {
+
+                var protocols = NextProtocols;
+
+                return protocols.Contains(NTPv5.NTPv5Draft.NTSNextProtocolId)
+                           ? NTPv5.NTPv5Draft.NTSNextProtocolId
+                           : protocols.Count > 0 ? protocols[0] : (UInt16) 0;
+
+            }
+        }
+
+        /// <summary>
+        /// Every next protocol the server agreed to, in the order it named them.
+        /// </summary>
+        public IReadOnlyList<UInt16>      NextProtocols
         {
             get
             {
@@ -156,9 +178,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 var record = NTSKERecords.
                                  FirstOrDefault(ntsKERecord => ntsKERecord.Type == NTSKE_RecordTypes.NTSNextProtocolNegotiation);
 
-                return record?.Body.Length >= 2
-                           ? (UInt16) ((record.Body[0] << 8) | record.Body[1])
-                           : (UInt16) 0;
+                if (record is null)
+                    return [];
+
+                var protocols = new List<UInt16>(record.Body.Length / 2);
+
+                for (var i = 0; i + 1 < record.Body.Length; i += 2)
+                    protocols.Add((UInt16) ((record.Body[i] << 8) | record.Body[i + 1]));
+
+                return protocols;
 
             }
         }

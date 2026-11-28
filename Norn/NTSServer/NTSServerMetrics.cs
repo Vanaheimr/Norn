@@ -36,7 +36,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                   Int64 NTSKEResponsesSent,
                                   Int64 NTPRequestsDenied       = 0,
                                   Int64 NTSKEConnectionsDenied  = 0,
-                                  Int64 NTPPlainRequestsIgnored = 0)
+                                  Int64 NTPPlainRequestsIgnored = 0,
+                                  Int64 NTPv5RequestsReceived            = 0,
+                                  Int64 NTPv5ResponsesSent               = 0,
+                                  Int64 NTPv5AuthenticatedResponsesSent  = 0,
+                                  Int64 NTPv5InterleavedResponsesSent    = 0,
+                                  Int64 NTPv5AuthenticationNAKsSent      = 0)
     {
 
         public Int64 NTPRequestsReceived       { get; } = NTPRequestsReceived;
@@ -82,6 +87,34 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public Int64 NTSKERequestsInvalid      { get; } = NTSKERequestsInvalid;
         public Int64 NTSKEResponsesSent        { get; } = NTSKEResponsesSent;
 
+        /// <summary>
+        /// How many of the requests received were NTPv5 (draft-ietf-ntp-ntpv5-10), on a server that
+        /// answers it - each also counted in <see cref="NTPRequestsReceived"/>. So that whoever
+        /// asks can tell an NTPv5 client from one that negotiated its way down to NTPv4.
+        /// </summary>
+        public Int64 NTPv5RequestsReceived            { get; } = NTPv5RequestsReceived;
+
+        /// <summary>
+        /// How many NTPv5 responses were sent, Authentication NAKs included; each also counted in
+        /// <see cref="NTPResponsesSent"/>.
+        /// </summary>
+        public Int64 NTPv5ResponsesSent               { get; } = NTPv5ResponsesSent;
+
+        /// <summary>
+        /// How many of the NTPv5 responses were under NTS (§ 11).
+        /// </summary>
+        public Int64 NTPv5AuthenticatedResponsesSent  { get; } = NTPv5AuthenticatedResponsesSent;
+
+        /// <summary>
+        /// How many of the NTPv5 responses were in the interleaved mode (§ 8).
+        /// </summary>
+        public Int64 NTPv5InterleavedResponsesSent    { get; } = NTPv5InterleavedResponsesSent;
+
+        /// <summary>
+        /// How many of the NTPv5 responses were Authentication NAKs (flag 0x4).
+        /// </summary>
+        public Int64 NTPv5AuthenticationNAKsSent      { get; } = NTPv5AuthenticationNAKsSent;
+
 
         /// <summary>
         /// The counters that are not zero, in one line.
@@ -110,7 +143,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                ("ke-rejected",      NTSKEConnectionsRejected),
                                ("ke-handshakes",    NTSKEHandshakeFailures),
                                ("ke-invalid",       NTSKERequestsInvalid),
-                               ("ke-sent",          NTSKEResponsesSent)
+                               ("ke-sent",          NTSKEResponsesSent),
+                               ("v5-received",      NTPv5RequestsReceived),
+                               ("v5-sent",          NTPv5ResponsesSent),
+                               ("v5-nts",           NTPv5AuthenticatedResponsesSent),
+                               ("v5-interleaved",   NTPv5InterleavedResponsesSent),
+                               ("v5-naks",          NTPv5AuthenticationNAKsSent)
                            }.
                            Where (counter => counter.Value != 0).
                            Select(counter => $"{counter.Name}: {counter.Value}").

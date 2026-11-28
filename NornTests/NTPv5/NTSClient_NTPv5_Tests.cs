@@ -398,6 +398,57 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTPv5
 
         #endregion
 
+        #region TheServerCounts_WhatItAnsweredInNTPv5()
+
+        /// <summary>
+        /// The NTPv5 counters of the server's metrics: received and sent, NTS, interleaved and
+        /// Authentication NAKs - each beside the NTPv4 counters it is also part of, so that an
+        /// interop test can tell a peer that spoke NTPv5 from one that negotiated down to NTPv4.
+        /// </summary>
+        [Test]
+        public async Task TheServerCounts_WhatItAnsweredInNTPv5()
+        {
+
+            using var plain        = ClientOf(server!.UDPPort);
+            using var interleaving = ClientOf(server.UDPPort, Interleaved: new NTPv5InterleavedAssociation());
+            using var secured      = ClientOf(server.UDPPort, ServerForKeyExchange: server);
+
+            var ke = await secured.GetNTSKERecords();
+            Assert.That(ke.Success, Is.True, ke.ErrorMessage);
+
+            var before = server.Metrics;
+
+            Assert.That((await plain.       QueryNTPv5()).Success, Is.True);
+            Assert.That((await interleaving.QueryNTPv5()).Success, Is.True);
+            Assert.That((await interleaving.QueryNTPv5()).Success, Is.True);
+            Assert.That((await secured.     QueryNTPv5(NTSKEResponse: ke.Response)).Success, Is.True);
+            Assert.That((await plain.       QueryTime()).Success, Is.True, "NTPv4, counted apart");
+
+            // A cookie the server cannot read, sealed under the right key: a NAK, as asked for.
+            var forged  = NTPv5Client.BuildRequest(NTS: new NTPv5ClientNTS(ke.Response!.C2SKey, ke.Response.S2CKey, ke.Response.AEADAlgorithm, new Byte[ke.Response.Cookies.First().Length]));
+
+            using (var udp = new System.Net.Sockets.UdpClient(new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, 0)))
+            {
+                await udp.SendAsync(forged.Datagram, new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, server.UDPPort.ToUInt16()));
+                var nak = await udp.ReceiveAsync().WaitAsync(TimeSpan.FromSeconds(2));
+                Assert.That(NTPv5Client.Validate(nak.Buffer, forged).Status, Is.EqualTo(NTPv5ResponseStatus.AuthenticationNAK));
+            }
+
+            var after  = server.Metrics;
+
+            Assert.Multiple(() => {
+                Assert.That(after.NTPv5RequestsReceived           - before.NTPv5RequestsReceived,           Is.EqualTo(5), after.ToString());
+                Assert.That(after.NTPv5ResponsesSent              - before.NTPv5ResponsesSent,              Is.EqualTo(5));
+                Assert.That(after.NTPv5AuthenticatedResponsesSent - before.NTPv5AuthenticatedResponsesSent, Is.EqualTo(1));
+                Assert.That(after.NTPv5InterleavedResponsesSent   - before.NTPv5InterleavedResponsesSent,   Is.EqualTo(1));
+                Assert.That(after.NTPv5AuthenticationNAKsSent     - before.NTPv5AuthenticationNAKsSent,     Is.EqualTo(1));
+                Assert.That(after.NTPResponsesSent                - before.NTPResponsesSent,                Is.EqualTo(6), "the NTPv4 one too");
+            });
+
+        }
+
+        #endregion
+
         #region PollGoAway_EndsTheAssociation()
 
         /// <summary>

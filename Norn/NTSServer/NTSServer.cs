@@ -192,6 +192,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         private                  Int64                                    ntskeHandshakeFailures;
         private                  Int64                                    ntskeRequestsInvalid;
         private                  Int64                                    ntskeResponsesSent;
+        private                  Int64                                    ntpv5RequestsReceived;
+        private                  Int64                                    ntpv5ResponsesSent;
+        private                  Int64                                    ntpv5AuthenticatedResponsesSent;
+        private                  Int64                                    ntpv5InterleavedResponsesSent;
+        private                  Int64                                    ntpv5AuthenticationNAKsSent;
 
         #endregion
 
@@ -520,7 +525,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                    NTSKEResponsesSent:        System.Threading.Interlocked.Read(ref ntskeResponsesSent),
                    NTPRequestsDenied:         System.Threading.Interlocked.Read(ref ntpRequestsDenied),
                    NTSKEConnectionsDenied:    System.Threading.Interlocked.Read(ref ntskeConnectionsDenied),
-                   NTPPlainRequestsIgnored:   System.Threading.Interlocked.Read(ref ntpPlainRequestsIgnored)
+                   NTPPlainRequestsIgnored:   System.Threading.Interlocked.Read(ref ntpPlainRequestsIgnored),
+                   NTPv5RequestsReceived:            System.Threading.Interlocked.Read(ref ntpv5RequestsReceived),
+                   NTPv5ResponsesSent:               System.Threading.Interlocked.Read(ref ntpv5ResponsesSent),
+                   NTPv5AuthenticatedResponsesSent:  System.Threading.Interlocked.Read(ref ntpv5AuthenticatedResponsesSent),
+                   NTPv5InterleavedResponsesSent:    System.Threading.Interlocked.Read(ref ntpv5InterleavedResponsesSent),
+                   NTPv5AuthenticationNAKsSent:      System.Threading.Interlocked.Read(ref ntpv5AuthenticationNAKsSent)
                );
 
         #endregion
@@ -2748,6 +2758,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             InterleavedExchange? interleavedExchange = null;
 
+            var authenticatedRequest = false;
+
+            System.Threading.Interlocked.Increment(ref ntpv5RequestsReceived);
+
             var outcome       = NTPv5Responder.TryRespond(
                                     Datagram,
                                     ReceivedAtTime,
@@ -2779,6 +2793,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                         TimeProvider,
                                                         MaxCookiesPerResponse),
                                     (request, authenticated) => {
+
+                                        authenticatedRequest = authenticated;
 
                                         // § 10: the store is touched only by a client that asked
                                         // for the mode, so a basic client costs nothing here; and
@@ -2845,6 +2861,20 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             interleavedExchange?.RecordTransmission(NTPPacket.GetCurrentNTPTimestamp(TimeProvider));
 
             System.Threading.Interlocked.Increment(ref ntpResponsesSent);
+            System.Threading.Interlocked.Increment(ref ntpv5ResponsesSent);
+
+            // The flags of the header as sent (§ 6: octets 14 and 15), which say what this
+            // response was, rather than what was asked for.
+            var sentFlags = (NTPv5Flags) System.Buffers.Binary.BinaryPrimitives.ReadUInt16BigEndian(response.AsSpan(14, 2));
+
+            if (outcome is NTPv5RequestOutcome.AuthenticationNAK)
+                System.Threading.Interlocked.Increment(ref ntpv5AuthenticationNAKsSent);
+
+            else if (authenticatedRequest)
+                System.Threading.Interlocked.Increment(ref ntpv5AuthenticatedResponsesSent);
+
+            if (sentFlags.HasFlag(NTPv5Flags.InterleavedMode))
+                System.Threading.Interlocked.Increment(ref ntpv5InterleavedResponsesSent);
 
         }
 

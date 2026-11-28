@@ -35,25 +35,26 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTPv5
 
     /// <summary>
     /// NTS for NTPv5, draft-ietf-ntp-ntpv5-10 § 11: the key exchange agrees to NTPv5 under the
-    /// draft's protocol ID, its keys come from that protocol's exporter context, its cookies are
+    /// draft's protocol ID, its keys are those of NTPv4 (RFC 8915 § 5.1), its cookies are
     /// good for NTPv5 alone, and the NTS extension fields of RFC 8915 protect NTPv5 messages.
     /// </summary>
     [TestFixture]
     public class NTPv5NTS_Tests
     {
 
-        #region KeysOfNTPv4AndNTPv5_ComeFromDifferentContexts()
+        #region KeysOfNTPv5_AreThoseOfNTPv4()
 
         /// <summary>
-        /// RFC 8915 § 5.1: the protocol ID is the first two octets of the exporter context, so
-        /// the same key exchange gives NTPv5 other keys than NTPv4.
+        /// RFC 8915 § 5.1 is key extraction "for NTPv4", its first two octets "SHALL be zero",
+        /// and draft-10 § 11 specifies none of its own: NTPv5 takes the keys of NTPv4, as
+        /// chrony-ntp5 does. What tells the two protocols apart is the cookie.
         /// </summary>
         [Test]
-        public void KeysOfNTPv4AndNTPv5_ComeFromDifferentContexts()
+        public void KeysOfNTPv5_AreThoseOfNTPv4()
         {
 
-            Assert.That(NTSKE_ExportedKeys.Context(AEADAlgorithms.AES_SIV_CMAC_256, ServerToClient: true, NTPv5Draft.NTSNextProtocolId),
-                        Is.EqualTo(new Byte[] { 0x80, 0x01, 0x00, 0x0F, 0x01 }));
+            Assert.That(NTSKE_ExportedKeys.ExporterProtocolFor(NTPv5Draft.NTSNextProtocolId), Is.Zero);
+            Assert.That(NTSKE_ExportedKeys.ExporterProtocolFor(0),                            Is.Zero);
 
             Assert.That(NTSKE_ExportedKeys.Context(AEADAlgorithms.AES_SIV_CMAC_256, ServerToClient: false),
                         Is.EqualTo(new Byte[] { 0x00, 0x00, 0x00, 0x0F, 0x00 }), "NTPv4 as before");
@@ -63,9 +64,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTPv5
             var v4    = keys.For(AEADAlgorithms.AES_SIV_CMAC_256);
             var v5    = keys.For(AEADAlgorithms.AES_SIV_CMAC_256, NextProtocol: NTPv5Draft.NTSNextProtocolId);
 
-            Assert.That(v5.C2SKey, Is.Not.EqualTo(v4.C2SKey));
-            Assert.That(v5.S2CKey, Is.Not.EqualTo(v4.S2CKey));
-            Assert.That(v5.C2SKey, Has.Length.EqualTo(v4.C2SKey.Length));
+            Assert.That(v5.C2SKey, Is.EqualTo(v4.C2SKey));
+            Assert.That(v5.S2CKey, Is.EqualTo(v4.S2CKey));
 
         }
 
@@ -292,7 +292,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTPv5
 
         /// <summary>
         /// An NTPv4 cookie in an NTPv5 request is no cookie, nor is an NTPv5 cookie in an NTPv4
-        /// request: their keys come from different exporter contexts.
+        /// request: a cookie names the protocol it may be spent on, whatever the keys.
         /// </summary>
         [Test]
         public async Task CookiesAreGoodForTheirOwnProtocolAlone()

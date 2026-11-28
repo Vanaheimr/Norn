@@ -116,8 +116,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         /// <summary>
         /// The next protocols keys are derived for: NTPv4 (0), and NTPv5 under the draft's
-        /// protocol ID - RFC 8915 § 5.1 puts the protocol into the exporter context, so the two
-        /// get different keys from the same key exchange.
+        /// protocol ID - from the same context, see <see cref="ExporterProtocolFor"/>.
         /// </summary>
         public static IReadOnlyList<UInt16> NextProtocols { get; } = [ 0, NTPv5.NTPv5Draft.NTSNextProtocolId ];
 
@@ -168,6 +167,36 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             => CompliantExporterContext || Algorithm != AEADAlgorithms.AES_128_GCM_SIV
                    ? Algorithm
                    : AEADAlgorithms.AES_SIV_CMAC_256;
+
+        #endregion
+
+        #region ExporterProtocolFor(NextProtocol)
+
+        /// <summary>
+        /// The protocol id that goes into the § 5.1 exporter context for the given next
+        /// protocol: zero, for NTPv5 as for NTPv4.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// RFC 8915 § 5.1 is "Key Extraction (for NTPv4)": its first two octets "SHALL be zero
+        /// (the Protocol ID for NTPv4)", and it says nothing of any other protocol.
+        /// draft-ietf-ntp-ntpv5-10 § 11 specifies no key extraction of its own either - it reuses
+        /// the NTPv4 records and extension fields for NTPv5 - so the keys are those of NTPv4.
+        /// </para>
+        /// <para>
+        /// That is how chrony-ntp5, the draft author's implementation, derives them, and it is
+        /// what its NTS-KE server seals into its cookies whichever of the two protocols it agreed
+        /// to. Norn put the draft's protocol id 0x8001 there at first, reading the octets as "the
+        /// protocol"; against chrony-ntp5 every NTS-protected NTPv5 request was then met with
+        /// silence, and with the NTPv4 context they authenticate both ways. The protocol is still
+        /// kept apart where it matters to a server: in the cookie, which says which protocol it
+        /// may be spent on.
+        /// </para>
+        /// </remarks>
+        /// <param name="NextProtocol">The next protocol the key exchange settled on.</param>
+        public static UInt16 ExporterProtocolFor(UInt16 NextProtocol)
+
+            => 0;
 
         #endregion
 
@@ -422,15 +451,17 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             var keyLength          = NTSAEAD.KeyLength(Algorithm)!.Value;
             var exporterAlgorithm  = ExporterAlgorithmFor(Algorithm, CompliantExporterContext);
 
+            var exporterProtocol   = ExporterProtocolFor(NextProtocol);
+
             keys[(NextProtocol, Algorithm, exporterAlgorithm)] = (
                 Exporter(
                     ExporterLabel,
-                    Context(exporterAlgorithm, ServerToClient: false, NextProtocol),
+                    Context(exporterAlgorithm, ServerToClient: false, exporterProtocol),
                     keyLength
                 ),
                 Exporter(
                     ExporterLabel,
-                    Context(exporterAlgorithm, ServerToClient: true,  NextProtocol),
+                    Context(exporterAlgorithm, ServerToClient: true,  exporterProtocol),
                     keyLength
                 )
             );

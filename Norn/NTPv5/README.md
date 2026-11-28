@@ -95,6 +95,9 @@ a flag day.
 NTS is part of the design (§ 11). The Unique Identifier, NTS Cookie, Cookie Placeholder and
 Authenticator fields carry over from RFC 8915. A failed authentication is signalled by an
 **Authentication NAK flag**, where NTPv4 uses a Kiss-o'-Death packet with the code `NTSN`.
+The keys are those of NTPv4: RFC 8915 § 5.1 is key extraction "for NTPv4", with the protocol
+octets of its exporter context "zero", and § 11 adds no extraction of its own. That is how
+chrony-ntp5 derives them. Only the cookie says which protocol it may be spent on.
 
 ## No mandatory algorithms
 
@@ -115,15 +118,16 @@ implementation, which is what chrony and ntpd-rs do anyway.
 | § 7.6, § 11, § 12 | Monitoring: an optional, hourly probe of what a server supports | [`MeasurementEngine.NTPv5.cs`](../Monitoring/MeasurementEngine.NTPv5.cs), [`NTPv5CapabilityResult.cs`](../Monitoring/Results/NTPv5CapabilityResult.cs) |
 | § 7.5 | Time Sources, answered only where the server was given its sources | [`NTPv5TimeSources.cs`](NTPv5TimeSources.cs) |
 | § 7.10 | Secondary Receive Timestamp, in UTC and in the timescales the server was given an offset for | [`NTPv5ExtensionField.Timestamps.cs`](NTPv5ExtensionField.Timestamps.cs), [`NTPv5Responder.cs`](NTPv5Responder.cs) |
-| § 7.3 | MAC | not yet |
+| § 7.3 | MAC (AES-CMAC after RFC 8573, 32-bit key ID) | ToDo, some time in the future: of little use beside NTS, and Norn has no symmetric keys to take it from |
 
 The [NTS conformance suite](https://github.com/Vanaheimr/NTSConformanceTests) tests these
-against its own codec, written independently from the text of -10.
+against its own codec, written independently from the text of -10, and against the two
+implementations of the draft's author, chrony-ntp5 and ntp5-exp, in both directions.
 
 ## In short
 
 NTPv4 is a protocol from the 1980s with accumulated legacy. NTPv5 has less attack surface and
 leaks less about the client. It is more accurate, through first-class interleaved mode, finer
 resolution and the Correction field. It is unambiguous past 2036 and can serve TAI directly.
-The cost is that it is not finished yet, its codepoints are provisional, and there are hardly
-any peers to test against.
+The cost is that it is not finished yet, its codepoints are provisional, and there are few
+peers to test against.

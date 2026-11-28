@@ -829,7 +829,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                          negotiated,
                                                          CompliantAES128GCMSIVExporterContext &&
                                                              negotiation.CompliantAES128GCMSIVExporterContext,
-                                                         // The protocol is in the exporter context too.
+                                                         // The protocol picks the key pair; both come from the NTPv4 context.
                                                          negotiation.NextProtocol
                                                      );
                             }
