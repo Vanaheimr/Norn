@@ -62,6 +62,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPv5
         /// </summary>
         public UInt32?             MonotonicEpochId    { get; init; }
 
+        /// <summary>
+        /// Whether a request without NTS is answered at all; no for a server of NTS alone.
+        /// </summary>
+        public Boolean             AnswersPlain        { get; init; } = true;
+
     }
 
 
@@ -102,13 +107,25 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPv5
         Unsynchronized,
 
         /// <summary>The response came out longer than the request (§ 10 step 6).</summary>
-        TooLong
+        TooLong,
+
+        /// <summary>A request without NTS, to a server of NTS alone.</summary>
+        PlainNotServed,
+
+        /// <summary>The NTS of the request did not verify, and it did not ask to hear anyway (§ 6, § 7.3).</summary>
+        NotAuthenticated,
+
+        /// <summary>
+        /// The NTS of the request did not verify, and it asked to hear anyway: answered with the
+        /// Authentication NAK flag and stratum 0, and nothing in it to synchronize to.
+        /// </summary>
+        AuthenticationNAK
 
     }
 
 
     /// <summary>
-    /// The server side of NTPv5, draft-ietf-ntp-ntpv5-10 § 10, without authentication: from
+    /// The server side of NTPv5, draft-ietf-ntp-ntpv5-10 § 10, plain or with NTS (§ 11): from
     /// the datagram of a request to the datagram of its response, or to the reason there is
     /// none.
     /// </summary>
@@ -128,10 +145,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPv5
         public const UInt16      SupportedVersions  = 0b1_1111;
 
         /// <summary>
-        /// The header flags this responder can support at all. Authentication NAK is not among
-        /// them: there is no authentication in NTPv5 here yet, so nothing can fail it.
+        /// The header flags this responder can support at all - which of them a server does is
+        /// <see cref="NTPv5ServerClock.SupportedFlags"/>.
         /// </summary>
-        public const NTPv5Flags  SupportedFlags     = NTPv5Flags.Unsynchronized | NTPv5Flags.InterleavedMode;
+        public const NTPv5Flags  SupportedFlags     = NTPv5Flags.Unsynchronized | NTPv5Flags.InterleavedMode | NTPv5Flags.AuthenticationNAK;
 
         #endregion
 
@@ -187,6 +204,42 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPv5
                                                      Func<NTPv5Packet, NTPv5Exchange>   Exchange,
                                                      [NotNullWhen(true)]  out Byte[]?   Response,
                                                      out String?                        ErrorResponse)
+
+            => TryRespond(Request,
+                          ReceiveTime,
+                          Clock,
+                          null,
+                          (request, authenticated) => Exchange(request),
+                          out Response,
+                          out ErrorResponse);
+
+        #endregion
+
+        #region TryRespond(Request, ReceiveTime, Clock, NTS, Exchange, out Response, out ErrorResponse)
+
+        /// <summary>
+        /// The response to the given request, following § 10 and, for a request of NTS, § 11,
+        /// in whichever mode the exchange decides.
+        /// </summary>
+        /// <param name="Request">The datagram of the request.</param>
+        /// <param name="ReceiveTime">When it was received, for the era of § 6.</param>
+        /// <param name="Clock">What the server says of its clock.</param>
+        /// <param name="NTS">The server's NTS, or null for a server that knows none: its fields are then as unknown as any other.</param>
+        /// <param name="Exchange">
+        /// Decides the timestamps and cookie of the response, given the request and whether it
+        /// was authenticated. Called once, for a request that will be answered unless the
+        /// response comes out too long, and not at all for one that will be dropped or NAKed -
+        /// so that nothing is remembered of those.
+        /// </param>
+        /// <param name="Response">The datagram of the response, when there is one.</param>
+        /// <param name="ErrorResponse">Why there is none, when there is none.</param>
+        public static NTPv5RequestOutcome TryRespond(ReadOnlySpan<Byte>                          Request,
+                                                     DateTime                                    ReceiveTime,
+                                                     NTPv5ServerClock                            Clock,
+                                                     NTPv5NTSService?                            NTS,
+                                                     Func<NTPv5Packet, Boolean, NTPv5Exchange>   Exchange,
+                                                     [NotNullWhen(true)]  out Byte[]?            Response,
+                                                     out String?                                 ErrorResponse)
         {
 
             Response       = null;
@@ -226,6 +279,43 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPv5
 
             #endregion
 
+            #region § 11: NTS, or plain
+
+            // A request that tries NTS is answered with NTS or not as itself at all: answering it
+            // in plain would hand an unauthenticated time to a client that asked for the other.
+            NTPv5NTSSession? session = null;
+
+            if (NTS is not null && NTPv5NTS.IsNTSRequest(request))
+            {
+
+                if (!NTS.TryVerify(Request, request, out session, out var ntsError))
+                {
+
+                    ErrorResponse = ntsError;
+
+                    // § 6 and § 7.3: only a client that asked to hear of the failure is told.
+                    if (!request.Flags.HasFlag(NTPv5Flags.AuthenticationNAK) ||
+                        !Clock.SupportedFlags.HasFlag(NTPv5Flags.AuthenticationNAK))
+                        return NTPv5RequestOutcome.NotAuthenticated;
+
+                    Response = AuthenticationNAK(request, ReceiveTime, Clock);
+
+                    return Response is not null
+                               ? NTPv5RequestOutcome.AuthenticationNAK
+                               : NTPv5RequestOutcome.TooLong;
+
+                }
+
+            }
+
+            else if (!Clock.AnswersPlain)
+            {
+                ErrorResponse = "A request without NTS, to a server of NTS alone!";
+                return NTPv5RequestOutcome.PlainNotServed;
+            }
+
+            #endregion
+
             #region Step 4: the Unsynchronized flag, and step 6
 
             // Step 6: a response with a flag the request did not set is dropped - so a client
@@ -241,7 +331,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPv5
 
             #region Step 4: the mode, and the timestamps that follow from it
 
-            var exchange     = Exchange(request);
+            var exchange     = Exchange(request, session is not null);
 
             // Whatever the exchange says, a flag the request did not set is not set, and a
             // cookie is given only to a client that asked for the mode it serves (§ 10).
@@ -260,17 +350,35 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPv5
             // Every field of the request that is answered goes back in its place; one that is
             // not is left out, and what that leaves short is padded below. The request's own
             // Padding is not copied but taken into that padding, which comes out the same.
+            //
+            // Of a request of NTS only what its authenticator covers: a field after it could have
+            // been added by anyone on the way. The one exception is the Correction, which is
+            // never authenticated and is added to by the devices on the way by design (§ 7.7).
             var responseFields  = new List<NTPv5ExtensionField>();
             var correction      = (NTPv5ExtensionField?) null;
 
-            foreach (var field in request.ExtensionFields)
+            for (var index = 0; index < request.ExtensionFields.Count; index++)
             {
+
+                var field          = request.ExtensionFields[index];
+                var authenticated  = session is null || index < session.AuthenticatorIndex;
+
+                if (!authenticated && field.Type != NTPv5ExtensionTypes.Correction)
+                    continue;
+
                 switch (field.Type)
                 {
 
                     case NTPv5ExtensionTypes.DraftIdentification:
                         responseFields.Add(new NTPv5ExtensionField(NTPv5ExtensionTypes.DraftIdentification,
                                                                    NTPv5Draft.IdentificationBytes.ToArray()));
+                        break;
+
+                    // RFC 8915 § 5.7: the Unique Identifier is echoed, where the request is one
+                    // of NTS, and the authenticator below covers it.
+                    case NTPv5ExtensionTypes.UniqueIdentifier when session is not null:
+                        responseFields.Add(new NTPv5ExtensionField(NTPv5ExtensionTypes.UniqueIdentifier,
+                                                                   session.UniqueIdentifier));
                         break;
 
                     // § 7.6 fixes it at 8 octets; one of another length is not this field, and
@@ -304,7 +412,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPv5
                     // § 7.7: the request's Delay Correction and Path ID go back as the Origin
                     // ones, the server's own are zero for the devices on the way back to fill
                     // in, and the field is the last of the response, wherever it was in the
-                    // request. Only the first: two would make it ambiguous which is last.
+                    // request - after the authenticator, too. Only the first: two would make it
+                    // ambiguous which is last.
                     case NTPv5ExtensionTypes.Correction when correction is null &&
                                                              field.TryReadCorrection(out var requestCorrection):
                         correction = NTPv5ExtensionField.Correction(new NTPv5Correction(
@@ -317,20 +426,66 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPv5
                         break;
 
                 }
+
             }
 
             #endregion
 
             #region Step 4: the header, and step 5: as long as the request
 
+            NTPv5Packet Build(IEnumerable<NTPv5ExtensionField> Fields)
+
+                => new (Mode:               NTPv5Packet.ResponseMode,
+                        Stratum:            Clock.Stratum,
+                        Poll:               Clock.MinimumPoll,
+                        Precision:          Clock.Precision,
+                        RootDelay:          Time32.FromTimeSpan(Clock.RootDelay),
+                        RootDispersion:     Time32.FromTimeSpan(Clock.RootDispersion),
+
+                        // Norn's clock is UTC and nothing else, so that is what a client asking
+                        // for TAI or UT1 is given too: § 10 answers with "any supported"
+                        // timescale, and the client sees from the field that it is not its own.
+                        Timescale:          NTPv5Timescale.UTC,
+                        Era:                NTPv5Packet.EraOf(ReceiveTime),
+                        Flags:              flags,
+
+                        // § 10: set when the mode is asked for and served, "even if this
+                        // response cannot be interleaved", so that the next one can be.
+                        ServerCookie:       askedForIt ? exchange.ServerCookie : 0,
+                        ClientCookie:       request.ClientCookie,
+                        ReceiveTimestamp:   exchange.ReceiveTimestamp,
+                        TransmitTimestamp:  exchange.TransmitTimestamp,
+                        ExtensionFields:    Fields);
+
             var answeredLength  = NTPv5Packet.HeaderLength +
                                   responseFields.Sum(field => field.PaddedLength) +
                                   (correction?.PaddedLength ?? 0);
 
+            // RFC 8915 § 5.7: as many cookies as the request spent and held places for - and,
+            // since an NTPv5 response must not be longer than its request, fewer where the
+            // places were too small for them. None at all is still an authenticated response.
+            var cookies         = session is not null && NTS is not null
+                                      ? NTS.MintCookies(session, Math.Min(1 + session.Placeholders, NTS.MaxCookies))
+                                      : [];
+
+            var cookieCount     = cookies.Count;
             var shortBy         = request.Length - answeredLength;
 
-            // Step 6. Nothing above makes a response longer than its request, but should that
-            // ever change, this is the check that keeps the server from being an amplifier.
+            if (session is not null)
+            {
+
+                while (cookieCount > 0 &&
+                       request.Length < answeredLength + NTPv5NTS.AuthenticatorLength(session.AEADAlgorithm, cookies.Take(cookieCount).Sum(cookie => cookie.Length)))
+                {
+                    cookieCount--;
+                }
+
+                shortBy = request.Length - answeredLength - NTPv5NTS.AuthenticatorLength(session.AEADAlgorithm, cookies.Take(cookieCount).Sum(cookie => cookie.Length));
+
+            }
+
+            // Step 6. Nothing above makes a plain response longer than its request, but should
+            // that ever change, this is the check that keeps the server from being an amplifier.
             if (shortBy < 0)
             {
                 ErrorResponse = $"The response would be {-shortBy} octet(s) longer than the request!";
@@ -338,44 +493,94 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPv5
             }
 
             // Both lengths are whole multiples of 4, so what is short is either nothing or a
-            // Padding field of at least its header - before the Correction, which stays last.
+            // Padding field of at least its header - before the authenticator, which covers it,
+            // and before the Correction, which stays last.
             if (shortBy > 0)
                 responseFields.Add(NTPv5ExtensionField.Padding(shortBy));
+
+            if (session is not null)
+            {
+
+                var plaintext = new Byte[cookies.Take(cookieCount).Sum(cookie => cookie.Length)];
+                var offset    = 0;
+
+                foreach (var cookie in cookies.Take(cookieCount))
+                {
+                    cookie.CopyTo(plaintext, offset);
+                    offset += cookie.Length;
+                }
+
+                // Over the header and every field before it, with the server-to-client key.
+                responseFields.Add(NTPv5NTS.Seal(Build(responseFields).ToByteArray(),
+                                                 session.S2CKey,
+                                                 session.AEADAlgorithm,
+                                                 plaintext));
+
+            }
 
             if (correction is not null)
                 responseFields.Add(correction);
 
-            Response = new NTPv5Packet(
+            Response = Build(responseFields).ToByteArray();
 
-                           Mode:               NTPv5Packet.ResponseMode,
-                           Stratum:            Clock.Stratum,
-                           Poll:               Clock.MinimumPoll,
-                           Precision:          Clock.Precision,
-                           RootDelay:          Time32.FromTimeSpan(Clock.RootDelay),
-                           RootDispersion:     Time32.FromTimeSpan(Clock.RootDispersion),
-
-                           // Norn's clock is UTC and nothing else, so that is what a client asking
-                           // for TAI or UT1 is given too: § 10 answers with "any supported"
-                           // timescale, and the client sees from the field that it is not its own.
-                           Timescale:          NTPv5Timescale.UTC,
-                           Era:                NTPv5Packet.EraOf(ReceiveTime),
-                           Flags:              flags,
-
-                           // § 10: set when the mode is asked for and served, "even if this
-                           // response cannot be interleaved", so that the next one can be.
-                           ServerCookie:       askedForIt ? exchange.ServerCookie : 0,
-                           ClientCookie:       request.ClientCookie,
-                           ReceiveTimestamp:   exchange.ReceiveTimestamp,
-                           TransmitTimestamp:  exchange.TransmitTimestamp,
-                           ExtensionFields:    responseFields
-
-                       ).ToByteArray();
+            if (Response.Length != request.Length)
+            {
+                ErrorResponse = $"The response came out {Response.Length} octets long, not the {request.Length} of the request!";
+                Response      = null;
+                return NTPv5RequestOutcome.TooLong;
+            }
 
             return NTPv5RequestOutcome.Answered;
 
             #endregion
 
         }
+
+        #endregion
+
+        #region (private static) AuthenticationNAK(Request, ReceiveTime, Clock)
+
+        /// <summary>
+        /// The answer to a request of NTS that failed and asked to hear of it (§ 6, Authentication
+        /// NAK): the flag, stratum 0, the Draft Identification and the Unique Identifier back so
+        /// that the client knows what it answers, as long as the request - and nothing else, no
+        /// timestamp to synchronize to and no authenticator, since there is no key to make one.
+        /// Null where even that would be longer than the request.
+        /// </summary>
+        private static Byte[]? AuthenticationNAK(NTPv5Packet       Request,
+                                                 DateTime          ReceiveTime,
+                                                 NTPv5ServerClock  Clock)
+        {
+
+            var fields = new List<NTPv5ExtensionField> {
+                             new (NTPv5ExtensionTypes.DraftIdentification, NTPv5Draft.IdentificationBytes.ToArray())
+                         };
+
+            // Only an identifier of a plausible length: an unauthenticated client must not make
+            // the NAK longer than it has to be.
+            if (Request.Find(NTPv5ExtensionTypes.UniqueIdentifier) is { Value.Length: >= NTPv5NTS.MinimumUniqueIdentifierLength and <= NTPv5NTS.MaximumEchoedUniqueIdentifierLength } uniqueIdentifier)
+                fields.Add(new NTPv5ExtensionField(NTPv5ExtensionTypes.UniqueIdentifier, uniqueIdentifier.Value));
+
+            var shortBy = Request.Length - NTPv5Packet.HeaderLength - fields.Sum(field => field.PaddedLength);
+
+            if (shortBy < 0)
+                return null;
+
+            if (shortBy > 0)
+                fields.Add(NTPv5ExtensionField.Padding(shortBy));
+
+            return new NTPv5Packet(Mode:             NTPv5Packet.ResponseMode,
+                                   Stratum:          0,
+                                   Poll:             Clock.MinimumPoll,
+                                   Precision:        Clock.Precision,
+                                   Timescale:        NTPv5Timescale.UTC,
+                                   Era:              NTPv5Packet.EraOf(ReceiveTime),
+                                   Flags:            NTPv5Flags.AuthenticationNAK,
+                                   ClientCookie:     Request.ClientCookie,
+                                   ExtensionFields:  fields).ToByteArray();
+
+        }
+
 
         #endregion
 

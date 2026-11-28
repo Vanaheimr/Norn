@@ -40,14 +40,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public static Boolean ValidateServerResponse(IEnumerable<NTSKE_Record>              Records,
                                                      [NotNullWhen(false)] out String?       ErrorMessage,
                                                      out NTSKEErrorCategory                 ErrorCategory,
-                                                     Boolean                                OverSSH   = false)
+                                                     Boolean                                OverSSH   = false,
+                                                     Boolean                                AcceptNTPv5 = false)
 
             => ValidateServerResponse(
                    Records,
                    out ErrorMessage,
                    out ErrorCategory,
                    out _,
-                   OverSSH
+                   OverSSH,
+                   AcceptNTPv5
                );
 
         #endregion
@@ -67,7 +69,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                      [NotNullWhen(false)] out String?       ErrorMessage,
                                                      out NTSKEErrorCategory                 ErrorCategory,
                                                      out IEnumerable<String>                WarningMessages,
-                                                     Boolean                                OverSSH   = false)
+                                                     Boolean                                OverSSH   = false,
+                                                     Boolean                                AcceptNTPv5 = false)
         {
 
             var records = Records.ToList();
@@ -186,7 +189,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             }
 
             if (nextProtocolRecords.Count != 1 ||
-                !IsNTPv4NextProtocol(nextProtocolRecords[0]))
+                !(IsNTPv4NextProtocol(nextProtocolRecords[0]) || (AcceptNTPv5 && IsNTPv5NextProtocol(nextProtocolRecords[0]))))
             {
 
                 ErrorMessage   = "NTS-KE response negotiated an unsupported next protocol.";
@@ -375,6 +378,19 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             => Record.Body.Length == 2 &&
                Record.Body[0]    == 0 &&
                Record.Body[1]    == 0;
+
+        #endregion
+
+        #region (private static) IsNTPv5NextProtocol(Record)
+
+        /// <summary>
+        /// Whether the server agreed to NTPv5 under the draft's protocol ID - which is a
+        /// supported protocol only for a client that offered it, see <c>AcceptNTPv5</c>.
+        /// </summary>
+        private static Boolean IsNTPv5NextProtocol(NTSKE_Record Record)
+
+            => Record.Body.Length == 2 &&
+               ((Record.Body[0] << 8) | Record.Body[1]) == NTPv5.NTPv5Draft.NTSNextProtocolId;
 
         #endregion
 

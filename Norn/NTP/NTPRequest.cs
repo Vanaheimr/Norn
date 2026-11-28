@@ -244,8 +244,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                             carriesCookie = true;
 
                             // Unsealing the cookie authenticates it under the server's master key
-                            // and checks it against that key's validity window.
-                            if (NTSCookie.TryParse(valueSpan, MasterKeys, out var ntsCookie, out var cookieError))
+                            // and checks it against that key's validity window. And it has to be a
+                            // cookie of NTPv4: the keys of an NTPv5 cookie come from another
+                            // exporter context, and are no keys for this protocol.
+                            if (NTSCookie.TryParse(valueSpan, MasterKeys, out var ntsCookie, out var cookieError) &&
+                                ntsCookie.NextProtocol == 0)
                             {
 
                                 NTSKey            = ntsCookie.C2SKey;
@@ -263,7 +266,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTP
                             {
                                 // Kept so the authenticator's "missing NTS key" failure can say why
                                 // the key is missing — otherwise every cookie problem looks identical.
-                                ntsCookieError = cookieError;
+                                ntsCookieError = cookieError ?? $"The cookie was issued for next protocol {ntsCookie?.NextProtocol}, not for NTPv4!";
                                 extensions.Add(new NTSCookieExtension(valueSpan.ToArray()));
                             }
 

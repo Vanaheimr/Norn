@@ -132,7 +132,22 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPv5
         TimeSourcesResponse         = 0xF50B,
 
         /// <summary>§ 7.1, the draft a draft implementation follows. Gone in the RFC.</summary>
-        DraftIdentification         = 0xF5FF
+        DraftIdentification         = 0xF5FF,
+
+
+        // The extension fields of NTS, RFC 8915 § 5, which § 11 has NTPv5 use as NTPv4 does.
+
+        /// <summary>RFC 8915 § 5.3, the Unique Identifier.</summary>
+        UniqueIdentifier            = 0x0104,
+
+        /// <summary>RFC 8915 § 5.4, an NTS Cookie.</summary>
+        NTSCookie                   = 0x0204,
+
+        /// <summary>RFC 8915 § 5.5, an NTS Cookie Placeholder.</summary>
+        NTSCookiePlaceholder        = 0x0304,
+
+        /// <summary>RFC 8915 § 5.6, the NTS Authenticator and Encrypted Extension Fields.</summary>
+        NTSAuthenticator            = 0x0404
 
     }
 

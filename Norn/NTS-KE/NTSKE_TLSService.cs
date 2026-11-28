@@ -303,13 +303,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// and so not one it should have agreed to.
         /// </exception>
         public (Byte[] C2SKey, Byte[] S2CKey) KeysFor(AEADAlgorithms  AEADAlgorithm,
-                                                      Boolean         CompliantExporterContext   = true)
+                                                      Boolean         CompliantExporterContext   = true,
+                                                      UInt16          NextProtocol               = 0)
         {
 
             if (exportedKeys is null)
                 throw new NotSupportedException("The TLS handshake has not completed, so no NTS keys have been derived yet.");
 
-            var keys = exportedKeys.For(AEADAlgorithm, CompliantExporterContext);
+            var keys = exportedKeys.For(AEADAlgorithm, CompliantExporterContext, NextProtocol);
 
             NTS_C2S_Key = keys.C2SKey;
             NTS_S2C_Key = keys.S2CKey;

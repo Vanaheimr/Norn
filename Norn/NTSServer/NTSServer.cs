@@ -816,9 +816,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         #region (private) NTS-KE request validation and negotiation
 
         /// <summary>
-        /// The next-protocol IDs this server implements (RFC 8915 § 4.1.2).
+        /// The next-protocol IDs this server implements (RFC 8915 § 4.1.2): NTPv4 always, NTPv5
+        /// under the draft's protocol ID where it is switched on.
         /// </summary>
-        private static readonly UInt16[] supportedNextProtocols = [ 0 ];   // 0 = NTPv4
+        private UInt16[] SupportedNextProtocols
+            => NTPv5 != NTPv5Support.Disabled
+                   ? [ NextProtocolNTPv4, NTPv5Draft.NTSNextProtocolId ]
+                   : [ NextProtocolNTPv4 ];
 
         /// <summary>
         /// The AEAD algorithms this server implements (RFC 8915 § 4.1.5).
@@ -860,10 +864,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 => new (null, NextProtocol, AEADAlgorithm, null, CompliantAES128GCMSIVExporterContext);
 
             /// <summary>
-            /// True when NTPv4 was agreed, which is what makes NTPv4 cookies meaningful.
+            /// True when NTPv4 or NTPv5 was agreed together with an algorithm, which is what
+            /// makes cookies meaningful. NTPv5 takes the records of NTPv4 for its cookies and
+            /// its server and port, draft-ietf-ntp-ntpv5-10 § 11.
             /// </summary>
-            public Boolean NTPv4Negotiated
-                => NextProtocol == NextProtocolNTPv4 && AEADAlgorithm.HasValue;
+            public Boolean CookiesNegotiated
+                => NextProtocol is NextProtocolNTPv4 or NTPv5Draft.NTSNextProtocolId &&
+                   AEADAlgorithm.HasValue;
 
         }
 
@@ -928,12 +935,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                        );
 
             // § 4.1.3: "Clients MUST NOT include Error records in their request", § 4.1.4
-            // says the same of Warning records, § 4.1.6 of cookies, and NTSPublicKey is
-            // likewise server-to-client only.
+            // says the same of Warning records, and § 4.1.6 of cookies.
+            //
+            // Not NTSPublicKey, though it is server-to-client only: its type, 16385 in the private
+            // range, is 0x4001, which draft-ietf-ntp-ntpv5-10 § 11 has a client of the draft send
+            // in every request to name its draft. In a request the record is that, whatever the
+            // server makes of it, and a client of an NTPv5 draft must not be refused for it.
             var serversOnly = records.FirstOrDefault(record => record.Type is NTSKE_RecordTypes.Error
                                                                            or NTSKE_RecordTypes.Warning
-                                                                           or NTSKE_RecordTypes.NewCookieForNTPv4
-                                                                           or NTSKE_RecordTypes.NTSPublicKey);
+                                                                           or NTSKE_RecordTypes.NewCookieForNTPv4);
 
             if (serversOnly is not null)
                 return NTSKENegotiation.Refuse(
@@ -984,11 +994,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             var aeadRecords = records.Where(record => record.Type == NTSKE_RecordTypes.AEADAlgorithmNegotiation).ToArray();
 
             // "If the NTS Next Protocol Negotiation record offers Protocol ID 0 (for NTPv4),
-            // then this record MUST be included exactly once."
+            // then this record MUST be included exactly once." And for NTPv5, which needs an
+            // algorithm for the same NTS extension fields.
             if (aeadRecords.Length == 0 && offeredProtocols.Contains(NextProtocolNTPv4))
                 return NTSKENegotiation.Refuse(
                            NTSKEErrorCodes.BadRequest,
                            "the request offers NTPv4 but carries no AEAD Algorithm Negotiation record"
+                       );
+
+            if (aeadRecords.Length == 0 && offeredProtocols.Contains(NTPv5Draft.NTSNextProtocolId) && NTPv5 != NTPv5Support.Disabled)
+                return NTSKENegotiation.Refuse(
+                           NTSKEErrorCodes.BadRequest,
+                           "the request offers NTPv5 but carries no AEAD Algorithm Negotiation record"
                        );
 
             if (aeadRecords.Length > 1)
@@ -1010,9 +1027,21 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             #endregion
 
+            // draft-ietf-ntp-ntpv5-10 § 11: a server of a draft "MUST NOT accept NTPv5 unless" it
+            // supports the draft the client names in record 0x4001 - so NTPv5 is not among what
+            // this server supports for a client naming no draft, or another one.
+            var supportedNextProtocols = SupportedNextProtocols;
+
+            if (supportedNextProtocols.Contains(NTPv5Draft.NTSNextProtocolId) &&
+                !records.Any(record => (UInt16) record.Type == NTPv5Draft.NTSKEDraftRecordType &&
+                                       NTPv5Draft.IsThisDraft(record.Body)))
+            {
+                supportedNextProtocols = [ NextProtocolNTPv4 ];
+            }
+
             // The response must be a subset of the request (§ 4.1.2), and the algorithm one the
             // client offered (§ 4.1.5). Both may end up empty, which is how the server says it
-            // supports none of what was offered.
+            // supports none of what was offered. The client's order is its preference.
             UInt16? negotiatedProtocol = offeredProtocols.
                                              Where(supportedNextProtocols.Contains).
                                              Select(protocol => (UInt16?) protocol).
@@ -1126,9 +1155,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             if (KeyBinding is not null)
                 ntsKERecords.Add(KeyBinding);
 
-            // Everything below concerns an NTPv4 association. Without one there is nothing to
-            // point the client at and nothing a cookie could authenticate.
-            if (!Negotiation.NTPv4Negotiated)
+            // Everything below concerns an NTPv4 or NTPv5 association. Without one there is
+            // nothing to point the client at and nothing a cookie could authenticate.
+            //
+            // The Draft Identification of an NTPv5 client is not echoed: record 0x4001 is this
+            // server's NTSPublicKey record in a response, and a client of Norn would read the
+            // name of the draft as a public key.
+            if (!Negotiation.CookiesNegotiated)
             {
                 ntsKERecords.Add(NTSKE_Record.EndOfMessage);
                 return ntsKERecords;
@@ -1170,7 +1203,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                         S2CKey:            S2CKey,
                         AEADAlgorithm:     Negotiation.AEADAlgorithm!.Value,
                         IsCritical:        false,
-                        TimeProvider:      TimeProvider
+                        TimeProvider:      TimeProvider,
+
+                        // So that a cookie of one protocol is never taken for one of the other:
+                        // their keys come from different exporter contexts.
+                        NextProtocol:      Negotiation.NextProtocol!.Value
                     )
             );
 
@@ -1491,7 +1528,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             // Always § 5.1's context: see NegotiateNTSKE on why record 1024 means nothing here.
             var (c2sKey, s2cKey)  = NTSKE_ExportedKeys.ExportAll(exporter).
                                                        For(Outcome.AEADAlgorithm.Value,
-                                                           CompliantExporterContext: true);
+                                                           CompliantExporterContext: true,
+                                                           NextProtocol:             negotiation.NextProtocol ?? NextProtocolNTPv4);
 
             return BuildNTSKEResponseRecords(
                        negotiation,
@@ -2433,7 +2471,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                             // to ask for — neither is known until the line above.
                                             var (c2sKey, s2cKey) = tlsServer.KeysFor(
                                                                        negotiation.AEADAlgorithm ?? NTSAEAD.Default,
-                                                                       negotiation.CompliantAES128GCMSIVExporterContext
+                                                                       negotiation.CompliantAES128GCMSIVExporterContext,
+                                                                       negotiation.NextProtocol ?? NextProtocolNTPv4
                                                                    );
 
                                             ntsKERecords = BuildNTSKEResponseRecords(
@@ -2694,21 +2733,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                             CancellationToken  CancellationToken)
         {
 
-            // There is no NTS for NTPv5 yet, so every NTPv5 request is a plain one, and a server
-            // of NTS alone has nothing to give it.
-            if (!PlainNTP)
-            {
-                System.Threading.Interlocked.Increment(ref ntpPlainRequestsIgnored);
-                return;
-            }
-
             // Read once, as for NTPv4: a Redescribe in between must not mix two descriptions.
             var described     = clockDescription;
 
-            // Without authentication there is no NTPv5 request that qualifies under
-            // AuthenticatedOnly, and so this server offers the mode to NTPv5 only where it offers
-            // it to everyone.
-            var interleaving  = InterleavedTimestamps is { Policy: InterleavedModePolicy.Everyone } store
+            // The store, where the mode is served at all: to everyone, or under AuthenticatedOnly
+            // to requests of NTS alone - which the exchange below decides per request.
+            var interleaving  = InterleavedTimestamps is { Policy: not InterleavedModePolicy.Disabled } store
                                     ? store
                                     : null;
 
@@ -2733,16 +2763,23 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                         // at all where there is none.
                                         MinimumPoll:     (SByte) (RateLimiter?.KissPollExponent ?? 0)
                                     ) {
-                                        SupportedFlags       = NTPv5Flags.Unsynchronized |
-                                                             (interleaving is not null ? NTPv5Flags.InterleavedMode : NTPv5Flags.None),
+                                        SupportedFlags       = NTPv5Flags.Unsynchronized    |
+                                                               NTPv5Flags.AuthenticationNAK |
+                                                               (interleaving is not null ? NTPv5Flags.InterleavedMode : NTPv5Flags.None),
                                         ReferenceIds         = described.NTPv5ReferenceIds,
                                         ReferenceTimestamp   = NTPPacket.GetCurrentNTPTimestamp(ClockLastSynchronized.UtcDateTime),
-                                        MonotonicEpochId     = NTPv5MonotonicEpochId
+                                        MonotonicEpochId     = NTPv5MonotonicEpochId,
+                                        AnswersPlain         = PlainNTP
                                     },
-                                    request => {
+                                    new NTPv5NTSService(masterKeys,
+                                                        GetCurrentMasterKey,
+                                                        TimeProvider,
+                                                        MaxCookiesPerResponse),
+                                    (request, authenticated) => {
 
                                         // § 10: the store is touched only by a client that asked
-                                        // for the mode, so a basic client costs nothing here.
+                                        // for the mode, so a basic client costs nothing here; and
+                                        // under AuthenticatedOnly only by one whose NTS verified.
                                         if (interleaving is not null &&
                                             request.Flags.HasFlag(NTPv5Flags.InterleavedMode) &&
                                             RemoteEndPoint is IPEndPoint remoteIPEndPoint)
@@ -2751,7 +2788,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                             interleavedExchange = interleaving.BeginNTPv5Exchange(remoteIPEndPoint.Address,
                                                                                                   ReceivedAt,
                                                                                                   request.ServerCookie,
-                                                                                                  TimeProvider);
+                                                                                                  TimeProvider,
+                                                                                                  Authenticated: authenticated);
 
                                             if (interleavedExchange is not null)
                                                 return new NTPv5Exchange(ReceiveTimestamp:           interleavedExchange.ReceiveTimestamp,
@@ -2771,20 +2809,28 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                     out var errorResponse
                                 );
 
-            if (outcome != NTPv5RequestOutcome.Answered || response is null)
+            if (outcome is not NTPv5RequestOutcome.Answered
+                       and not NTPv5RequestOutcome.AuthenticationNAK || response is null)
             {
 
                 // Only what the client got wrong is an invalid request; an unsynchronized clock
-                // is this server's own state.
+                // is this server's own state, and a server of NTS alone ignores plain requests.
                 if (outcome is NTPv5RequestOutcome.Invalid
                             or NTPv5RequestOutcome.NotARequest
-                            or NTPv5RequestOutcome.OtherDraft)
+                            or NTPv5RequestOutcome.OtherDraft
+                            or NTPv5RequestOutcome.NotAuthenticated)
                     System.Threading.Interlocked.Increment(ref ntpRequestsInvalid);
+
+                if (outcome is NTPv5RequestOutcome.PlainNotServed)
+                    System.Threading.Interlocked.Increment(ref ntpPlainRequestsIgnored);
 
                 DebugX.Log($"NTPv5 request from {RemoteEndPoint} not answered ({outcome}): {errorResponse}");
                 return;
 
             }
+
+            if (outcome is NTPv5RequestOutcome.AuthenticationNAK)
+                DebugX.Log($"NTPv5 request from {RemoteEndPoint} answered with an Authentication NAK: {errorResponse}");
 
             await Socket.SendToAsync(new ArraySegment<Byte>(response),
                                      SocketFlags.None,
@@ -2798,6 +2844,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             System.Threading.Interlocked.Increment(ref ntpResponsesSent);
 
         }
+
 
         #endregion
 
@@ -3491,6 +3538,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             {
                 return BuildNTSNAK(RequestPacket, Exchange, "Invalid NTS cookie: " + errorResponse);
             }
+
+            // A cookie of NTPv5 holds keys of another exporter context: none for NTPv4.
+            if (ntsCookie.NextProtocol != NextProtocolNTPv4)
+                return BuildNTSNAK(RequestPacket, Exchange, $"The NTS cookie was issued for next protocol {ntsCookie.NextProtocol}, not for NTPv4!");
 
             // RFC 8915 §5.7: a request carries exactly one cookie in the clear. With two, the
             // one the authenticator was checked under and the one answered here could differ.

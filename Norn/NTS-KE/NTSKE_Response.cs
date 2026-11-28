@@ -144,6 +144,27 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
 
         /// <summary>
+        /// The next protocol the server agreed to: 0 for NTPv4, or NTPv5 under the draft's
+        /// protocol ID. Read from the records, as <see cref="AEADAlgorithm"/> is, and 0 where
+        /// there is none to read.
+        /// </summary>
+        public UInt16                     NextProtocol
+        {
+            get
+            {
+
+                var record = NTSKERecords.
+                                 FirstOrDefault(ntsKERecord => ntsKERecord.Type == NTSKE_RecordTypes.NTSNextProtocolNegotiation);
+
+                return record?.Body.Length >= 2
+                           ? (UInt16) ((record.Body[0] << 8) | record.Body[1])
+                           : (UInt16) 0;
+
+            }
+        }
+
+
+        /// <summary>
         /// The NTS-KE cookies.
         /// </summary>
         public IEnumerable<Byte[]>        Cookies

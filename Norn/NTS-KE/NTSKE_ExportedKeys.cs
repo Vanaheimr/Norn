@@ -111,8 +111,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// the exporter context, because for AES-128-GCM-SIV those two are not always the same —
         /// see <see cref="ExporterAlgorithmFor"/>.
         /// </summary>
-        private readonly Dictionary<(AEADAlgorithms Algorithm, AEADAlgorithms ExporterAlgorithm),
+        private readonly Dictionary<(UInt16 NextProtocol, AEADAlgorithms Algorithm, AEADAlgorithms ExporterAlgorithm),
                                     (Byte[] C2SKey, Byte[] S2CKey)> keys = [];
+
+        /// <summary>
+        /// The next protocols keys are derived for: NTPv4 (0), and NTPv5 under the draft's
+        /// protocol ID - RFC 8915 § 5.1 puts the protocol into the exporter context, so the two
+        /// get different keys from the same key exchange.
+        /// </summary>
+        public static IReadOnlyList<UInt16> NextProtocols { get; } = [ 0, NTPv5.NTPv5Draft.NTSNextProtocolId ];
 
         #endregion
 
@@ -164,7 +171,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #endregion
 
-        #region Context(ExporterAlgorithm, ServerToClient)
+        #region Context(ExporterAlgorithm, ServerToClient, NextProtocol = 0)
 
         /// <summary>
         /// The five-octet per-association context of RFC 8915 § 5.1: the protocol id (0 for
@@ -177,14 +184,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// output truncated to different lengths — the length is part of what HKDF expands.
         /// </remarks>
         public static Byte[] Context(AEADAlgorithms  ExporterAlgorithm,
-                                     Boolean         ServerToClient)
+                                     Boolean         ServerToClient,
+                                     UInt16          NextProtocol   = 0)
         {
 
             var algorithmBytes = ExporterAlgorithm.GetBytes();
 
             return [
-                       0x00,
-                       0x00,
+                       (Byte) (NextProtocol >> 8),
+                       (Byte)  NextProtocol,
                        algorithmBytes[0],
                        algorithmBytes[1],
                        ServerToClient ? (Byte) 0x01 : (Byte) 0x00
@@ -378,16 +386,20 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             // Implemented rather than Supported: the narrower list is what this peer offers, but
             // the other side may name anything from the wider one and be agreed with — and the
             // exporter is unavailable by the time that is known.
-            foreach (var algorithm in NTSAEAD.Implemented)
+            // And for every next protocol, which is not known yet either.
+            foreach (var nextProtocol in NextProtocols)
             {
+                foreach (var algorithm in NTSAEAD.Implemented)
+                {
 
-                exportedKeys.Export(Exporter, algorithm, CompliantExporterContext: true);
+                    exportedKeys.Export(Exporter, nextProtocol, algorithm, CompliantExporterContext: true);
 
-                // And the same algorithm again under chrony's context, for a peer that turns out
-                // not to have asked for the compliant one.
-                if (ExporterAlgorithmFor(algorithm, CompliantExporterContext: false) != algorithm)
-                    exportedKeys.Export(Exporter, algorithm, CompliantExporterContext: false);
+                    // And the same algorithm again under chrony's context, for a peer that turns out
+                    // not to have asked for the compliant one.
+                    if (ExporterAlgorithmFor(algorithm, CompliantExporterContext: false) != algorithm)
+                        exportedKeys.Export(Exporter, nextProtocol, algorithm, CompliantExporterContext: false);
 
+                }
             }
 
             return exportedKeys;
@@ -396,9 +408,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #endregion
 
-        #region (private) Export(Exporter, Algorithm, CompliantExporterContext)
+        #region (private) Export(Exporter, NextProtocol, Algorithm, CompliantExporterContext)
 
         private void Export(NTSKE_Exporter  Exporter,
+                            UInt16          NextProtocol,
                             AEADAlgorithms  Algorithm,
                             Boolean         CompliantExporterContext)
         {
@@ -409,15 +422,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             var keyLength          = NTSAEAD.KeyLength(Algorithm)!.Value;
             var exporterAlgorithm  = ExporterAlgorithmFor(Algorithm, CompliantExporterContext);
 
-            keys[(Algorithm, exporterAlgorithm)] = (
+            keys[(NextProtocol, Algorithm, exporterAlgorithm)] = (
                 Exporter(
                     ExporterLabel,
-                    Context(exporterAlgorithm, ServerToClient: false),
+                    Context(exporterAlgorithm, ServerToClient: false, NextProtocol),
                     keyLength
                 ),
                 Exporter(
                     ExporterLabel,
-                    Context(exporterAlgorithm, ServerToClient: true),
+                    Context(exporterAlgorithm, ServerToClient: true,  NextProtocol),
                     keyLength
                 )
             );
@@ -426,7 +439,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #endregion
 
-        #region For(Algorithm, CompliantExporterContext = true)
+        #region For(Algorithm, CompliantExporterContext = true, NextProtocol = 0)
 
         /// <summary>
         /// The keys for the agreed algorithm.
@@ -440,16 +453,18 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// No keys were derived for it, which means it is not one this implementation supports —
         /// and so not one it should have agreed to.
         /// </exception>
+        /// <param name="NextProtocol">The next protocol the key exchange settled on, 0 for NTPv4.</param>
         public (Byte[] C2SKey, Byte[] S2CKey) For(AEADAlgorithms  Algorithm,
-                                                  Boolean         CompliantExporterContext   = true)
+                                                  Boolean         CompliantExporterContext   = true,
+                                                  UInt16          NextProtocol               = 0)
         {
 
             var exporterAlgorithm = ExporterAlgorithmFor(Algorithm, CompliantExporterContext);
 
-            if (!keys.TryGetValue((Algorithm, exporterAlgorithm), out var keyPair))
+            if (!keys.TryGetValue((NextProtocol, Algorithm, exporterAlgorithm), out var keyPair))
                 throw new NotSupportedException(
                           $"No NTS keys were derived for AEAD algorithm {Algorithm.AsText()} " +
-                          $"({(UInt16) Algorithm}), so it is not one this implementation can use.");
+                          $"({(UInt16) Algorithm}) and next protocol {NextProtocol}, so it is not one this implementation can use.");
 
             return keyPair;
 

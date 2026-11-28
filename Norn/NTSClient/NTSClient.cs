@@ -31,6 +31,7 @@ using org.GraphDefined.Vanaheimr.Hermod.SSH;
 using org.GraphDefined.Vanaheimr.Hermod.SSH.Client;
 
 using org.GraphDefined.Vanaheimr.Norn.NTP;
+using org.GraphDefined.Vanaheimr.Norn.NTPv5;
 
 #endregion
 
@@ -214,6 +215,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </remarks>
         public Boolean CompliantAES128GCMSIVExporterContext { get; }
 
+        /// <summary>
+        /// Whether the key exchange offers NTPv5 (default: no). With
+        /// <see cref="NTPv5Support.Draft"/> it offers NTPv5 under the draft's protocol ID
+        /// before NTPv4, and names its draft in record 0x4001, as draft-ietf-ntp-ntpv5-10 § 11 has a
+        /// client of a draft do; the keys are then those of whichever protocol the server agreed to.
+        /// </summary>
+        public NTPv5Support NTPv5 { get; init; } = NTPv5Support.Disabled;
+
         #endregion
 
         #region Constructor(s)
@@ -343,7 +352,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         {
 
             var records = new List<NTSKE_Record>() {
-                              NTSKE_Record.NTSNextProtocolNegotiation,
+                              // NTPv5 first where it is offered, NTPv4 to fall back on.
+                              NTPv5 != NTPv5Support.Disabled
+                                  ? NTSKE_Record.NextProtocolNegotiation(NTPv5Draft.NTSNextProtocolId, 0)
+                                  : NTSKE_Record.NTSNextProtocolNegotiation,
                               // Everything this client can perform, in preference order.
                               // RFC 8915 § 4.1.5 leaves the choice to the server but has it
                               // choose from this list, so offering only the mandatory algorithm
@@ -381,6 +393,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             // The NTP server asked for, on both transports, before the end of the message.
             if (RequestedNTPServer is DomainName ntpServer)
                 records.Add(new NTSKERecords.NTPv4ServerNegotiation(false, System.Text.Encoding.ASCII.GetBytes(ntpServer.Trimmed)));
+
+            // draft-ietf-ntp-ntpv5-10 § 11: the draft, non-critical, ASCII, no trailing zeros.
+            if (NTPv5 != NTPv5Support.Disabled)
+                records.Add(new NTSKE_Record(false,
+                                             (NTSKE_RecordTypes) NTPv5Draft.NTSKEDraftRecordType,
+                                             NTPv5Draft.IdentificationBytes.ToArray()));
 
             records.Add(NTSKE_Record.EndOfMessage);
 
@@ -753,7 +771,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                         if (NTSKE_Record.TryParse(readResult.ResponseBytes, out var records, out var errorResponse))
                         {
 
-                            if (!NTSKERecordValidator.ValidateServerResponse(records, out var validationError, out var validationErrorCategory))
+                            if (!NTSKERecordValidator.ValidateServerResponse(records, out var validationError, out var validationErrorCategory, AcceptNTPv5: NTPv5 != NTPv5Support.Disabled))
                                 return NTSKEResult.Failed(
                                            validationError ?? "Invalid NTS-KE response!",
                                            validationErrorCategory,
@@ -808,7 +826,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                 (C2S_Key, S2C_Key) = ntsTlsClient.KeysFor(
                                                          negotiated,
                                                          CompliantAES128GCMSIVExporterContext &&
-                                                             negotiation.CompliantAES128GCMSIVExporterContext
+                                                             negotiation.CompliantAES128GCMSIVExporterContext,
+                                                         // The protocol is in the exporter context too.
+                                                         negotiation.NextProtocol
                                                      );
                             }
                             catch (Exception e)
@@ -1014,7 +1034,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                    TakeTimingInfoSnapshot()
                                );
 
-                    if (!NTSKERecordValidator.ValidateServerResponse(records, out var validationError, out var validationErrorCategory, OverSSH: true))
+                    if (!NTSKERecordValidator.ValidateServerResponse(records, out var validationError, out var validationErrorCategory, OverSSH: true, AcceptNTPv5: NTPv5 != NTPv5Support.Disabled))
                         return NTSKEResult.Failed(
                                    validationError ?? "Invalid NTS-KE response!",
                                    validationErrorCategory,
@@ -1056,7 +1076,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     (C2S_Key, S2C_Key) = NTSKE_ExportedKeys.ExportAll(method == SSHKeyBindingMethods.Exporter
                                                                           ? NTSKE_ExportedKeys.SSHExporter(SSHClient.Exporter, methodData)
                                                                           : NTSKE_ExportedKeys.TransportedSecretExporter(methodData)).
-                                                            For(negotiated, CompliantExporterContext: true);
+                                                            For(negotiated,
+                                                                CompliantExporterContext:  true,
+                                                                NextProtocol:              new NTSKE_Response(records, [], []).NextProtocol);
 
                     var ntsKEResponse = new NTSKE_Response(
                                             records,

@@ -127,13 +127,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTPv5
             Assert.That(response!.ServerCookie,  Is.Zero);
             Assert.That(response.Flags,          Is.EqualTo(NTPv5Flags.None));
             Assert.That(response.Find(NTPv5ExtensionTypes.ServerInformation)!.TryReadServerInformation(out _, out var flags), Is.True);
-            Assert.That(flags,                   Is.EqualTo(NTPv5Flags.Unsynchronized));
+            Assert.That(flags,                   Is.EqualTo(NTPv5Flags.Unsynchronized | NTPv5Flags.AuthenticationNAK), "no interleaved mode; NAKs, since there is NTS");
 
             var served = await AskAsync(udpClient, server!.UDPPort,
                                         NTPv5Packet.Request(ExtensionFields: [ NTPv5ExtensionField.ServerInformation() ]));
 
             Assert.That(served!.Find(NTPv5ExtensionTypes.ServerInformation)!.TryReadServerInformation(out _, out var servedFlags), Is.True);
-            Assert.That(servedFlags,             Is.EqualTo(NTPv5Flags.Unsynchronized | NTPv5Flags.InterleavedMode));
+            Assert.That(servedFlags,             Is.EqualTo(NTPv5Flags.Unsynchronized | NTPv5Flags.InterleavedMode | NTPv5Flags.AuthenticationNAK));
 
         }
 

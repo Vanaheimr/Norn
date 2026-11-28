@@ -43,7 +43,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                  Byte[]          S2CKey,
                                  AEADAlgorithms  AEADAlgorithm   = AEADAlgorithms.AES_SIV_CMAC_256,
                                  Boolean         IsCritical      = false,
-                                 TimeProvider?   TimeProvider    = null)
+                                 TimeProvider?   TimeProvider    = null,
+                                 UInt16          NextProtocol    = 0)
 
         {
 
@@ -70,7 +71,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 cookies.Add(
                     new NTSKERecords.NewCookieForNTPv4(
                         IsCritical,
-                        NTSCookie.Create(MasterKey, C2SKey, S2CKey, AEADAlgorithm, TimeProvider).Encrypt(MasterKey)
+                        NTSCookie.Create(MasterKey, C2SKey, S2CKey, AEADAlgorithm, TimeProvider, NextProtocol).Encrypt(MasterKey)
                     )
                 );
             }
@@ -90,7 +91,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                         Byte[]          C2SKey,
                                         Byte[]          S2CKey,
                                         AEADAlgorithms  AEADAlgorithm   = AEADAlgorithms.AES_SIV_CMAC_256,
-                                        TimeProvider?   TimeProvider    = null)
+                                        TimeProvider?   TimeProvider    = null,
+                                        UInt16          NextProtocol    = 0)
                                     //    Boolean         IsCritical      = false)
 
         {
@@ -117,7 +119,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             {
                 cookies.Add(
                     new NTSCookieExtension(
-                        NTSCookie.Create(MasterKey, C2SKey, S2CKey, AEADAlgorithm, TimeProvider).Encrypt(MasterKey)
+                        NTSCookie.Create(MasterKey, C2SKey, S2CKey, AEADAlgorithm, TimeProvider, NextProtocol).Encrypt(MasterKey)
                     )
                 );
             }

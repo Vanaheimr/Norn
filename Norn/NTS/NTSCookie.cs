@@ -96,6 +96,19 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public DateTimeOffset  Timestamp        { get; } = Illias.Timestamp.Now;
         public Byte[]          Nonce            { get; } = [];
 
+        /// <summary>
+        /// The NTS next protocol the keys of this cookie were exported for: 0 for NTPv4, or
+        /// NTPv5 under the draft's protocol ID. RFC 8915 § 5.1 puts the protocol into the
+        /// exporter context, so the keys of one are no keys of the other, and a cookie is good
+        /// for the protocol it was issued for alone.
+        /// </summary>
+        /// <remarks>
+        /// Not written into the body of an NTPv4 cookie, which stays exactly as it was - a cookie
+        /// issued before there was NTPv5 is an NTPv4 cookie still - and written as two octets after
+        /// the keys of any other.
+        /// </remarks>
+        public UInt16          NextProtocol     { get; }
+
         #endregion
 
         #region Constructor(s)
@@ -108,7 +121,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                           Byte[]           S2CKey,
                           DateTimeOffset?  Timestamp       = null,
                           AEADAlgorithms?  AEADAlgorithm   = null,
-                          Byte[]?          Nonce           = null)
+                          Byte[]?          Nonce           = null,
+                          UInt16           NextProtocol    = 0)
         {
 
             #region Initial checks
@@ -133,6 +147,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             this.AEADAlgorithm  = AEADAlgorithm ?? AEADAlgorithms.AES_SIV_CMAC_256;
             this.Timestamp      = Timestamp     ?? Illias.Timestamp.Now;
             this.Nonce          = Nonce         ?? RandomNumberGenerator.GetBytes(32);
+            this.NextProtocol   = NextProtocol;
 
             unchecked
             {
@@ -145,6 +160,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 hash.Add     (this.AEADAlgorithm);
                 hash.Add     (this.Timestamp.ToUnixTimestamp());
                 hash.AddBytes(this.Nonce);
+                hash.Add     (this.NextProtocol);
 
                 hashCode = hash.ToHashCode();
 
@@ -168,7 +184,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                        Byte[]           C2SKey,
                                        Byte[]           S2CKey,
                                        AEADAlgorithms?  AEADAlgorithm   = null,
-                                       TimeProvider?    TimeProvider    = null)
+                                       TimeProvider?    TimeProvider    = null,
+                                       UInt16           NextProtocol    = 0)
         {
 
             return new (
@@ -177,7 +194,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                        MasterKeyId:     MasterKey.Id,
                        AEADAlgorithm:   AEADAlgorithm,
                        Timestamp:       TimeProvider?.GetUtcNow() ?? Illias.Timestamp.Now,
-                       Nonce:           RandomNumberGenerator.GetBytes(32)
+                       Nonce:           RandomNumberGenerator.GetBytes(32),
+                       NextProtocol:    NextProtocol
                    );
 
         }
@@ -350,6 +368,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                 #endregion
 
+                #region NextProtocol     [optional]
+
+                // Absent for NTPv4, which every cookie written before there was NTPv5 is.
+                var nextProtocol = JSON["nextProtocol"]?.Value<UInt16>() ?? 0;
+
+                #endregion
+
 
                 NTSCookie = new NTSCookie(
                                 masterKeyId,
@@ -357,7 +382,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                 s2cKey,
                                 timestamp,
                                 aeadAlgorithm,
-                                nonce
+                                nonce,
+                                nextProtocol
                             );
 
                 if (CustomNTSCookieParser is not null)
@@ -448,6 +474,32 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 // S2C key
                 var s2cKey = Bytes.Slice(OffsetC2SKey + keyLength, keyLength).ToArray();
 
+                // The next protocol: nothing more for NTPv4, two octets for any other. Anything
+                // else after the keys is no cookie this server sealed.
+                UInt16 nextProtocol;
+
+                if (Bytes.Length == expectedLength)
+                    nextProtocol = 0;
+
+                else if (Bytes.Length == expectedLength + 2)
+                {
+
+                    nextProtocol = BinaryPrimitives.ReadUInt16BigEndian(Bytes.Slice(expectedLength, 2));
+
+                    if (nextProtocol == 0)
+                    {
+                        ErrorResponse = "An NTPv4 cookie does not name its next protocol!";
+                        return false;
+                    }
+
+                }
+
+                else
+                {
+                    ErrorResponse = $"The given binary representation of a NTS cookie for {algorithmId} has {Bytes.Length - expectedLength} octet(s) too many!";
+                    return false;
+                }
+
 
                 NTSCookie = new NTSCookie(
                                 MasterKeyId,
@@ -455,7 +507,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                 s2cKey,
                                 DateTimeOffsetExtensions.FromUnixTimestamp((Int64) timestampUInt64),
                                 algorithmId,
-                                Nonce
+                                Nonce,
+                                nextProtocol
                             );
 
                 return true;
@@ -498,7 +551,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                ? new JProperty("aeadAlgorithm",   AEADAlgorithm.       ToString())
                                : null,
 
-                                 new JProperty("nonce",           Nonce.               ToBase64())
+                                 new JProperty("nonce",           Nonce.               ToBase64()),
+
+                           NextProtocol != 0
+                               ? new JProperty("nextProtocol",    NextProtocol)
+                               : null
 
                        );
 
@@ -524,7 +581,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             C2SKey.AsSpan().CopyTo(Destination.Slice(OffsetC2SKey,                 C2SKey.Length));
             S2CKey.AsSpan().CopyTo(Destination.Slice(OffsetC2SKey + C2SKey.Length, S2CKey.Length));
 
+            if (NextProtocol != 0)
+                BinaryPrimitives.WriteUInt16BigEndian(Destination.Slice(OffsetC2SKey + C2SKey.Length + S2CKey.Length, 2), NextProtocol);
+
         }
+
+        /// <summary>
+        /// The octets of the body: two more than the keys for a protocol other than NTPv4.
+        /// </summary>
+        private Int32 BodyLength
+            => OffsetC2SKey + C2SKey.Length + S2CKey.Length + (NextProtocol != 0 ? 2 : 0);
 
         /// <summary>
         /// Return the decrypted cookie body.
@@ -535,7 +601,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public Byte[] ToByteArray()
         {
 
-            var cookie = new Byte[OffsetC2SKey + C2SKey.Length + S2CKey.Length];
+            var cookie = new Byte[BodyLength];
             WriteBodyTo(cookie);
             return cookie;
 
@@ -556,7 +622,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                    (Byte[]) S2CKey.Clone(),
                    Timestamp,
                    AEADAlgorithm,
-                   (Byte[]) Nonce. Clone()
+                   (Byte[]) Nonce. Clone(),
+                   NextProtocol
                );
 
         #endregion
@@ -597,13 +664,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                 S2CKey,
                                 reStampedTimestamp,
                                 AEADAlgorithm,
-                                RandomNumberGenerator.GetBytes(NonceLength)
+                                RandomNumberGenerator.GetBytes(NonceLength),
+                                NextProtocol
                             );
             }
             else
                 ntsCookie = this;
 
-            var bodyLength     = OffsetC2SKey + ntsCookie.C2SKey.Length + ntsCookie.S2CKey.Length;
+            var bodyLength     = ntsCookie.BodyLength;
             var aeadLength     = SyntheticIVLength + bodyLength;
             var sealedCookie   = new Byte[SealedOffsetAEAD + aeadLength];
 
@@ -1031,7 +1099,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                MasterKeyId.          Equals       (NTSCookie.MasterKeyId)            &&
                AEADAlgorithm.        Equals       (NTSCookie.AEADAlgorithm)          &&
                Timestamp.ToUnixTimestamp().Equals (NTSCookie.Timestamp.ToUnixTimestamp()) &&
-               Nonce.                SequenceEqual(NTSCookie.Nonce);
+               Nonce.                SequenceEqual(NTSCookie.Nonce)                  &&
+               NextProtocol.         Equals       (NTSCookie.NextProtocol);
 
         #endregion
 
