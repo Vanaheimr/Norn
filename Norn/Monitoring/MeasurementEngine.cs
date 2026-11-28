@@ -267,27 +267,46 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                 // to "stop sending packets to that server" and § 7.4 b says to poll it less
                 // often. A round that measured anyway and threw the result away would satisfy
                 // neither: the packets are the thing being asked for.
-                var access = AccessStateFor(Server.Hostname);
+                var access          = AccessStateFor(Server.Hostname);
+                var keyExchangeRerun = false;
 
-                if (config.RespectKissOfDeath &&
-                    !access.MayQuery(timeProvider.GetUtcNow()))
+                if (config.RespectKissOfDeath)
                 {
 
-                    totalStopwatch.Stop();
+                    var now = timeProvider.GetUtcNow();
 
-                    return new NTSMeasurementResult(Server.Hostname, RoundId, Timestamp: timeProvider.GetUtcNow()) {
-                               Success        = false,
-                               Skipped        = true,
-                               ErrorMessage   = Error.Create(
-                                                    access.Demobilized
-                                                        ? $"Not querying {Server.Hostname}: it answered '{access.LastKiss?.Code}' and the association is demobilized."
-                                                        : access.LastKiss?.Action == NTPKissAction.Demobilize
-                                                              ? $"Not querying {Server.Hostname} before {access.NextQueryNotBefore:u}: it answered '{access.LastKiss?.Code}' without NTS authentication."
-                                                              : $"Not querying {Server.Hostname} before {access.NextQueryNotBefore:u}: it answered '{access.LastKiss?.Code}' and is polled every {access.PollInterval.TotalSeconds:0} seconds."
-                                                ),
-                               ErrorCategory  = MonitoringErrorCategory.KissOfDeath,
-                               TotalDuration  = totalStopwatch.Elapsed
-                           };
+                    if (access.Demobilized)
+                    {
+
+                        // The association is gone, and its keys and cookies with it. Where a
+                        // kiss without NTS authentication ended it, RFC 8915 § 5.7 lets a new
+                        // key exchange make a new one, after the backoff of § 4.2.
+                        ForgetKeyExchange(Server.Hostname);
+
+                        keyExchangeRerun = access.TryBeginKeyExchangeRerun(now);
+
+                    }
+
+                    if (!keyExchangeRerun && !access.MayQuery(now))
+                    {
+
+                        totalStopwatch.Stop();
+
+                        return new NTSMeasurementResult(Server.Hostname, RoundId, Timestamp: timeProvider.GetUtcNow()) {
+                                   Success        = false,
+                                   Skipped        = true,
+                                   ErrorMessage   = Error.Create(
+                                                        access.KeyExchangeNotBefore is DateTimeOffset notBefore
+                                                            ? $"Not querying {Server.Hostname}: it answered '{access.LastKiss?.Code}' without NTS authentication, the association is demobilized, and a new key exchange follows not before {notBefore:u}."
+                                                            : access.Demobilized
+                                                                  ? $"Not querying {Server.Hostname}: it answered '{access.LastKiss?.Code}' and the association is demobilized."
+                                                                  : $"Not querying {Server.Hostname} before {access.NextQueryNotBefore:u}: it answered '{access.LastKiss?.Code}' and is polled every {access.PollInterval.TotalSeconds:0} seconds."
+                                                    ),
+                                   ErrorCategory  = MonitoringErrorCategory.KissOfDeath,
+                                   TotalDuration  = totalStopwatch.Elapsed
+                               };
+
+                    }
 
                 }
 
@@ -358,6 +377,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                     cachedState = ntskeCache.GetValueOrDefault(Server.Hostname);
 
                 }
+
+                // The new association of a key exchange begun after a forced disassociation.
+                if (keyExchangeRerun && cachedState?.NTSKEResponse is not null)
+                    access.RecordKeyExchange(timeProvider.GetUtcNow());
 
                 if (cachedState?.NTSKEResponse is null)
                 {

@@ -132,15 +132,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.Monitoring
 
         #endregion
 
-        #region AForgedDENYCostsOnePauseAndNotTheServer()
+        #region AForgedDENY_EndsTheAssociation_AndANewKeyExchangeFollowsAfterABackoff()
 
         /// <summary>
         /// Somebody on the path answers the request with "DENY", and the server's own
         /// answer never arrives. The association is an NTS one and the kiss is not
-        /// authenticated: the engine pauses, and comes back.
+        /// authenticated: the association ends, as RFC 8915 § 5.7 has the client comply,
+        /// and after the backoff of § 4.2 a new key exchange makes a new one.
         /// </summary>
         [Test]
-        public async Task AForgedDENYCostsOnePauseAndNotTheServer()
+        public async Task AForgedDENY_EndsTheAssociation_AndANewKeyExchangeFollowsAfterABackoff()
         {
 
             var (ntsServer, endpoint) = await StartServer();
@@ -169,27 +170,35 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.Monitoring
                 Assert.That(kissed.NTP?.KissOfDeath,                     Is.True, kissed.ErrorMessage?.ToString());
                 Assert.That(kissed.NTP?.KissOfDeathCode,                 Is.EqualTo("DENY"));
 
-                Assert.That(access.Demobilized,                          Is.False, "an unauthenticated DENY must not end an NTS association");
-                Assert.That(access.NextQueryNotBefore,                   Is.Not.Null);
-                Assert.That(access.NextQueryNotBefore!.Value - clock.GetUtcNow(),
+                Assert.That(access.Demobilized,                          Is.True, "RFC 8915 § 5.7: the client complies with the kiss");
+                Assert.That(access.KeyExchangeNotBefore,                 Is.Not.Null);
+                Assert.That(access.KeyExchangeNotBefore!.Value - clock.GetUtcNow(),
                                                                          Is.EqualTo(TimeSpan.FromSeconds(8192)).Within(TimeSpan.FromSeconds(30)));
                 Assert.That(access.PollExponent,                         Is.EqualTo(6), "the polling rate is as it was");
 
-                // Within the pause nothing is sent ...
+                // Within the backoff nothing is sent, and the keys and cookies are gone ...
                 var sent    = forger.KissesSent;
                 var skipped = await engine.MeasureSingleServer(forged, Guid.NewGuid(), NoNameServers());
 
                 Assert.That(skipped.Skipped,                             Is.True);
                 Assert.That(skipped.ErrorMessage?.ToString(),            Does.Contain("without NTS authentication"));
+                Assert.That(skipped.ErrorMessage?.ToString(),            Does.Contain("new key exchange"));
                 Assert.That(forger.KissesSent,                           Is.EqualTo(sent));
+                Assert.That(engine.ForgetKeyExchange(forged.Hostname),   Is.False, "the association's key exchange was forgotten");
 
-                // ... and after it the server is asked again.
+                // ... and after it a new key exchange makes a new association, which is asked.
                 clock.Shift = TimeSpan.FromSeconds(8200);
 
                 var again   = await engine.MeasureSingleServer(forged, Guid.NewGuid(), NoNameServers());
 
                 Assert.That(again.Skipped,                               Is.False);
+                Assert.That(again.NTSKEFromCache,                        Is.False, "a new key exchange");
                 Assert.That(forger.KissesSent,                           Is.GreaterThan(sent));
+
+                // The forger kisses the new association too: the next backoff is 1.5 times as long.
+                Assert.That(access.Demobilized,                          Is.True);
+                Assert.That(access.KeyExchangeNotBefore!.Value - clock.GetUtcNow(),
+                                                                         Is.EqualTo(TimeSpan.FromSeconds(12288)).Within(TimeSpan.FromSeconds(30)));
 
             }
             finally

@@ -169,73 +169,137 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTP
 
         #endregion
 
-        #region DENY_WithoutAuthenticationCostsAnNTSAssociationOnePause()
+        #region DENY_WithoutAuthentication_DemobilizesUntilANewKeyExchange(Code)
 
         /// <summary>
-        /// Anyone who saw the request can write this kiss.
-        /// It must not be the end of a time source.
+        /// Anyone who saw the request can write this kiss, and it ends the association all the
+        /// same, as RFC 8915 § 5.7 has the client comply with it. It is not the end of the time
+        /// source: a new key exchange may make a new association, after a backoff.
         /// </summary>
         [TestCase("DENY")]
         [TestCase("RSTR")]
-        public void DENY_WithoutAuthenticationCostsAnNTSAssociationOnePause(String Code)
+        public void DENY_WithoutAuthentication_DemobilizesUntilANewKeyExchange(String Code)
         {
 
             var access = new NTPServerAccessState(InitialPollExponent: 6);
 
             access.Apply(new NTPKissOfDeath(Code, 4), now, NTPKissTrust.Unauthenticated);
 
-            Assert.That(access.Demobilized,                              Is.False);
-            Assert.That(access.MayQuery(now.AddSeconds(8191)),           Is.False);
-            Assert.That(access.MayQuery(now.AddSeconds(8192)),           Is.True);
+            Assert.That(access.Demobilized,                              Is.True);
+            Assert.That(access.MayQuery(now.AddDays(365)),               Is.False, "no packet to the old association, ever");
+            Assert.That(access.KeyExchangeNotBefore,                     Is.EqualTo(now.AddSeconds(8192)));
+            Assert.That(access.MayRerunKeyExchange(now.AddSeconds(8191)), Is.False);
+            Assert.That(access.MayRerunKeyExchange(now.AddSeconds(8192)), Is.True);
 
-            // The polling rate is as it was: after the pause, nothing is left of the kiss.
+            // A key exchange that was not begun as a rerun lifts nothing.
+            Assert.That(access.RecordKeyExchange(now.AddSeconds(8192)),  Is.False);
+            Assert.That(access.Demobilized,                              Is.True);
+
+            Assert.That(access.TryBeginKeyExchangeRerun(now.AddSeconds(8192)), Is.True);
+            Assert.That(access.MayQuery(now.AddSeconds(8192)),           Is.False, "not before the key exchange has succeeded");
+            Assert.That(access.RecordKeyExchange(now.AddSeconds(8193)),  Is.True);
+
+            Assert.That(access.Demobilized,                              Is.False);
+            Assert.That(access.MayQuery(now.AddSeconds(8193)),           Is.True);
+            Assert.That(access.KeyExchangeNotBefore,                     Is.Null);
+
+            // The polling rate is as it was.
             Assert.That(access.PollExponent,                             Is.EqualTo(6));
             Assert.That(access.IsRateLimited,                            Is.False);
-
-            access.RecordQuery(now.AddSeconds(8192));
-
-            Assert.That(access.MayQuery(now.AddSeconds(8193)),           Is.True);
 
         }
 
         #endregion
 
 
-        #region DENY_WithoutAuthenticationCostsThePauseThatWasSet()
+        #region DENY_WithoutAuthentication_BacksOffAsRFC8915Section4_2Says()
 
         /// <summary>
-        /// Two hours is a default, and whoever runs the client may weigh it otherwise.
+        /// RFC 8915 § 4.2: exponential backoff with a base of 1.5, at least ten seconds and at
+        /// most five days, and not reset before a key exchange has been followed by a
+        /// successful use of what it agreed to. Two hours is where this client starts, and
+        /// whoever runs it may weigh that otherwise within those bounds.
         /// </summary>
         [Test]
-        public void DENY_WithoutAuthenticationCostsThePauseThatWasSet()
+        public void DENY_WithoutAuthentication_BacksOffAsRFC8915Section4_2Says()
         {
 
-            Assert.That(new NTPServerAccessState().UnauthenticatedDenyPause,                           Is.EqualTo(TimeSpan.FromSeconds(8192)));
-            Assert.That(new NTPServerAccessState(MaximumPollExponent: 10).UnauthenticatedDenyPause,    Is.EqualTo(TimeSpan.FromSeconds(1024)));
+            Assert.That(new NTPServerAccessState().UnauthenticatedDenyPause,                            Is.EqualTo(TimeSpan.FromSeconds(8192)));
+            Assert.That(new NTPServerAccessState(MaximumPollExponent: 10).UnauthenticatedDenyPause,     Is.EqualTo(TimeSpan.FromSeconds(1024)));
+            Assert.That(new NTPServerAccessState(UnauthenticatedDenyPause: TimeSpan.Zero).UnauthenticatedDenyPause,
+                        Is.EqualTo(TimeSpan.FromSeconds(10)), "zero no longer ignores the kiss: ten seconds at the least");
+            Assert.That(new NTPServerAccessState(UnauthenticatedDenyPause: TimeSpan.FromDays(9)).UnauthenticatedDenyPause,
+                        Is.EqualTo(TimeSpan.FromDays(5)));
 
             var access = new NTPServerAccessState(UnauthenticatedDenyPause: TimeSpan.FromMinutes(10));
+            var t      = now;
 
-            access.Apply(new NTPKissOfDeath("DENY", 4), now, NTPKissTrust.Unauthenticated);
+            // DENY, rerun, answered by nobody but the next DENY: 600 s, 900 s, 1350 s.
+            foreach (var wait in new[] { 600, 900, 1350 })
+            {
 
-            Assert.That(access.Demobilized,                              Is.False);
-            Assert.That(access.MayQuery(now.AddSeconds(599)),            Is.False);
-            Assert.That(access.MayQuery(now.AddSeconds(600)),            Is.True);
+                access.Apply(new NTPKissOfDeath("DENY", 4), t, NTPKissTrust.Unauthenticated);
 
-            // Zero: such a kiss is not listened to at all.
-            var deaf   = new NTPServerAccessState(UnauthenticatedDenyPause: TimeSpan.Zero);
+                Assert.That(access.KeyExchangeNotBefore, Is.EqualTo(t.AddSeconds(wait)), $"the wait of {wait} s");
 
-            deaf.Apply(new NTPKissOfDeath("DENY", 4), now, NTPKissTrust.Unauthenticated);
+                t = t.AddSeconds(wait);
 
-            Assert.That(deaf.Demobilized,                                Is.False);
-            Assert.That(deaf.MayQuery(now),                              Is.True);
+                Assert.That(access.TryBeginKeyExchangeRerun(t), Is.True);
+                Assert.That(access.RecordKeyExchange(t),        Is.True);
 
-            // An authenticated one is obeyed whatever the pause is set to.
-            deaf.Apply(new NTPKissOfDeath("DENY", 4), now, NTPKissTrust.Authenticated);
+            }
 
-            Assert.That(deaf.Demobilized,                                Is.True);
+            Assert.That(access.KeyExchangeReruns, Is.EqualTo(3));
+
+            // A rerun that fails is a retry like any other: the next one waits longer.
+            access.Apply(new NTPKissOfDeath("DENY", 4), t, NTPKissTrust.Unauthenticated);
+            t = t.AddSeconds(2025);
+            Assert.That(access.TryBeginKeyExchangeRerun(t),            Is.True);
+            Assert.That(access.KeyExchangeNotBefore,                   Is.EqualTo(t.AddSeconds(3037.5)));
+            Assert.That(access.TryBeginKeyExchangeRerun(t.AddSeconds(3037)), Is.False);
+
+            t = t.AddSeconds(3037.5);
+            Assert.That(access.TryBeginKeyExchangeRerun(t), Is.True);
+            Assert.That(access.RecordKeyExchange(t),        Is.True);
+
+            // An answer under the new association is the successful use: back to the start.
+            access.RecordAnswer();
+            Assert.That(access.KeyExchangeReruns, Is.Zero);
+
+            access.Apply(new NTPKissOfDeath("DENY", 4), t, NTPKissTrust.Unauthenticated);
+            Assert.That(access.KeyExchangeNotBefore, Is.EqualTo(t.AddSeconds(600)));
+
+            // Never more than five days.
+            Assert.That(access.KeyExchangeRetryInterval(1000), Is.EqualTo(TimeSpan.FromDays(5)));
 
             Assert.That(() => new NTPServerAccessState(UnauthenticatedDenyPause: TimeSpan.FromSeconds(-1)),
                         Throws.InstanceOf<ArgumentOutOfRangeException>());
+
+        }
+
+        #endregion
+
+
+        #region DENY_Authenticated_IsForGood()
+
+        /// <summary>
+        /// A kiss sealed under the S2C key is the server's own word: no new key exchange follows
+        /// it, and a later one without authentication does not soften it.
+        /// </summary>
+        [Test]
+        public void DENY_Authenticated_IsForGood()
+        {
+
+            var access = new NTPServerAccessState(UnauthenticatedDenyPause: TimeSpan.FromMinutes(10));
+
+            access.Apply(new NTPKissOfDeath("DENY", 4), now, NTPKissTrust.Authenticated);
+            access.Apply(new NTPKissOfDeath("DENY", 4), now, NTPKissTrust.Unauthenticated);
+
+            Assert.That(access.Demobilized,                               Is.True);
+            Assert.That(access.KeyExchangeNotBefore,                      Is.Null);
+            Assert.That(access.MayRerunKeyExchange(now.AddDays(3650)),    Is.False);
+            Assert.That(access.TryBeginKeyExchangeRerun(now.AddDays(3650)), Is.False);
+            Assert.That(access.RecordKeyExchange(now.AddDays(3650)),      Is.False);
 
         }
 

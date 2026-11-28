@@ -428,8 +428,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTPv5
 
         /// <summary>
         /// § 6 and § 9: the poll field is the minimum polling interval, followed up to 2^15
-        /// without authentication and 2^18 with it; 127 ends the association - unless it came
-        /// unauthenticated on an NTS association.
+        /// without authentication and 2^18 with it; 127 ends the association - and where it came
+        /// unauthenticated on an NTS association, a new key exchange may follow after a backoff.
         /// </summary>
         [Test]
         public void ThePollField_SupersedesRateAndDeny()
@@ -455,9 +455,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTPv5
             Assert.That(goAway.Demobilized, Is.True);
 
             var forged = new NTPServerAccessState(UnauthenticatedDenyPause: TimeSpan.FromMinutes(5));
-            Assert.That(forged.ApplyNTPv5Poll(NTPv5Packet.PollGoAway, now, NTPKissTrust.Unauthenticated), Is.True);
-            Assert.That(forged.Demobilized, Is.False);
-            Assert.That(forged.MayQuery(now.AddMinutes(5)), Is.True);
+            Assert.That(forged.ApplyNTPv5Poll(NTPv5Packet.PollGoAway, now, NTPKissTrust.Unauthenticated), Is.False);
+            Assert.That(forged.Demobilized, Is.True);
+            Assert.That(forged.MayQuery(now.AddDays(365)), Is.False);
+            Assert.That(forged.MayRerunKeyExchange(now.AddMinutes(5)), Is.True);
 
         }
 

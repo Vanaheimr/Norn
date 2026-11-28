@@ -72,8 +72,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         public TimeSpan                    NTPTimeout                 { get; set; } = TimeSpan.FromSeconds(5);
 
         /// <summary>
-        /// How long to stay away from an NTS server after a "DENY" or "RSTR" kiss that was not
-        /// authenticated; null for the longest poll interval, about two hours.
+        /// How long to wait before a new key exchange with an NTS server whose association a
+        /// "DENY" or "RSTR" kiss without authentication ended, the first time; each further wait
+        /// is 1.5 times as long. Null for the longest poll interval, about two hours.
         /// </summary>
         /// <remarks>
         /// See <see cref="NTPServerAccessState.UnauthenticatedDenyPause"/>.

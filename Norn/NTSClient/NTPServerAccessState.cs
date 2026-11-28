@@ -48,11 +48,20 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
     /// towards the rate this client started from.
     /// </para>
     /// <para>
-    /// "DENY" and "RSTR" end the association for good, as § 7.4 a says, unless the association
-    /// is an NTS one and the kiss was not authenticated (<see cref="NTPKissTrust"/>). Then it
-    /// costs this client one pause of <see cref="UnauthenticatedDenyPause"/>, by default the
-    /// longest poll interval, and no more. Anyone on the
-    /// path can write such a kiss; one datagram must not be the end of a time source.
+    /// "DENY" and "RSTR" end the association, as § 7.4 a says: this client stops sending
+    /// packets to the server. Where the association is a plain one, or the kiss was sealed under
+    /// the S2C key, that is for good. Where it is an NTS one and the kiss was not authenticated
+    /// (<see cref="NTPKissTrust"/>), anyone on the path could have written it, and one datagram
+    /// must not be the end of a time source: RFC 8915 § 5.7 lets the client "automatically rerun
+    /// the NTS-KE protocol upon forced disassociation", as long as it "MUST avoid quickly
+    /// looping between the NTS-KE and NTP servers by rate limiting the retries". So the
+    /// association ends all the same, and a new key exchange - a new association, with keys and
+    /// cookies of its own - is allowed after a backoff of § 4.2: first after
+    /// <see cref="UnauthenticatedDenyPause"/>, then 1.5 times as long each time, at least ten
+    /// seconds and at most five days, and not reset before the new association has been
+    /// answered (<see cref="TryBeginKeyExchangeRerun"/>, <see cref="RecordKeyExchange"/>).
+    /// A forger costs this client one pause per forged datagram; a server that means it is
+    /// asked less and less often.
     /// </para>
     /// <para>
     /// Deliberately free of any clock: the current time is passed in. A monitoring client's notion
@@ -82,12 +91,37 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </summary>
         public const Byte AbsoluteMaximumPollExponent = 30;
 
+        /// <summary>
+        /// The shortest wait before a new key exchange after a forced disassociation: the
+        /// "initial and minimum retry interval of 10 seconds" of RFC 8915 § 4.2.
+        /// </summary>
+        public static readonly TimeSpan MinimumKeyExchangeRetryInterval = TimeSpan.FromSeconds(10);
+
+        /// <summary>
+        /// The longest wait before a new key exchange: the "maximum retry interval of 5 days"
+        /// of RFC 8915 § 4.2.
+        /// </summary>
+        public static readonly TimeSpan MaximumKeyExchangeRetryInterval = TimeSpan.FromDays(5);
+
+        /// <summary>
+        /// How much longer each further wait is: the "base of 1.5" of RFC 8915 § 4.2.
+        /// </summary>
+        public const Double KeyExchangeRetryBase = 1.5;
+
 
         private readonly Lock             padlock = new();
         private          Byte             pollExponent;
         private          Boolean          demobilized;
         private          DateTimeOffset?  nextQueryNotBefore;
         private          NTPKissOfDeath?  lastKiss;
+
+        // A forced disassociation after which a new key exchange may follow (RFC 8915 § 5.7),
+        // the key exchanges begun since the last association that was answered (§ 4.2), and
+        // whether one of them is under way.
+        private          Boolean          mayRerunKeyExchange;
+        private          Int32            keyExchangeReruns;
+        private          Boolean          keyExchangeRerunBegun;
+        private          DateTimeOffset?  keyExchangeNotBefore;
 
         #endregion
 
@@ -109,14 +143,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         public Byte             InitialPollExponent  { get; }
 
         /// <summary>
-        /// How long this client stays away from an NTS server after a "DENY" or "RSTR" kiss
-        /// that was not authenticated.
+        /// How long this client waits before a new key exchange with an NTS server whose
+        /// association a "DENY" or "RSTR" kiss without authentication ended: the first retry
+        /// interval of RFC 8915 § 4.2, after which each one is 1.5 times as long.
         /// </summary>
         /// <remarks>
         /// The price of one datagram that anyone on the path can write, so it is a weighing:
         /// long enough that a server which meant it is left alone, short enough that a
         /// forger gains little. The default is the longest poll interval, about two hours
-        /// with RFC 8633's ceiling of 13. Zero ignores such a kiss altogether.
+        /// with RFC 8633's ceiling of 13. It is held to § 4.2's range, ten seconds to five
+        /// days: the kiss is never ignored, as § 5.7 has the client comply with it.
         /// </remarks>
         public TimeSpan         UnauthenticatedDenyPause  { get; }
 
@@ -149,13 +185,33 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// Whether this server has told this client to go away, with a "DENY" or "RSTR" kiss.
         /// </summary>
         /// <remarks>
-        /// One-way on purpose. § 7.4 a says to stop sending packets, not to stop for a while, and
-        /// nothing a server that is not being queried can send will change its mind — so undoing
-        /// this is an operator's decision, made through <see cref="Reset"/>.
+        /// § 7.4 a says to stop sending packets, not to stop for a while, and nothing a server
+        /// that is not being queried can send will change its mind. Undoing this is an
+        /// operator's decision, made through <see cref="Reset"/> - or, where the kiss of an NTS
+        /// association was not authenticated, a new key exchange after the backoff of RFC 8915
+        /// § 4.2 (<see cref="MayRerunKeyExchange"/>).
         /// </remarks>
         public Boolean          Demobilized
         {
             get { lock (padlock) return demobilized; }
+        }
+
+        /// <summary>
+        /// Where the association was ended by a kiss without authentication on an NTS
+        /// association: the earliest a new key exchange may be begun. Null otherwise.
+        /// </summary>
+        public DateTimeOffset?  KeyExchangeNotBefore
+        {
+            get { lock (padlock) return mayRerunKeyExchange ? keyExchangeNotBefore : null; }
+        }
+
+        /// <summary>
+        /// The key exchanges begun after forced disassociations since an association was last
+        /// answered: the n of RFC 8915 § 4.2.
+        /// </summary>
+        public Int32            KeyExchangeReruns
+        {
+            get { lock (padlock) return keyExchangeReruns; }
         }
 
         /// <summary>
@@ -184,7 +240,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <param name="InitialPollExponent">Where to start, before any kiss code (default: the minimum).</param>
         /// <param name="MinimumPollExponent">The fastest this client will poll this server.</param>
         /// <param name="MaximumPollExponent">The slowest a kiss code can drive this client.</param>
-        /// <param name="UnauthenticatedDenyPause">How long to stay away after an unauthenticated "DENY" or "RSTR" on an NTS association (default: the longest poll interval).</param>
+        /// <param name="UnauthenticatedDenyPause">How long to wait before a new key exchange after an unauthenticated "DENY" or "RSTR" on an NTS association, the first time (default: the longest poll interval; held to ten seconds to five days).</param>
         public NTPServerAccessState(Byte?      InitialPollExponent        = null,
                                     Byte?      MinimumPollExponent        = null,
                                     Byte?      MaximumPollExponent        = null,
@@ -206,7 +262,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             this.pollExponent         = this.InitialPollExponent;
 
-            this.UnauthenticatedDenyPause  = UnauthenticatedDenyPause ?? TimeSpan.FromSeconds(Math.Pow(2, this.MaximumPollExponent));
+            var pause                      = UnauthenticatedDenyPause ?? TimeSpan.FromSeconds(Math.Pow(2, this.MaximumPollExponent));
+
+            this.UnauthenticatedDenyPause  = pause < MinimumKeyExchangeRetryInterval ? MinimumKeyExchangeRetryInterval
+                                           : pause > MaximumKeyExchangeRetryInterval ? MaximumKeyExchangeRetryInterval
+                                           : pause;
 
         }
 
@@ -268,14 +328,22 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <remarks>
         /// One step back towards the starting rate per answer, the way it was lost one step
         /// per kiss. A server that is still limiting this client says so with the next RATE.
+        /// And the backoff of new key exchanges starts again from the beginning: RFC 8915 § 4.2
+        /// resets it only after "a successful key establishment ... followed by a successful
+        /// use of the negotiated Next Protocol", and an answer is that use.
         /// </remarks>
         public void RecordAnswer()
         {
 
             lock (padlock)
             {
+
                 if (pollExponent > InitialPollExponent)
                     pollExponent--;
+
+                if (!demobilized)
+                    keyExchangeReruns = 0;
+
             }
 
         }
@@ -315,19 +383,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                             // An NTS server that wants this client gone can seal that under
                             // the S2C key. A kiss without it may come from anyone who saw
-                            // the request, and "stop for good" is too much to take from
-                            // them: it costs one pause, and leaves the polling rate as it
-                            // was.
-                            nextQueryNotBefore  = UnauthenticatedDenyPause > TimeSpan.Zero
-                                                      ? Now + UnauthenticatedDenyPause
-                                                      : nextQueryNotBefore;
-
+                            // the request: the association ends as § 7.4 a says, and a new
+                            // one may follow, rate limited (RFC 8915 § 5.7, § 4.2).
+                            DemobilizeUntilAKeyExchange(Now);
                             break;
 
                         }
 
-                        demobilized         = true;
-                        nextQueryNotBefore  = null;
+                        Demobilize();
                         break;
 
                     case NTPKissAction.ReducePollingRate:
@@ -395,10 +458,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// a shorter one than a RATE kiss imposed does not lift it.
         /// </para>
         /// <para>
-        /// 127 is taken as a DENY kiss would be, by <paramref name="Trust"/>: from a plain
-        /// association or an authenticated response it ends the association; an NTS
-        /// association that received it unauthenticated pauses for
-        /// <see cref="UnauthenticatedDenyPause"/>.
+        /// 127 is taken as a DENY kiss would be, by <paramref name="Trust"/>: it ends the
+        /// association, for good from a plain association or an authenticated response, and
+        /// until a new key exchange after the backoff of RFC 8915 § 4.2 where an NTS
+        /// association received it unauthenticated.
         /// </para>
         /// </remarks>
         public Boolean ApplyNTPv5Poll(SByte           Poll,
@@ -413,14 +476,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                 {
 
                     if (Trust == NTPKissTrust.Unauthenticated)
-                    {
-                        if (UnauthenticatedDenyPause > TimeSpan.Zero)
-                            nextQueryNotBefore = Now + UnauthenticatedDenyPause;
-                        return true;
-                    }
+                        DemobilizeUntilAKeyExchange(Now);
+                    else
+                        Demobilize();
 
-                    demobilized         = true;
-                    nextQueryNotBefore  = null;
                     return false;
 
                 }
@@ -470,13 +529,150 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             lock (padlock)
             {
 
-                pollExponent        = InitialPollExponent;
-                demobilized         = false;
-                nextQueryNotBefore  = null;
-                lastKiss            = null;
-                ntpv5MinimumPoll    = null;
+                pollExponent           = InitialPollExponent;
+                demobilized            = false;
+                nextQueryNotBefore     = null;
+                lastKiss               = null;
+                ntpv5MinimumPoll       = null;
+                mayRerunKeyExchange    = false;
+                keyExchangeReruns      = 0;
+                keyExchangeRerunBegun  = false;
+                keyExchangeNotBefore   = null;
 
             }
+
+        }
+
+        #endregion
+
+
+        #region MayRerunKeyExchange(Now)
+
+        /// <summary>
+        /// Whether a new key exchange may be begun now, for a new association in place of one
+        /// a kiss without authentication ended (RFC 8915 § 5.7).
+        /// </summary>
+        public Boolean MayRerunKeyExchange(DateTimeOffset Now)
+        {
+            lock (padlock)
+                return MayRerunKeyExchangeLocked(Now);
+        }
+
+        private Boolean MayRerunKeyExchangeLocked(DateTimeOffset Now)
+
+            => demobilized         &&
+               mayRerunKeyExchange &&
+               keyExchangeNotBefore is DateTimeOffset notBefore &&
+               Now >= notBefore;
+
+        #endregion
+
+        #region TryBeginKeyExchangeRerun(Now)
+
+        /// <summary>
+        /// A new key exchange is about to be begun: returns whether it may be, and if so, counts
+        /// it and sets when the next may follow, should this one not succeed.
+        /// </summary>
+        /// <remarks>
+        /// RFC 8915 § 4.2: "t = min(10 * 1.5^(n-1), 432000)" seconds, here from
+        /// <see cref="UnauthenticatedDenyPause"/> instead of ten. A key exchange that fails
+        /// is a retry like any other, and the next one waits longer.
+        /// </remarks>
+        public Boolean TryBeginKeyExchangeRerun(DateTimeOffset Now)
+        {
+
+            lock (padlock)
+            {
+
+                if (!MayRerunKeyExchangeLocked(Now))
+                    return false;
+
+                keyExchangeReruns++;
+                keyExchangeRerunBegun  = true;
+                keyExchangeNotBefore   = Now + KeyExchangeRetryInterval(keyExchangeReruns + 1);
+
+                return true;
+
+            }
+
+        }
+
+        #endregion
+
+        #region RecordKeyExchange(Now)
+
+        /// <summary>
+        /// The key exchange begun with <see cref="TryBeginKeyExchangeRerun"/> has succeeded: the
+        /// new association may be queried. Returns whether this client may query the server.
+        /// </summary>
+        /// <remarks>
+        /// Nothing else lifts a demobilization: a key exchange that was not begun as a rerun, or
+        /// one after a kiss that was authenticated, leaves it as it is.
+        /// </remarks>
+        public Boolean RecordKeyExchange(DateTimeOffset Now)
+        {
+
+            lock (padlock)
+            {
+
+                if (demobilized && mayRerunKeyExchange && keyExchangeRerunBegun)
+                {
+                    demobilized            = false;
+                    mayRerunKeyExchange    = false;
+                    keyExchangeRerunBegun  = false;
+                    keyExchangeNotBefore   = null;
+                    nextQueryNotBefore     = null;
+                }
+
+                return !demobilized;
+
+            }
+
+        }
+
+        #endregion
+
+        #region KeyExchangeRetryInterval(N)
+
+        /// <summary>
+        /// The wait before the n-th new key exchange since an association was last answered.
+        /// </summary>
+        public TimeSpan KeyExchangeRetryInterval(Int32 N)
+        {
+
+            var seconds = UnauthenticatedDenyPause.TotalSeconds * Math.Pow(KeyExchangeRetryBase, Math.Max(0, N - 1));
+
+            return seconds >= MaximumKeyExchangeRetryInterval.TotalSeconds
+                       ? MaximumKeyExchangeRetryInterval
+                       : TimeSpan.FromSeconds(Math.Max(seconds, MinimumKeyExchangeRetryInterval.TotalSeconds));
+
+        }
+
+        #endregion
+
+        #region (private) Demobilize() / DemobilizeUntilAKeyExchange(Now)
+
+        private void Demobilize()
+        {
+            demobilized            = true;
+            nextQueryNotBefore     = null;
+            mayRerunKeyExchange    = false;
+            keyExchangeRerunBegun  = false;
+            keyExchangeNotBefore   = null;
+        }
+
+        private void DemobilizeUntilAKeyExchange(DateTimeOffset Now)
+        {
+
+            // An authenticated demobilization is not softened by a later forged one.
+            if (demobilized && !mayRerunKeyExchange)
+                return;
+
+            demobilized            = true;
+            nextQueryNotBefore     = null;
+            mayRerunKeyExchange    = true;
+            keyExchangeRerunBegun  = false;
+            keyExchangeNotBefore   = Now + KeyExchangeRetryInterval(keyExchangeReruns + 1);
 
         }
 
@@ -489,7 +685,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             lock (padlock)
             {
                 return demobilized
-                           ? $"demobilized ({lastKiss?.Code ?? "?"})"
+                           ? mayRerunKeyExchange
+                                 ? $"demobilized ({lastKiss?.Code ?? "?"}), a new key exchange not before {keyExchangeNotBefore:o}"
+                                 : $"demobilized ({lastKiss?.Code ?? "?"})"
                            : $"poll {pollExponent} ({Math.Pow(2, pollExponent):0} s)";
             }
 
