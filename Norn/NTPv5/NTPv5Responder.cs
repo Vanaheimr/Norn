@@ -58,6 +58,21 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPv5
         public IReadOnlyList<NTPv5TimeSource>?  TimeSources  { get; init; }
 
         /// <summary>
+        /// § 7.10: the timescales the server gives a Secondary Receive Timestamp in, each with
+        /// its offset from UTC - TAI is UTC and 37 s since 2017 - or null where it supports the
+        /// timescale but cannot convert to it now, and then answers with a timestamp of zero.
+        /// A timescale not listed is not supported, and its request is ignored. UTC alone by
+        /// default: an offset to TAI or UT1 is something the server has to be told.
+        /// </summary>
+        public IReadOnlyDictionary<NTPv5Timescale, TimeSpan?>  SecondaryTimescales  { get; init; } = UTCOnly;
+
+        /// <summary>
+        /// UTC, the timescale of the header, and nothing else.
+        /// </summary>
+        public static IReadOnlyDictionary<NTPv5Timescale, TimeSpan?> UTCOnly { get; }
+            = new Dictionary<NTPv5Timescale, TimeSpan?> { [NTPv5Timescale.UTC] = TimeSpan.Zero };
+
+        /// <summary>
         /// § 7.8: when the clock was last set, or 0 where the server answers no Reference Timestamp.
         /// </summary>
         public UInt64              ReferenceTimestamp  { get; init; }
@@ -361,6 +376,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPv5
             // been added by anyone on the way. The one exception is the Correction, which is
             // never authenticated and is added to by the devices on the way by design (§ 7.7).
             var responseFields  = new List<NTPv5ExtensionField>();
+            var timescales      = new HashSet<NTPv5Timescale>();
             var correction      = (NTPv5ExtensionField?) null;
 
             for (var index = 0; index < request.ExtensionFields.Count; index++)
@@ -403,6 +419,19 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPv5
 
                     // § 7.5: the sources from the index on, no longer than the request - and
                     // empty for an index that is none of a source.
+                    // § 7.10: the receive timestamp of the header in the timescale asked for -
+                    // zero where the server supports it but cannot convert to it now - and a
+                    // timescale it does not support is ignored. A request "MUST" ask for each
+                    // only once; one that asks again gets it once.
+                    case NTPv5ExtensionTypes.SecondaryReceiveTimestamp when field.TryReadSecondaryReceiveTimestamp(out var timescale, out _, out _) &&
+                                                                            Clock.SecondaryTimescales.TryGetValue(timescale, out var offset) &&
+                                                                            timescales.Add(timescale):
+                        responseFields.Add(offset is TimeSpan known &&
+                                           NTPv5Packet.TryShift(NTPv5Packet.EraOf(ReceiveTime), exchange.ReceiveTimestamp, known, out var era, out var shifted)
+                                               ? NTPv5ExtensionField.SecondaryReceiveTimestamp(timescale, era, shifted)
+                                               : NTPv5ExtensionField.SecondaryReceiveTimestamp(timescale));
+                        break;
+
                     case NTPv5ExtensionTypes.TimeSourcesRequest when Clock.TimeSources is not null:
                         if (NTPv5TimeSources.TryAnswer(Clock.TimeSources, field, out var timeSources))
                             responseFields.Add(timeSources);

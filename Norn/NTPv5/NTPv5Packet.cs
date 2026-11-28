@@ -355,6 +355,41 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPv5
         #endregion
 
 
+        #region (static) TryShift(Era, Timestamp, Offset, out ShiftedEra, out ShiftedTimestamp)
+
+        /// <summary>
+        /// A timestamp64 and its era moved by the given offset - into another timescale, for
+        /// § 7.10 - in the 2^-32 s steps of the format itself, so that a whole number of seconds
+        /// moves it exactly and the client sees the offset without a rounding. False where the
+        /// result lies before era 0 or after era 255.
+        /// </summary>
+        public static Boolean TryShift(Byte        Era,
+                                       UInt64      Timestamp,
+                                       TimeSpan    Offset,
+                                       out Byte    ShiftedEra,
+                                       out UInt64  ShiftedTimestamp)
+        {
+
+            var full    = ((Int128) Era << 64) | Timestamp;
+            var units   = (Int128) Offset.Ticks * ((Int128) 1 << 32) / TimeSpan.TicksPerSecond;
+            var shifted = full + units;
+
+            ShiftedEra       = 0;
+            ShiftedTimestamp = 0;
+
+            if (shifted < 0 || shifted >= ((Int128) 256 << 64))
+                return false;
+
+            ShiftedEra       = (Byte)   (shifted >> 64);
+            ShiftedTimestamp = (UInt64) (shifted & UInt64.MaxValue);
+
+            return true;
+
+        }
+
+        #endregion
+
+
         #region (static) TryParse(Buffer, out Packet, out ErrorResponse)
 
         /// <summary>

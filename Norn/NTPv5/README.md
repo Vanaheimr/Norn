@@ -114,7 +114,8 @@ implementation, which is what chrony and ntpd-rs do anyway.
 | § 12 | Version negotiation from NTPv4 | [`NTPv5VersionNegotiation.cs`](NTPv5VersionNegotiation.cs) |
 | § 7.6, § 11, § 12 | Monitoring: an optional, hourly probe of what a server supports | [`MeasurementEngine.NTPv5.cs`](../Monitoring/MeasurementEngine.NTPv5.cs), [`NTPv5CapabilityResult.cs`](../Monitoring/Results/NTPv5CapabilityResult.cs) |
 | § 7.5 | Time Sources, answered only where the server was given its sources | [`NTPv5TimeSources.cs`](NTPv5TimeSources.cs) |
-| § 7.3, § 7.10 | MAC, Secondary Receive Timestamp | not yet |
+| § 7.10 | Secondary Receive Timestamp, in UTC and in the timescales the server was given an offset for | [`NTPv5ExtensionField.Timestamps.cs`](NTPv5ExtensionField.Timestamps.cs), [`NTPv5Responder.cs`](NTPv5Responder.cs) |
+| § 7.3 | MAC | not yet |
 
 The [NTS conformance suite](https://github.com/Vanaheimr/NTSConformanceTests) tests these
 against its own codec, written independently from the text of -10.

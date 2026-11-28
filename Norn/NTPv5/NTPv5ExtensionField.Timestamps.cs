@@ -59,6 +59,64 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPv5
         /// </summary>
         public const Int32 MonotonicReceiveTimestampLength  = 16;
 
+        /// <summary>
+        /// § 7.10: the Secondary Receive Timestamp field is 16 octets.
+        /// </summary>
+        public const Int32 SecondaryReceiveTimestampLength  = 16;
+
+        #endregion
+
+
+        #region SecondaryReceiveTimestamp(Timescale, Era = 0, Timestamp = 0)
+
+        /// <summary>
+        /// § 7.10: a Secondary Receive Timestamp field - in a request the timescale asked for
+        /// and zeros, in a response the receive timestamp of the request in that timescale and
+        /// its era, as the header has them for its own.
+        /// </summary>
+        public static NTPv5ExtensionField SecondaryReceiveTimestamp(NTPv5Timescale  Timescale,
+                                                                    Byte            Era        = 0,
+                                                                    UInt64          Timestamp  = 0)
+        {
+
+            var value = new Byte[SecondaryReceiveTimestampLength - 4];
+
+            value[0]  = (Byte) Timescale;
+            value[1]  = Era;
+            BinaryPrimitives.WriteUInt64BigEndian(value.AsSpan(4, 8), Timestamp);
+
+            return new (NTPv5ExtensionTypes.SecondaryReceiveTimestamp, value);
+
+        }
+
+        #endregion
+
+        #region TryReadSecondaryReceiveTimestamp(out Timescale, out Era, out Timestamp)
+
+        /// <summary>
+        /// The values of a Secondary Receive Timestamp field of its fixed length; the reserved
+        /// octets are not looked at.
+        /// </summary>
+        public Boolean TryReadSecondaryReceiveTimestamp(out NTPv5Timescale  Timescale,
+                                                        out Byte            Era,
+                                                        out UInt64          Timestamp)
+        {
+
+            Timescale  = NTPv5Timescale.UTC;
+            Era        = 0;
+            Timestamp  = 0;
+
+            if (Type != NTPv5ExtensionTypes.SecondaryReceiveTimestamp || Length != SecondaryReceiveTimestampLength)
+                return false;
+
+            Timescale  = (NTPv5Timescale) Value[0];
+            Era        = Value[1];
+            Timestamp  = BinaryPrimitives.ReadUInt64BigEndian(Value.AsSpan(4, 8));
+
+            return true;
+
+        }
+
         #endregion
 
 

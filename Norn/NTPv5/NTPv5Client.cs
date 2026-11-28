@@ -844,6 +844,73 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPv5
 
         #endregion
 
+        #region SecondaryReceiveTimesOf(Response)
+
+        /// <summary>
+        /// § 7.10: the receive timestamps of the request in the other timescales the response
+        /// gives, each as a date in its era - or null for a timescale the server supports but
+        /// could not convert to (a timestamp of zero). A timescale not in the result is one the
+        /// server does not support, or was not asked for.
+        /// </summary>
+        public static IReadOnlyDictionary<NTPv5Timescale, DateTime?> SecondaryReceiveTimesOf(NTPv5Packet Response)
+        {
+
+            var times = new Dictionary<NTPv5Timescale, DateTime?>();
+
+            foreach (var field in Response.ExtensionFields)
+                if (field.TryReadSecondaryReceiveTimestamp(out var timescale, out var era, out var timestamp) &&
+                    !times.ContainsKey(timescale))
+                    times[timescale] = timestamp == 0
+                                           ? null
+                                           : ExpandTimestamp(era, timestamp);
+
+            return times;
+
+        }
+
+        #endregion
+
+        #region TimescaleOffset(Response, Timescale)
+
+        /// <summary>
+        /// § 7.10 and § 9.5: how far the given timescale is ahead of the timescale of the
+        /// header, from the same receive timestamp in both - for TAI and a header in UTC, the
+        /// 37 s since 2017. Null where the response gives no timestamp in that timescale.
+        /// </summary>
+        /// <remarks>
+        /// Taken from the two timestamps and their eras as they are, in steps of 2^-32 s, so
+        /// that a whole number of seconds comes out as one, without the rounding of a date.
+        /// </remarks>
+        public static TimeSpan? TimescaleOffset(NTPv5Packet     Response,
+                                                NTPv5Timescale  Timescale)
+        {
+
+            if (Response.ReceiveTimestamp == 0)
+                return null;
+
+            foreach (var field in Response.ExtensionFields)
+            {
+
+                if (!field.TryReadSecondaryReceiveTimestamp(out var timescale, out var era, out var timestamp) ||
+                    timescale != Timescale)
+                    continue;
+
+                if (timestamp == 0)
+                    return null;
+
+                var difference = (((Int128) era           << 64) | timestamp) -
+                                 (((Int128) Response.Era  << 64) | Response.ReceiveTimestamp);
+
+                return TimeSpan.FromTicks((Int64) (difference * TimeSpan.TicksPerSecond / ((Int128) 1 << 32)));
+
+            }
+
+            return null;
+
+        }
+
+        #endregion
+
         #region IsLoop(Entries, OwnReferenceId, MaximumShare = 0)
 
         /// <summary>

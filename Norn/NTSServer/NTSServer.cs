@@ -335,7 +335,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                TimeSpan             RootDispersion,
                                                Byte                 LeapIndicator,
                                                NTPv5ReferenceIds    NTPv5ReferenceIds,
-                                               IReadOnlyList<NTPv5TimeSource>?  NTPv5TimeSources);
+                                               IReadOnlyList<NTPv5TimeSource>?  NTPv5TimeSources,
+                                               IReadOnlyDictionary<NTPv5Timescale, TimeSpan?>  NTPv5Timescales);
 
         /// <summary>
         /// draft-ietf-ntp-ntpv5-10 § 10: this server's reference ID for NTPv5, random, non-zero
@@ -2768,6 +2769,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                                (interleaving is not null ? NTPv5Flags.InterleavedMode : NTPv5Flags.None),
                                         ReferenceIds         = described.NTPv5ReferenceIds,
                                         TimeSources          = described.NTPv5TimeSources,
+                                        SecondaryTimescales  = described.NTPv5Timescales,
                                         ReferenceTimestamp   = NTPPacket.GetCurrentNTPTimestamp(ClockLastSynchronized.UtcDateTime),
                                         MonotonicEpochId     = NTPv5MonotonicEpochId,
                                         AnswersPlain         = PlainNTP
@@ -2984,13 +2986,20 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// everybody's business unless its operator says so. An empty list answers it, with
         /// no source.
         /// </param>
+        /// <param name="NTPv5Timescales">
+        /// The timescales this server gives a Secondary Receive Timestamp in (draft-ietf-ntp-ntpv5-10
+        /// § 7.10), each with its offset from UTC - for TAI 37 seconds since 2017 - or null for one
+        /// it supports but cannot convert to now. UTC alone by default, and always: the server
+        /// knows of no leap second table it could take the offset to TAI from by itself.
+        /// </param>
         public void Redescribe(Byte?                                 Stratum              = null,
                                ReferenceIdentifier?                  ReferenceIdentifier  = null,
                                TimeSpan?                             RootDelay            = null,
                                TimeSpan?                             RootDispersion       = null,
                                Byte?                                 LeapIndicator        = null,
                                IEnumerable<NTPv5ReferenceIdSource>?  NTPv5Sources         = null,
-                               IEnumerable<NTPv5TimeSource>?         NTPv5TimeSources     = null)
+                               IEnumerable<NTPv5TimeSource>?         NTPv5TimeSources     = null,
+                               IReadOnlyDictionary<NTPv5Timescale, TimeSpan?>? NTPv5Timescales = null)
         {
 
             clockDescription = Described(Stratum,
@@ -2999,7 +3008,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                          RootDispersion,
                                          LeapIndicator,
                                          NTPv5Sources,
-                                         NTPv5TimeSources);
+                                         NTPv5TimeSources,
+                                         NTPv5Timescales);
 
         }
 
@@ -3040,7 +3050,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                            TimeSpan?             RootDispersion,
                                            Byte?                 LeapIndicator,
                                            IEnumerable<NTPv5ReferenceIdSource>? NTPv5Sources,
-                                           IEnumerable<NTPv5TimeSource>?        NTPv5TimeSources = null)
+                                           IEnumerable<NTPv5TimeSource>?        NTPv5TimeSources = null,
+                                           IReadOnlyDictionary<NTPv5Timescale, TimeSpan?>? NTPv5Timescales = null)
         {
 
             // Two bits in the header: a larger value would not be reported as given, but as
@@ -3059,7 +3070,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                         // A copy, so that the list the caller keeps changing is not the one
                         // being answered from.
-                        NTPv5TimeSources?.ToArray());
+                        NTPv5TimeSources?.ToArray(),
+
+                        // UTC is always one, at no offset: it is the timescale of the header.
+                        NTPv5Timescales is null
+                            ? NTPv5ServerClock.UTCOnly
+                            : new Dictionary<NTPv5Timescale, TimeSpan?>(NTPv5Timescales) { [NTPv5Timescale.UTC] = TimeSpan.Zero });
 
         }
 

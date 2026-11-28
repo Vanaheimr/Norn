@@ -118,6 +118,25 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                    ? NTPv5Client.TimeSourcesOf(Response)
                    : null;
 
+        /// <summary>
+        /// The receive timestamps of the request in the other timescales the response gives
+        /// (draft-ietf-ntp-ntpv5-10 § 7.10), where the request asked with a Secondary Receive
+        /// Timestamp field for each.
+        /// </summary>
+        public IReadOnlyDictionary<NTPv5Timescale, DateTime?> SecondaryReceiveTimes
+            => Success && Response is not null
+                   ? NTPv5Client.SecondaryReceiveTimesOf(Response)
+                   : new Dictionary<NTPv5Timescale, DateTime?>();
+
+        /// <summary>
+        /// How far the given timescale is ahead of the timescale of the header, from a
+        /// Secondary Receive Timestamp of the response (§ 7.10).
+        /// </summary>
+        public TimeSpan? TimescaleOffset(NTPv5Timescale Timescale)
+            => Success && Response is not null
+                   ? NTPv5Client.TimescaleOffset(Response, Timescale)
+                   : null;
+
         /// <inheritdoc/>
         public override String ToString()
 
