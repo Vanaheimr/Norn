@@ -29,6 +29,7 @@ using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Hermod;
 using org.GraphDefined.Vanaheimr.Norn.NTP;
 using org.GraphDefined.Vanaheimr.Norn.NTPOverTLS;
+using org.GraphDefined.Vanaheimr.Norn.NTPv5;
 
 #endregion
 
@@ -152,21 +153,29 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         #region (private) ServeNTPOverTLSConnection(Connection, RemoteAddress, Client, Token)
 
         /// <summary>
-        /// One NTP-over-TLS connection: the handshake, then 48 octets in and 48 octets out for as
+        /// One NTP-over-TLS connection: the handshake, then a request in and its answer out for as
         /// long as the client keeps asking.
         /// </summary>
         /// <remarks>
         /// <para>
-        /// Only a client request (mode 3) of a version from 1 to 4 is answered, as over UDP, and
-        /// with the header of RFC 5905 § 7.3 that every response of this server carries. Anything
-        /// else closes the connection: on a stream, 48 octets that are not a request leave
-        /// nothing that could be read as the next one. The same is done to a request the rate
-        /// limiter refuses - a kiss is not sent, since § 7.1.1 of the guideline obliges no client
-        /// to process one, and a client that closes its connection learns as much.
+        /// A bare client request (mode 3) of a version from 1 to 4 is answered, as over UDP, and
+        /// with the header of RFC 5905 § 7.3 that every response of this server carries - echoing
+        /// the offer of NTPv5 of draft-ietf-ntp-ntpv5 § 12 where <see cref="NTPv5"/> is enabled.
+        /// An NTPv5 request behind its length (section 6.1 of the white paper "Secure Time
+        /// Synchronization") is answered as over UDP as well, by <see cref="NTPv5Responder"/>,
+        /// and its response goes back behind its length. A server of NTS alone answers both in
+        /// plain, since TLS authenticates and protects them.
         /// </para>
         /// <para>
-        /// The receive timestamp is taken the moment the 48th octet is read, which over TLS is
-        /// after the record it came in was decrypted.
+        /// Anything else closes the connection: on a stream, a message that is no request leaves
+        /// nothing that could be read as the next one. So does an NTPv5 request this server does
+        /// not answer, or one in the framing of the other version. The same is done to a request
+        /// the rate limiter refuses - a kiss is not sent, since § 7.1.1 of the guideline obliges
+        /// no client to process one, and a client that closes its connection learns as much.
+        /// </para>
+        /// <para>
+        /// The receive timestamp is taken the moment the last octet of the request is read, which
+        /// over TLS is after the record it came in was decrypted.
         /// </para>
         /// </remarks>
         private void ServeNTPOverTLSConnection(Socket             Connection,
@@ -211,34 +220,41 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                 Connection.ReceiveTimeout = Milliseconds(NTPOverTLSIdleTimeout);
 
-                var request = new Byte[NTPOverTLSProtocol.PacketLength];
+                var remoteEndPoint        = Connection.RemoteEndPoint ?? new IPEndPoint(RemoteAddress ?? IPAddress.None, 0);
 
                 while (!Token.IsCancellationRequested)
                 {
 
-                    var read = ReadPacket(tlsProtocol.Stream, request);
+                    var (status, request, framed) = NTPOverTLSProtocol.ReadMessage(tlsProtocol.Stream);
 
-                    if (read == 0)
+                    if (status == NTPOverTLSReadStatus.EndOfStream)
                         break;
 
-                    var receivedAt = NTPPacket.GetCurrentNTPTimestamp(TimeProvider);
+                    var receivedAtTime  = TimeProvider.GetUtcNow().UtcDateTime;
+                    var receivedAt      = NTPPacket.GetCurrentNTPTimestamp(receivedAtTime);
+                    var receivedAtTicks = TimeProvider.GetTimestamp();
 
                     System.Threading.Interlocked.Increment(ref ntpOverTLSRequestsReceived);
 
-                    if (read < request.Length)
+                    if (status != NTPOverTLSReadStatus.Message || request is null)
                     {
                         System.Threading.Interlocked.Increment(ref ntpOverTLSRequestsInvalid);
-                        DebugX.Log($"NTP-over-TLS client {RemoteAddress} closed its connection after {read} of 48 octets.");
+                        DebugX.Log($"NTP-over-TLS client {RemoteAddress} sent no whole message: {status}.");
                         break;
                     }
 
                     var mode    = request[0] & 0x07;
                     var version = (request[0] >> 3) & 0x07;
 
-                    if (mode != 3 || version is < 1 or > 4)
+                    // Section 6.1: NTPv5 behind a length, NTPv1 to NTPv4 bare, and either a request.
+                    var expected = framed
+                                       ? version == NTPv5Packet.VersionNumber && NTPv5 != NTPv5Support.Disabled
+                                       : version is >= 1 and <= 4;
+
+                    if (mode != 3 || !expected)
                     {
                         System.Threading.Interlocked.Increment(ref ntpOverTLSRequestsInvalid);
-                        DebugX.Log($"NTP-over-TLS client {RemoteAddress} sent mode {mode}, version {version}: no client request of NTPv1 to NTPv4.");
+                        DebugX.Log($"NTP-over-TLS client {RemoteAddress} sent mode {mode}, version {version}{(framed ? " behind a length" : "")}: no request this server answers.");
                         break;
                     }
 
@@ -251,17 +267,50 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                         break;
                     }
 
-                    if (!NTPRequest.TryParse(request, out var requestPacket, out var errorResponse))
-                    {
-                        System.Threading.Interlocked.Increment(ref ntpOverTLSRequestsInvalid);
-                        DebugX.Log($"Invalid NTP-over-TLS request from {RemoteAddress}: {errorResponse}");
-                        break;
-                    }
+                    Byte[] response;
 
-                    var response = BuildResponseHeader(requestPacket,
+                    if (framed)
+                    {
+
+                        Byte[]? answer = null;
+
+                        AnswerNTPv5Async((bytes, _) => { answer = bytes; return Task.CompletedTask; },
+                                         request,
+                                         receivedAt,
+                                         receivedAtTime,
+                                         receivedAtTicks,
+                                         remoteEndPoint,
+                                         OverChannel: true,
+                                         Token).GetAwaiter().GetResult();
+
+                        // The response is as long as the request, so it fits behind a length as well.
+                        if (answer is not { Length: >= NTPOverTLSProtocol.MinFramedLength and <= NTPOverTLSProtocol.MaxFramedLength })
+                        {
+                            System.Threading.Interlocked.Increment(ref ntpOverTLSRequestsInvalid);
+                            DebugX.Log($"NTPv5 request over TLS from {RemoteAddress} not answered.");
+                            break;
+                        }
+
+                        response = NTPOverTLSProtocol.Frame(answer);
+
+                    }
+                    else
+                    {
+
+                        if (!NTPRequest.TryParse(request, out var requestPacket, out var errorResponse))
+                        {
+                            System.Threading.Interlocked.Increment(ref ntpOverTLSRequestsInvalid);
+                            DebugX.Log($"Invalid NTP-over-TLS request from {RemoteAddress}: {errorResponse}");
+                            break;
+                        }
+
+                        response = BuildResponseHeader(requestPacket,
                                                        [],
-                                                       InterleavedExchange.Basic(requestPacket, receivedAt, TimeProvider)).
+                                                       InterleavedExchange.Basic(requestPacket, receivedAt, TimeProvider),
+                                                       OverChannel: true).
                                        ToByteArray(SkipExtensions: true);
+
+                    }
 
                     tlsProtocol.Stream.Write(response, 0, response.Length);
                     tlsProtocol.Stream.Flush();
@@ -303,31 +352,6 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         #endregion
 
         #region (private static) helpers
-
-        /// <summary>
-        /// Read up to one packet: as many octets as come until it is full or the stream ends.
-        /// </summary>
-        private static Int32 ReadPacket(Stream  Stream,
-                                        Byte[]  Buffer)
-        {
-
-            var read = 0;
-
-            while (read < Buffer.Length)
-            {
-
-                var n = Stream.Read(Buffer, read, Buffer.Length - read);
-
-                if (n <= 0)
-                    break;
-
-                read += n;
-
-            }
-
-            return read;
-
-        }
 
         private static Int32 Milliseconds(TimeSpan Value)
             => (Int32) Math.Clamp(Value.TotalMilliseconds, 1, Int32.MaxValue);

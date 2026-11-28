@@ -27,6 +27,7 @@ using Org.BouncyCastle.Crypto;
 using org.GraphDefined.Vanaheimr.Hermod;
 using org.GraphDefined.Vanaheimr.Hermod.DNS;
 using org.GraphDefined.Vanaheimr.Norn.NTP;
+using org.GraphDefined.Vanaheimr.Norn.NTPv5;
 
 using BCX509Certificate = Org.BouncyCastle.X509.X509Certificate;
 
@@ -57,6 +58,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPOverTLS
     /// (.110, a SHOULD). Further, after RFC 5905 Appendix A.5.1.1, when its stratum is 0 - a kiss,
     /// which § 7.1.1 does not oblige a client to process - or above 15, or when the server
     /// claims to have answered before it received.
+    /// </para>
+    /// <para>
+    /// NTPv5 is section 6.1 of the white paper "Secure Time Synchronization", not the guideline's:
+    /// <see cref="QueryNTPv5"/> sends an NTPv5 request of draft-ietf-ntp-ntpv5 behind its length
+    /// and holds the response to the same rules in the terms of NTPv5, and to § 9.4 and § 9.5 of
+    /// the draft. <see cref="QueryNegotiated"/> asks in whichever version the negotiation of
+    /// § 12 has come to: NTPv4 offering NTPv5, NTPv5 once the server echoed the offer, and NTPv4
+    /// alone for a while after NTPv5 failed. The offer travels inside TLS, so nobody on the way
+    /// can remove it.
     /// </para>
     /// </remarks>
     public class NTPOverTLSClient
@@ -169,15 +179,91 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPOverTLS
         #endregion
 
 
-        #region QueryTime(ClockSynchronized = false, CancellationToken = default)
+        #region QueryTime(ClockSynchronized = false, AdvertiseNTPv5 = false, CancellationToken = default)
 
         /// <summary>
-        /// Ask the server for the time, once.
+        /// Ask the server for the time, once, in NTPv4.
         /// </summary>
         /// <param name="ClockSynchronized">Whether this client's clock is synchronized, so that a response more than <see cref="MaxDeviationWhenSynchronized"/> from it is ignored (REQ.TA.NTP.ProcessResponse.110).</param>
+        /// <param name="AdvertiseNTPv5">Whether the request offers NTPv5 with the magic of draft-ietf-ntp-ntpv5 § 12 in its reference timestamp, minimized or not.</param>
         /// <param name="CancellationToken">Ends the query.</param>
-        public async Task<NTPOverTLSResult> QueryTime(Boolean            ClockSynchronized   = false,
-                                                      CancellationToken  CancellationToken   = default)
+        public Task<NTPOverTLSResult> QueryTime(Boolean            ClockSynchronized   = false,
+                                                Boolean            AdvertiseNTPv5      = false,
+                                                CancellationToken  CancellationToken   = default)
+
+            => Query(ClockSynchronized, AdvertiseNTPv5, AsNTPv5: false, CancellationToken);
+
+        #endregion
+
+        #region QueryNTPv5(ClockSynchronized = false, CancellationToken = default)
+
+        /// <summary>
+        /// Ask the server for the time, once, in NTPv5 behind its length (section 6.1 of the white
+        /// paper "Secure Time Synchronization").
+        /// </summary>
+        /// <param name="ClockSynchronized">Whether this client's clock is synchronized, so that a response more than <see cref="MaxDeviationWhenSynchronized"/> from it is ignored.</param>
+        /// <param name="CancellationToken">Ends the query.</param>
+        public Task<NTPOverTLSResult> QueryNTPv5(Boolean            ClockSynchronized   = false,
+                                                 CancellationToken  CancellationToken   = default)
+
+            => Query(ClockSynchronized, AdvertiseNTPv5: false, AsNTPv5: true, CancellationToken);
+
+        #endregion
+
+        #region QueryNegotiated(Negotiation, ClockSynchronized = false, CancellationToken = default)
+
+        /// <summary>
+        /// Ask the server for the time, once, in whichever version the negotiation of
+        /// draft-ietf-ntp-ntpv5 § 12 with it has come to, and advance the negotiation by what
+        /// came back: the mode `NTPTLS` with `Versions` `v5, v4` of section 3.2.4 of the white
+        /// paper "Secure Time Synchronization".
+        /// </summary>
+        /// <param name="Negotiation">The negotiation with this server, which this query advances.</param>
+        /// <param name="ClockSynchronized">Whether this client's clock is synchronized.</param>
+        /// <param name="CancellationToken">Ends the query.</param>
+        public async Task<NTPOverTLSResult> QueryNegotiated(NTPv5VersionNegotiation  Negotiation,
+                                                            Boolean                  ClockSynchronized   = false,
+                                                            CancellationToken        CancellationToken   = default)
+        {
+
+            ArgumentNullException.ThrowIfNull(Negotiation);
+
+            if (Negotiation.Version == NTPv5NegotiatedVersion.NTPv5)
+            {
+
+                var v5 = await QueryNTPv5(ClockSynchronized, CancellationToken).ConfigureAwait(false);
+
+                // § 12: what counts is whether a valid response came. A cancelled query says
+                // nothing about the server either way.
+                if (!CancellationToken.IsCancellationRequested)
+                    Negotiation.RecordNTPv5Result(v5.Success);
+
+                return v5;
+
+            }
+
+            var advertise = Negotiation.Version == NTPv5NegotiatedVersion.NTPv4Advertising;
+
+            var v4 = await QueryTime(ClockSynchronized, advertise, CancellationToken).ConfigureAwait(false);
+
+            // The echo first, while the version is still the one the request went out in.
+            if (advertise && v4.Success && v4.Response is not null)
+                Negotiation.RecordNTPv4Response(v4.Response.ReferenceTimestamp);
+
+            Negotiation.RecordNTPv4Request();
+
+            return v4;
+
+        }
+
+        #endregion
+
+        #region (private) Query(ClockSynchronized, AdvertiseNTPv5, AsNTPv5, CancellationToken)
+
+        private async Task<NTPOverTLSResult> Query(Boolean            ClockSynchronized,
+                                                   Boolean            AdvertiseNTPv5,
+                                                   Boolean            AsNTPv5,
+                                                   CancellationToken  CancellationToken)
         {
 
             using var timeoutCTS = CancellationTokenSource.CreateLinkedTokenSource(CancellationToken);
@@ -230,7 +316,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPOverTLS
             try
             {
 
-                return await Task.Factory.StartNew(() => Exchange(tcpClient, tlsClient, ClockSynchronized),
+                return await Task.Factory.StartNew(() => Exchange(tcpClient, tlsClient, ClockSynchronized, AdvertiseNTPv5, AsNTPv5),
                                                    CancellationToken.None,
                                                    TaskCreationOptions.LongRunning,
                                                    TaskScheduler.Default).
@@ -244,18 +330,20 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPOverTLS
                                   ? CancellationToken.IsCancellationRequested
                                         ? "The query was cancelled."
                                         : $"No response within {Timeout.TotalSeconds:0.###} s."
-                                  : e.Message);
+                                  : e.Message) with { Version = AsNTPv5 ? (Byte) 5 : (Byte) 4, NTPv5Offered = AdvertiseNTPv5 };
             }
 
         }
 
         #endregion
 
-        #region (private) Exchange(TCPClient, TLSClient, ClockSynchronized)
+        #region (private) Exchange(TCPClient, TLSClient, ClockSynchronized, AdvertiseNTPv5, AsNTPv5)
 
         private NTPOverTLSResult Exchange(TcpClient             TCPClient,
                                           NTPOverTLS_TLSClient  TLSClient,
-                                          Boolean               ClockSynchronized)
+                                          Boolean               ClockSynchronized,
+                                          Boolean               AdvertiseNTPv5,
+                                          Boolean               AsNTPv5)
         {
 
             var tlsProtocol = new TlsClientProtocol(TCPClient.GetStream());
@@ -275,6 +363,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPOverTLS
                 {
                     return Failed(TLSClient, $"The server ended the TLS handshake: {AlertDescription.GetText(alert.AlertDescription)}");
                 }
+
+                if (AsNTPv5)
+                    return ExchangeNTPv5(tlsProtocol, TLSClient, ClockSynchronized);
 
                 #region Build the request (TA.NTP.BuildRequest)
 
@@ -299,6 +390,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPOverTLS
                     request[2]   = 6;              // poll: 64 s, the shortest of the guideline's one per minute
                     request[3]   = unchecked((Byte) (-20));
                 }
+
+                // draft-ietf-ntp-ntpv5 § 12: the offer, in a minimized request as well - the magic is
+                // the same for every client and says nothing about this one.
+                if (AdvertiseNTPv5)
+                    BinaryPrimitives.WriteUInt64BigEndian(request.AsSpan(16, 8), NTPv5Draft.NegotiationMagic);
 
                 BinaryPrimitives.WriteUInt64BigEndian(request.AsSpan(40, 8), transmit);
 
@@ -352,13 +448,137 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPOverTLS
                              t4,
                              t4Time,
                              elapsed,
-                             ClockSynchronized);
+                             ClockSynchronized) with { NTPv5Offered = AdvertiseNTPv5 };
 
             }
             finally
             {
                 try { tlsProtocol.Close(); } catch { }
             }
+
+        }
+
+        #endregion
+
+        #region (private) ExchangeNTPv5(TLSProtocol, TLSClient, ClockSynchronized)
+
+        /// <summary>
+        /// One NTPv5 request behind its length, and its response.
+        /// </summary>
+        private NTPOverTLSResult ExchangeNTPv5(TlsClientProtocol     TLSProtocol,
+                                               NTPOverTLS_TLSClient  TLSClient,
+                                               Boolean               ClockSynchronized)
+        {
+
+            // § 9 step 2: a new random client cookie, UTC, the Draft Identification - and nothing
+            // else, so the request says no more than the minimized one of NTPv4.
+            var request    = NTPv5Client.BuildRequest();
+            var framed     = NTPOverTLSProtocol.Frame(request.Datagram);
+
+            // T1, read as late as possible: the request is written the moment after.
+            var t1Time     = TimeProvider.GetUtcNow().UtcDateTime;
+            var sentAt     = TimeProvider.GetTimestamp();
+
+            TLSProtocol.Stream.Write(framed);
+            TLSProtocol.Stream.Flush();
+
+            var (status, response, responseFramed) = NTPOverTLSProtocol.ReadMessage(TLSProtocol.Stream);
+
+            // T4, at once.
+            var elapsed    = TimeProvider.GetElapsedTime(sentAt);
+            var t4Time     = TimeProvider.GetUtcNow().UtcDateTime;
+
+            try { TLSProtocol.Close(); } catch { }
+
+            NTPOverTLSResult Ignored(String Requirement, String Why)
+
+                => Failed(TLSClient, Why, request.Datagram, response) with { IgnoredBy = Requirement, Version = 5 };
+
+            if (status == NTPOverTLSReadStatus.EndOfStream)
+                return Failed(TLSClient, "The server closed the connection without a response.", request.Datagram) with { Version = 5 };
+
+            if (status != NTPOverTLSReadStatus.Message || response is null)
+                return Failed(TLSClient, $"The server's response is no whole message: {status}.", request.Datagram) with { Version = 5 };
+
+            var version    = (response[0] >> 3) & 0x07;
+            var mode       =  response[0] & 0x07;
+
+            if (!responseFramed)
+                return Ignored("REQ.TA.NTP.ProcessResponse.51", $"The server answered without a length, with a message of version {version}, not NTPv5.");
+
+            if (mode != 4)
+                return Ignored("REQ.TA.NTP.ProcessResponse.52", $"The response is of mode {mode}, not a server's (4).");
+
+            if (version != NTPv5Packet.VersionNumber)
+                return Ignored("REQ.TA.NTP.ProcessResponse.51", $"The response is of version {version}, not of the version 5 the request was.");
+
+            if (!NTPv5Packet.TryParse(response, out var packet, out var parseError))
+                return Ignored("draft-ietf-ntp-ntpv5 § 9.4", $"The response does not parse: {parseError}");
+
+            if (packet.ClientCookie != request.ClientCookie)
+                return Ignored("REQ.TA.NTP.ProcessResponse.30", "The client cookie of the response is not that of the request.");
+
+            // The request does not set the flag, so an unsynchronized server does not answer it
+            // (§ 10 of the draft), and one that does all the same is ignored as .50 has it.
+            if (packet.Flags.HasFlag(NTPv5Flags.Unsynchronized))
+                return Ignored("REQ.TA.NTP.ProcessResponse.50", "The server is not synchronized (flag Unsynchronized).");
+
+            var validation = NTPv5Client.Validate(response, request);
+
+            if (!validation.IsValid)
+                return Ignored("draft-ietf-ntp-ntpv5 § 9.4", validation.ErrorMessage ?? $"The response is not valid: {validation.Status}.");
+
+            if (elapsed > MaxTransportDelay)
+                return Ignored("REQ.TA.NTP.ProcessResponse.10", $"The response took {elapsed.TotalSeconds:0.###} s, more than {MaxTransportDelay.TotalSeconds:0} s.");
+
+            switch (NTPv5Client.CheckUsable(packet, request))
+            {
+
+                case NTPv5Unusable.None:
+                    break;
+
+                case NTPv5Unusable.Unsynchronized:
+                    return Ignored("REQ.TA.NTP.ProcessResponse.50", "The server is not synchronized (flag Unsynchronized).");
+
+                case NTPv5Unusable.MissingTimestamps:
+                case NTPv5Unusable.Era:
+                    return Ignored("REQ.TA.NTP.ProcessResponse.40", "The response carries no time this client can convert: a receive or transmit timestamp is zero, or its era is out of range.");
+
+                case var unusable:
+                    return Ignored("draft-ietf-ntp-ntpv5 § 9.5", $"The response is not usable for synchronization: {unusable}.");
+
+            }
+
+            if (NTPv5Client.Measure(t1Time, packet, t4Time, request) is not NTPv5Measurement measurement)
+                return Ignored("REQ.TA.NTP.ProcessResponse.40", "The response carries no time this client can convert.");
+
+            if (measurement.T3 < measurement.T2)
+                return Ignored("draft-ietf-ntp-ntpv5 § 9", "The server says it sent its response before it received the request.");
+
+            if (ClockSynchronized &&
+                (measurement.T3 - t4Time).Duration() > MaxDeviationWhenSynchronized)
+            {
+                return Ignored("REQ.TA.NTP.ProcessResponse.110",
+                               $"The response is {(measurement.T3 - t4Time).Duration().TotalSeconds:0} s off the synchronized clock, more than {MaxDeviationWhenSynchronized.TotalSeconds:0} s.");
+            }
+
+            return new NTPOverTLSResult {
+                       Success                     = true,
+                       Version                     = 5,
+                       RequestBytes                = request.Datagram,
+                       ResponseBytes               = response,
+                       NTPv5Response               = packet,
+                       ClockOffset                 = measurement.Offset,
+                       RoundTripDelay              = measurement.Delay,
+                       MaximumError                = packet.RootDelayTime!.Value / 2 + packet.RootDispersionTime!.Value,
+                       ServerTransmitTime          = measurement.T3,
+                       TLSVersion                  = TLSClient.NegotiatedTLSVersion,
+                       CipherSuite                 = TLSClient.NegotiatedCipherSuite,
+                       ServerCertificate           = TLSClient.ServerCertificate,
+                       CertificatePolicyErrors     = TLSClient.CertificatePolicyErrors,
+                       ClientCertificateRequested  = TLSClient.ClientCertificateRequested,
+                       ClientCertificateSent       = TLSClient.ClientCertificateSent
+                   };
 
         }
 
@@ -436,6 +656,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPOverTLS
                                $"The response is {(t3Time - T4Time).Duration().TotalSeconds:0} s off the synchronized clock, more than {MaxDeviationWhenSynchronized.TotalSeconds:0} s.");
             }
 
+            var referenceTime   = BinaryPrimitives.ReadUInt64BigEndian(Response.AsSpan(16, 8));
+
             var packet          = new NTPPacket(LI:                        leap,
                                                 VN:                        version,
                                                 Mode:                      mode,
@@ -445,7 +667,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPOverTLS
                                                 RootDelay:                 rootDelay,
                                                 RootDispersion:            rootDispersion,
                                                 ReferenceIdentifier:       null,
-                                                ReferenceTimestamp:        BinaryPrimitives.ReadUInt64BigEndian(Response.AsSpan(16, 8)),
+                                                ReferenceTimestamp:        referenceTime,
                                                 OriginateTimestamp:        origin,
                                                 ReceiveTimestamp:          receive,
                                                 TransmitTimestamp:         transmit,
@@ -459,6 +681,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPOverTLS
                        RequestBytes                = Request,
                        ResponseBytes               = Response,
                        Response                    = packet,
+                       NTPv5Echoed                 = BinaryPrimitives.ReadUInt64BigEndian(Request.AsSpan(16, 8)) == NTPv5Draft.NegotiationMagic &&
+                                                     referenceTime == NTPv5Draft.NegotiationMagic,
                        ClockOffset                 = packet.ClockOffset,
                        RoundTripDelay              = packet.RoundTripDelay,
                        MaximumError                = FromShortFormat(rootDelay) / 2 + FromShortFormat(rootDispersion),

@@ -21,6 +21,7 @@ using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
 
 using org.GraphDefined.Vanaheimr.Norn.NTP;
+using org.GraphDefined.Vanaheimr.Norn.NTPv5;
 
 #endregion
 
@@ -52,19 +53,41 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPOverTLS
         public String?            IgnoredBy               { get; init; }
 
         /// <summary>
-        /// The 48 octets that were sent.
+        /// The message that was sent: the 48 octets of NTPv4, or the NTPv5 message without its length.
         /// </summary>
         public Byte[]?            RequestBytes            { get; init; }
 
         /// <summary>
-        /// The 48 octets that came back.
+        /// The message that came back, as <see cref="RequestBytes"/>.
         /// </summary>
         public Byte[]?            ResponseBytes           { get; init; }
 
         /// <summary>
-        /// The response, with T1 and T4 of this client.
+        /// The version of NTP the exchange was in: 4, or 5 (section 6.1 of the white paper
+        /// "Secure Time Synchronization").
+        /// </summary>
+        public Byte               Version                 { get; init; } = 4;
+
+        /// <summary>
+        /// The NTPv4 response, with T1 and T4 of this client.
         /// </summary>
         public NTPPacket?         Response                { get; init; }
+
+        /// <summary>
+        /// The NTPv5 response, where the exchange was NTPv5 and it parsed.
+        /// </summary>
+        public NTPv5Packet?       NTPv5Response           { get; init; }
+
+        /// <summary>
+        /// Whether the NTPv4 request offered NTPv5, with the magic of draft-ietf-ntp-ntpv5 § 12
+        /// in its reference timestamp.
+        /// </summary>
+        public Boolean            NTPv5Offered            { get; init; }
+
+        /// <summary>
+        /// Whether the server's NTPv4 response echoed that magic: it speaks NTPv5.
+        /// </summary>
+        public Boolean            NTPv5Echoed             { get; init; }
 
         /// <summary>
         /// theta of RFC 5905 § 8: how far the server's clock is ahead of this client's.

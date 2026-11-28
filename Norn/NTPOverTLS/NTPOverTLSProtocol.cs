@@ -35,6 +35,34 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPOverTLS
 {
 
     /// <summary>
+    /// What <see cref="NTPOverTLSProtocol.ReadMessage"/> read.
+    /// </summary>
+    public enum NTPOverTLSReadStatus
+    {
+
+        /// <summary>
+        /// A whole message.
+        /// </summary>
+        Message,
+
+        /// <summary>
+        /// The stream ended before a message began.
+        /// </summary>
+        EndOfStream,
+
+        /// <summary>
+        /// The stream ended inside a message.
+        /// </summary>
+        Truncated,
+
+        /// <summary>
+        /// A length below 48 or above 2,047 octets.
+        /// </summary>
+        BadLength
+
+    }
+
+    /// <summary>
     /// NTP over TLS after chapter 7 of BSI TR-03109-5 (version 1.0, 2023-11-24): an NTPv4
     /// client/server exchange of RFC 5905, carried in a TLS connection instead of UDP datagrams.
     /// </summary>
@@ -57,8 +85,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPOverTLS
     /// falls silent, and Norn's client sends one per connection.
     /// </para>
     /// <para>
-    /// There is no NTPv5 over TLS. The guideline knows NTPv4 alone, and REQ.TA.NTP.BuildRequest.10
-    /// has the request be "NTPMessage der Version 4".
+    /// NTPv5 is not the guideline's: it knows NTPv4 alone, and REQ.TA.NTP.BuildRequest.10 has the
+    /// request be "NTPMessage der Version 4". Section 6.1 of the white paper "Secure Time
+    /// Synchronization" carries NTPv5 on the same connections. An NTPv5 message has no fixed
+    /// size - a request of the draft names its draft in an extension field - so it goes behind
+    /// a big-endian uint16 of its length, as in NTP over SSH; NTPv4 stays bare. The first octet
+    /// tells which: a length below 2,048 has the bits VN 0, and no NTP message has
+    /// (<see cref="IsLengthOctet"/>).
     /// </para>
     /// </remarks>
     public static class NTPOverTLSProtocol
@@ -69,6 +102,127 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTPOverTLS
         /// with neither extension fields nor a MAC.
         /// </summary>
         public const Int32 PacketLength = 48;
+
+        /// <summary>
+        /// The shortest NTPv5 message behind a length (section 6.1 of "Secure Time
+        /// Synchronization"): its header.
+        /// </summary>
+        public const Int32 MinFramedLength = 48;
+
+        /// <summary>
+        /// The longest NTPv5 message behind a length: 2,047 octets, so that the first octet of
+        /// the length stays below 8 and its bits VN 0.
+        /// </summary>
+        public const Int32 MaxFramedLength = 2047;
+
+        /// <summary>
+        /// Whether the first octet of a message on the connection is that of a length, before an
+        /// NTPv5 message, rather than the first octet of a bare NTPv4 header: its bits VN (3 to 5)
+        /// are 0, which no NTP message has.
+        /// </summary>
+        public static Boolean IsLengthOctet(Byte FirstOctet)
+            => ((FirstOctet >> 3) & 0x07) == 0;
+
+        /// <summary>
+        /// An NTPv5 message behind its length, ready for one write.
+        /// </summary>
+        /// <exception cref="ArgumentException">The message is shorter than <see cref="MinFramedLength"/> or longer than <see cref="MaxFramedLength"/>.</exception>
+        public static Byte[] Frame(ReadOnlySpan<Byte> Message)
+        {
+
+            if (Message.Length is < MinFramedLength or > MaxFramedLength)
+                throw new ArgumentException($"An NTPv5 message over TLS is {MinFramedLength} to {MaxFramedLength} octets long, not {Message.Length}!", nameof(Message));
+
+            var framed = new Byte[2 + Message.Length];
+            framed[0]  = (Byte) (Message.Length >> 8);
+            framed[1]  = (Byte)  Message.Length;
+            Message.CopyTo(framed.AsSpan(2));
+
+            return framed;
+
+        }
+
+        /// <summary>
+        /// Read one message off the connection, in either framing: a bare NTPv4 header of 48
+        /// octets, or an NTPv5 message behind its length.
+        /// </summary>
+        /// <returns>The status, the message without its length, and whether it had one.</returns>
+        public static (NTPOverTLSReadStatus Status, Byte[]? Message, Boolean Framed) ReadMessage(Stream Stream)
+        {
+
+            var first = new Byte[1];
+
+            if (ReadUpTo(Stream, first, 0, 1) == 0)
+                return (NTPOverTLSReadStatus.EndOfStream, null, false);
+
+            if (!IsLengthOctet(first[0]))
+            {
+
+                var bare  = new Byte[PacketLength];
+                bare[0]   = first[0];
+
+                return ReadUpTo(Stream, bare, 1, PacketLength - 1) == PacketLength - 1
+                           ? (NTPOverTLSReadStatus.Message,   bare, false)
+                           : (NTPOverTLSReadStatus.Truncated, null, false);
+
+            }
+
+            var second = new Byte[1];
+
+            if (ReadUpTo(Stream, second, 0, 1) != 1)
+                return (NTPOverTLSReadStatus.Truncated, null, true);
+
+            var length = (first[0] << 8) | second[0];
+
+            if (length is < MinFramedLength or > MaxFramedLength)
+                return (NTPOverTLSReadStatus.BadLength, null, true);
+
+            var message = new Byte[length];
+
+            return ReadUpTo(Stream, message, 0, length) == length
+                       ? (NTPOverTLSReadStatus.Message,   message, true)
+                       : (NTPOverTLSReadStatus.Truncated, null,    true);
+
+        }
+
+        /// <summary>
+        /// Read up to Count octets into the buffer: as many as come until it is full or the
+        /// stream ends.
+        /// </summary>
+        public static Int32 ReadUpTo(Stream  Stream,
+                                     Byte[]  Buffer,
+                                     Int32   Offset,
+                                     Int32   Count)
+        {
+
+            var read = 0;
+
+            while (read < Count)
+            {
+
+                // A peer that closes the TCP connection without close_notify has closed it all
+                // the same; BouncyCastle reports that as an exception.
+                Int32 n;
+
+                try
+                {
+                    n = Stream.Read(Buffer, Offset + read, Count - read);
+                }
+                catch (TlsNoCloseNotifyException)
+                {
+                    n = 0;
+                }
+
+                if (n <= 0)
+                    break;
+
+                read += n;
+
+            }
+
+            return read;
+
+        }
 
         /// <summary>
         /// The port a client connects to unless told otherwise. TR-03109-5 fixes none; the

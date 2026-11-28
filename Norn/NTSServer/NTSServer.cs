@@ -3103,18 +3103,19 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #endregion
 
-        #region (private) AnswerNTPv5Async(Send, Datagram, ReceivedAt, ReceivedAtTime, ReceivedAtTicks, RemoteEndPoint, OverSSH, CancellationToken)
+        #region (private) AnswerNTPv5Async(Send, Datagram, ReceivedAt, ReceivedAtTime, ReceivedAtTicks, RemoteEndPoint, OverChannel, CancellationToken)
 
         /// <summary>
         /// Answer an NTPv5 request as <see cref="NTPv5Responder"/> has it, or not at all.
         /// </summary>
+        /// <param name="OverChannel">Whether it came over SSH or TLS, whose channel authenticates and protects it: then a server of NTS alone answers it in plain as well.</param>
         private async Task AnswerNTPv5Async(Func<Byte[], CancellationToken, Task>  Send,
                                             Byte[]                                 Datagram,
                                             UInt64                                 ReceivedAt,
                                             DateTime                               ReceivedAtTime,
                                             Int64                                  ReceivedAtTicks,
                                             EndPoint                               RemoteEndPoint,
-                                            Boolean                                OverSSH,
+                                            Boolean                                OverChannel,
                                             CancellationToken                      CancellationToken)
         {
 
@@ -3160,7 +3161,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                         SecondaryTimescales  = described.NTPv5Timescales,
                                         ReferenceTimestamp   = NTPPacket.GetCurrentNTPTimestamp(ClockLastSynchronized.UtcDateTime),
                                         MonotonicEpochId     = NTPv5MonotonicEpochId,
-                                        AnswersPlain         = PlainNTP || OverSSH
+                                        AnswersPlain         = PlainNTP || OverChannel
                                     },
                                     new NTPv5NTSService(masterKeys,
                                                         GetCurrentMasterKey,
@@ -3267,13 +3268,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #endregion
 
-        #region (private) AdvertisesNTPv5To(RequestPacket, OverSSH)
+        #region (private) AdvertisesNTPv5To(RequestPacket, OverChannel)
 
         /// <summary>
         /// draft-ietf-ntp-ntpv5-10 § 12: whether the response to this NTPv4 request echoes the
         /// reference timestamp that asks whether the server speaks NTPv5 - a plain client
         /// request carrying the draft's magic, to a server that answers NTPv5 in plain: on UDP
-        /// where it answers plain requests at all, and over SSH always, where it does.
+        /// where it answers plain requests at all, and over SSH or TLS always, where it does.
         /// </summary>
         /// <remarks>
         /// Not to a request of NTS: § 12 has the magic used only where no other negotiation is,
@@ -3281,10 +3282,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// RFC this draft is not.
         /// </remarks>
         private Boolean AdvertisesNTPv5To(NTPPacket  RequestPacket,
-                                          Boolean    OverSSH)
+                                          Boolean    OverChannel)
 
             => NTPv5 != NTPv5Support.Disabled &&
-               (PlainNTP || OverSSH) &&
+               (PlainNTP || OverChannel) &&
                RequestPacket.VN                 == 4 &&
                RequestPacket.Mode               == 3 &&
                RequestPacket.ReferenceTimestamp == NTPv5Draft.NegotiationMagic &&
@@ -3305,7 +3306,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         private NTPPacket BuildResponseHeader(NTPPacket                  RequestPacket,
                                               IEnumerable<NTPExtension>  Extensions,
                                               InterleavedExchange        Exchange,
-                                              Boolean                    OverSSH   = false)
+                                              Boolean                    OverChannel   = false)
         {
 
             // Read once: a Redescribe in between must not leave this response with the stratum
@@ -3336,7 +3337,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                    // When the clock was last set, per § 7.3 — not the moment of this reply,
                    // which said nothing about synchronization at all. Except where the client
                    // asked in it whether NTPv5 is spoken here, and the echo is the answer.
-                   ReferenceTimestamp:   AdvertisesNTPv5To(RequestPacket, OverSSH)
+                   ReferenceTimestamp:   AdvertisesNTPv5To(RequestPacket, OverChannel)
                                              ? NTPv5Draft.NegotiationMagic
                                              : NTPPacket.GetCurrentNTPTimestamp(ClockLastSynchronized.UtcDateTime),
 
