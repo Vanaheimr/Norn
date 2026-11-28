@@ -49,7 +49,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
     /// and the client that produced it agree on what time it is.
     /// </param>
     /// <param name="Random">Where the time of the next key exchange between an endpoint's MinRefresh and MaxRefresh comes from.</param>
-    public class MeasurementEngine(MonitoringConfig  Configuration,
+    public partial class MeasurementEngine(MonitoringConfig  Configuration,
                                    TimeProvider?     TimeProvider   = null,
                                    Random?           Random         = null)
 
@@ -385,6 +385,15 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                                          ? await RequestSignedResponse(cachedState, CancellationToken)
                                          : null;
 
+                // ──── Step 5: what the server shows of NTPv5, where asked, at most hourly ────
+                //
+                // After everything measured, so that none of its packets come between the
+                // measurement's - and whatever the measurement found, because a server whose
+                // NTPv4 answer was a failure may still speak NTPv5.
+                var ntpv5 = Server.ProbeNTPv5
+                                ? await NTPv5CapabilityOf(Server, DNSClient, CancellationToken)
+                                : null;
+
                 totalStopwatch.Stop();
 
                 return new NTSMeasurementResult(Server.Hostname, RoundId, Timestamp: timeProvider.GetUtcNow()) {
@@ -394,6 +403,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                            NTP             = ntpResult,
                            PreflightSent   = preflightSent,
                            SignedResponse  = signedResponse,
+                           NTPv5           = ntpv5,
                            Success         = ntpResult.Success,
                            ErrorMessage    = ntpResult.ErrorMessage,
                            ErrorCategory   = ntpResult.ErrorCategory,

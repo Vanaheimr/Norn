@@ -105,6 +105,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         public TimeSpan                    NTSKETimeout               { get; set; } = TimeSpan.FromSeconds(10);
 
         /// <summary>
+        /// How long the NTPv5 probe of a server whose endpoint asks for one
+        /// (NTSServerEndpoint.ProbeNTPv5) is held before the server is probed again.
+        /// </summary>
+        /// <remarks>
+        /// What a server supports changes with its software, not from one minute to the next,
+        /// and every probe is a key exchange of its own.
+        /// </remarks>
+        public TimeSpan                    NTPv5ProbeInterval         { get; set; } = TimeSpan.FromHours(1);
+
+        /// <summary>
         /// Backend URL to POST measurement results.
         /// </summary>
         public String?                     BackendUrl                 { get; set; }

@@ -164,6 +164,20 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         public Boolean                         SignedResponses        { get; set; }
 
         /// <summary>
+        /// Whether the server is probed for NTPv5 (draft-ietf-ntp-ntpv5-10) as well, at most
+        /// once every MonitoringConfig.NTPv5ProbeInterval.
+        /// </summary>
+        /// <remarks>
+        /// The probe asks in the three ways a client can: plain NTPv4 with the negotiation
+        /// magic of § 12, a plain NTPv5 request with a Server Information field, and a key
+        /// exchange offering NTS for NTPv5 first, with one NTPv5 query under it. It is a key
+        /// exchange of its own, beside the one the measurement holds, and two plain requests:
+        /// off by default, because a server that serves NTS alone sees plain requests it will
+        /// not answer.
+        /// </remarks>
+        public Boolean                         ProbeNTPv5             { get; set; }
+
+        /// <summary>
         /// What decides whether this server's NTS-KE certificate is believed, or
         /// none for the usual rule: a chain to whatever the machine trusts, issued
         /// for this host.
@@ -229,7 +243,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                                  TimeSpan?                                                      DelayAsymmetry               = null,
                                  Double?                                                        DelayVarAsymmetry            = null,
                                  DomainName?                                                    NTSKEHost                    = null,
-                                 Boolean                                                        SignedResponses              = false)
+                                 Boolean                                                        SignedResponses              = false,
+                                 Boolean                                                        ProbeNTPv5                   = false)
         {
 
             this.Hostname                    = Hostname;
@@ -246,6 +261,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
             this.DelayVarAsymmetry           = DelayVarAsymmetry;
             this.NTSKEHost                   = NTSKEHost;
             this.SignedResponses             = SignedResponses;
+            this.ProbeNTPv5                  = ProbeNTPv5;
 
         }
 

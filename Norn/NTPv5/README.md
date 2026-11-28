@@ -112,6 +112,7 @@ implementation, which is what chrony and ntpd-rs do anyway.
 | § 8 | Interleaved mode by server cookie | [`NTPv5InterleavedAssociation.cs`](NTPv5InterleavedAssociation.cs) |
 | § 11 | NTS for NTPv5 | [`NTPv5NTS.cs`](NTPv5NTS.cs) |
 | § 12 | Version negotiation from NTPv4 | [`NTPv5VersionNegotiation.cs`](NTPv5VersionNegotiation.cs) |
+| § 7.6, § 11, § 12 | Monitoring: an optional, hourly probe of what a server supports | [`MeasurementEngine.NTPv5.cs`](../Monitoring/MeasurementEngine.NTPv5.cs), [`NTPv5CapabilityResult.cs`](../Monitoring/Results/NTPv5CapabilityResult.cs) |
 | § 7.3, § 7.5, § 7.10 | MAC, Time Sources, Secondary Receive Timestamp | not yet |
 
 The [NTS conformance suite](https://github.com/Vanaheimr/NTSConformanceTests) tests these

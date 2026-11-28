@@ -135,6 +135,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         /// </summary>
         public SignedResponseResult?         SignedResponse            { get; init; }
 
+        /// <summary>
+        /// What the server showed of NTPv5, where its endpoint asks for a probe: see
+        /// NTSServerEndpoint.ProbeNTPv5. A probe is held for MonitoringConfig.NTPv5ProbeInterval,
+        /// so most measurements carry the last one, marked as from the cache.
+        /// </summary>
+        public NTPv5CapabilityResult?        NTPv5                     { get; init; }
+
         #endregion
 
         #region Constructor(s)
@@ -189,6 +196,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
                            NTP          is not null
                                ? new JProperty("ntp",               NTP.           ToJSON())
+                               : null,
+
+                           NTPv5        is not null
+                               ? new JProperty("ntpv5",             NTPv5.         ToJSON())
                                : null
 
                        );
