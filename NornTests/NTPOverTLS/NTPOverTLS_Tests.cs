@@ -121,7 +121,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTPOverTLS
             try
             {
 
-                var result = await ClientOf(server, DataMinimization: DataMinimization).QueryTime();
+                var result  = await ClientOf(server, DataMinimization: DataMinimization).QueryTime();
+
+                // The server counts a response after it has sent it.
+                var metrics = await Settled.Until(() => server.Metrics, m => m.NTPOverTLSResponsesSent >= 1);
 
                 Assert.That(result.Success,                            Is.True,  result.ToString());
                 Assert.That(result.TLSVersion,                         Is.EqualTo("TLS 1.3"));
@@ -130,8 +133,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTPOverTLS
                 Assert.That(result.RequestBytes,                       Has.Length.EqualTo(48));
                 Assert.That(result.ResponseBytes,                      Has.Length.EqualTo(48));
                 Assert.That(result.ClientCertificateRequested,         Is.False);
-                Assert.That(server.Metrics.NTPOverTLSResponsesSent,    Is.EqualTo(1), server.Metrics.ToString());
-                Assert.That(server.Metrics.NTPRequestsReceived,        Is.Zero,       "NTP over TLS is counted apart from NTP over UDP");
+                Assert.That(metrics.NTPOverTLSResponsesSent,           Is.EqualTo(1), metrics.ToString());
+                Assert.That(metrics.NTPRequestsReceived,               Is.Zero,       "NTP over TLS is counted apart from NTP over UDP");
 
             }
             finally
@@ -380,7 +383,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTPOverTLS
 
                 protocol.Close();
 
-                Assert.That(server.Metrics.NTPOverTLSResponsesSent, Is.EqualTo(3));
+                // The server counts a response after it has sent it.
+                var metrics = await Settled.Until(() => server.Metrics, m => m.NTPOverTLSResponsesSent >= 3);
+
+                Assert.That(metrics.NTPOverTLSResponsesSent, Is.EqualTo(3));
 
             }
             finally

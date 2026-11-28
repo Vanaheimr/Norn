@@ -434,7 +434,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTPv5
                 Assert.That(NTPv5Client.Validate(nak.Buffer, forged).Status, Is.EqualTo(NTPv5ResponseStatus.AuthenticationNAK));
             }
 
-            var after  = server.Metrics;
+            // The server counts a response after it has sent it.
+            var after  = await Settled.Until(() => server.Metrics,
+                                             m => m.NTPv5ResponsesSent              - before.NTPv5ResponsesSent              >= 5 &&
+                                                  m.NTPv5AuthenticatedResponsesSent - before.NTPv5AuthenticatedResponsesSent >= 1 &&
+                                                  m.NTPv5InterleavedResponsesSent   - before.NTPv5InterleavedResponsesSent   >= 1 &&
+                                                  m.NTPv5AuthenticationNAKsSent     - before.NTPv5AuthenticationNAKsSent     >= 1 &&
+                                                  m.NTPResponsesSent                - before.NTPResponsesSent                >= 6);
 
             Assert.Multiple(() => {
                 Assert.That(after.NTPv5RequestsReceived           - before.NTPv5RequestsReceived,           Is.EqualTo(5), after.ToString());
