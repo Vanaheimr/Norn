@@ -48,7 +48,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                   Int64 NTPOverTLSHandshakeFailures      = 0,
                                   Int64 NTPOverTLSRequestsReceived       = 0,
                                   Int64 NTPOverTLSRequestsInvalid        = 0,
-                                  Int64 NTPOverTLSResponsesSent          = 0)
+                                  Int64 NTPOverTLSResponsesSent          = 0,
+                                  Int64 NTPOverSSHChannelsOpened         = 0,
+                                  Int64 NTPOverSSHChannelsRejected       = 0,
+                                  Int64 NTPOverSSHRequestsReceived       = 0,
+                                  Int64 NTPOverSSHProtocolErrors         = 0)
     {
 
         public Int64 NTPRequestsReceived       { get; } = NTPRequestsReceived;
@@ -162,6 +166,27 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// How many NTP responses went out over TLS.
         /// </summary>
         public Int64 NTPOverTLSResponsesSent          { get; } = NTPOverTLSResponsesSent;
+        /// How many channels of NTP over SSH were opened and served.
+        /// </summary>
+        public Int64 NTPOverSSHChannelsOpened         { get; } = NTPOverSSHChannelsOpened;
+
+        /// <summary>
+        /// How many channels of NTP over SSH were ended at once, as their connection had as many
+        /// open as it may have.
+        /// </summary>
+        public Int64 NTPOverSSHChannelsRejected       { get; } = NTPOverSSHChannelsRejected;
+
+        /// <summary>
+        /// How many of the requests received came over SSH, each also counted in
+        /// <see cref="NTPRequestsReceived"/>.
+        /// </summary>
+        public Int64 NTPOverSSHRequestsReceived       { get; } = NTPOverSSHRequestsReceived;
+
+        /// <summary>
+        /// How many channels of NTP over SSH ended in a protocol error: a length below 48 octets
+        /// or above what the server reads, or a message cut off by the end of the channel.
+        /// </summary>
+        public Int64 NTPOverSSHProtocolErrors         { get; } = NTPOverSSHProtocolErrors;
 
 
         /// <summary>
@@ -203,7 +228,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                ("tls-handshakes",   NTPOverTLSHandshakeFailures),
                                ("tls-received",     NTPOverTLSRequestsReceived),
                                ("tls-invalid",      NTPOverTLSRequestsInvalid),
-                               ("tls-sent",         NTPOverTLSResponsesSent)
+                               ("tls-sent",         NTPOverTLSResponsesSent),
+                               ("ssh-channels",     NTPOverSSHChannelsOpened),
+                               ("ssh-rejected",     NTPOverSSHChannelsRejected),
+                               ("ssh-received",     NTPOverSSHRequestsReceived),
+                               ("ssh-errors",       NTPOverSSHProtocolErrors)
                            }.
                            Where (counter => counter.Value != 0).
                            Select(counter => $"{counter.Name}: {counter.Value}").

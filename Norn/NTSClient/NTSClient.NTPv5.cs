@@ -104,17 +104,88 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// charged to the network.
         /// </para>
         /// </remarks>
-        public async Task<NTPv5QueryResult> QueryNTPv5(TimeSpan?                         Timeout                = null,
-                                                       NTSKE_Response?                   NTSKEResponse          = null,
-                                                       NTPv5Timescale                    Timescale              = NTPv5Timescale.UTC,
-                                                       Boolean                           AcceptUnsynchronized   = false,
-                                                       Boolean                           RequestCorrection      = false,
-                                                       IEnumerable<NTPv5ExtensionField>? ExtensionFields        = null,
-                                                       NTPServerAccessState?             AccessState            = null,
-                                                       NTPv5UsabilityLimits?             Limits                 = null,
-                                                       NTPv5CorrectionParameters?        CorrectionParameters   = null,
-                                                       String?                           NTPServer              = null,
-                                                       CancellationToken                 CancellationToken      = default)
+        public Task<NTPv5QueryResult> QueryNTPv5(TimeSpan?                         Timeout                = null,
+                                                 NTSKE_Response?                   NTSKEResponse          = null,
+                                                 NTPv5Timescale                    Timescale              = NTPv5Timescale.UTC,
+                                                 Boolean                           AcceptUnsynchronized   = false,
+                                                 Boolean                           RequestCorrection      = false,
+                                                 IEnumerable<NTPv5ExtensionField>? ExtensionFields        = null,
+                                                 NTPServerAccessState?             AccessState            = null,
+                                                 NTPv5UsabilityLimits?             Limits                 = null,
+                                                 NTPv5CorrectionParameters?        CorrectionParameters   = null,
+                                                 String?                           NTPServer              = null,
+                                                 CancellationToken                 CancellationToken      = default)
+
+            => QueryNTPv5Core(Timeout,
+                              NTSKEResponse,
+                              Timescale,
+                              AcceptUnsynchronized,
+                              RequestCorrection,
+                              ExtensionFields,
+                              AccessState,
+                              Limits,
+                              CorrectionParameters,
+                              NTPServer,
+                              OverSSH: null,
+                              CancellationToken);
+
+
+        /// <summary>
+        /// Sends a single NTPv5 request over SSH instead of UDP, on a channel of NTP over SSH
+        /// (section 10 of the white paper "NTS Key Establishment over SSH"), and returns what
+        /// came of it, exactly as <see cref="QueryNTPv5"/> does on UDP: without NTS, which the
+        /// channel makes unnecessary, and matched by the client cookie (section 10.4).
+        /// </summary>
+        /// <param name="Channel">An open channel of NTP over SSH to the server.</param>
+        /// <param name="Timeout">How long to wait for a valid response.</param>
+        /// <param name="Timescale">The timescale to operate in.</param>
+        /// <param name="AcceptUnsynchronized">Ask for a response even from an unsynchronized server (flag 0x1).</param>
+        /// <param name="RequestCorrection">Add a Correction field for the network to fill in (§ 7.7).</param>
+        /// <param name="ExtensionFields">Further fields to send, such as a Server Information request.</param>
+        /// <param name="AccessState">The access state of the server, which its poll field is applied to and which may forbid the query.</param>
+        /// <param name="Limits">The maximums of § 9.5.</param>
+        /// <param name="CorrectionParameters">What § 8 needs besides the corrections.</param>
+        /// <param name="CancellationToken">A cancellation token.</param>
+        public Task<NTPv5QueryResult> QueryNTPv5OverSSH(NTPOverSSHChannel                 Channel,
+                                                        TimeSpan?                         Timeout                = null,
+                                                        NTPv5Timescale                    Timescale              = NTPv5Timescale.UTC,
+                                                        Boolean                           AcceptUnsynchronized   = false,
+                                                        Boolean                           RequestCorrection      = false,
+                                                        IEnumerable<NTPv5ExtensionField>? ExtensionFields        = null,
+                                                        NTPServerAccessState?             AccessState            = null,
+                                                        NTPv5UsabilityLimits?             Limits                 = null,
+                                                        NTPv5CorrectionParameters?        CorrectionParameters   = null,
+                                                        CancellationToken                 CancellationToken      = default)
+
+            => QueryNTPv5Core(Timeout,
+                              NTSKEResponse:  null,
+                              Timescale,
+                              AcceptUnsynchronized,
+                              RequestCorrection,
+                              ExtensionFields,
+                              AccessState,
+                              Limits,
+                              CorrectionParameters,
+                              NTPServer:      null,
+                              OverSSH:        Channel,
+                              CancellationToken);
+
+
+        /// <summary>
+        /// The query of <see cref="QueryNTPv5"/>, on UDP, or over SSH where a channel is given.
+        /// </summary>
+        private async Task<NTPv5QueryResult> QueryNTPv5Core(TimeSpan?                         Timeout,
+                                                            NTSKE_Response?                   NTSKEResponse,
+                                                            NTPv5Timescale                    Timescale,
+                                                            Boolean                           AcceptUnsynchronized,
+                                                            Boolean                           RequestCorrection,
+                                                            IEnumerable<NTPv5ExtensionField>? ExtensionFields,
+                                                            NTPServerAccessState?             AccessState,
+                                                            NTPv5UsabilityLimits?             Limits,
+                                                            NTPv5CorrectionParameters?        CorrectionParameters,
+                                                            String?                           NTPServer,
+                                                            NTPOverSSHChannel?                OverSSH,
+                                                            CancellationToken                 CancellationToken)
         {
 
             ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed) != 0, this);
@@ -185,7 +256,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             #region Resolve the server
 
-            var remoteEndPoint     = await NTPRemoteEndPointResolver.ResolveAsync(NTSKEResponse,
+            // Over SSH the channel is the server: there is nothing to resolve.
+            var remoteEndPoint     = OverSSH is not null ? OverSSH.RemoteEndPoint : await NTPRemoteEndPointResolver.ResolveAsync(NTSKEResponse,
                                                                                   HostText,
                                                                                   NTP_Port,
                                                                                   DNSClient,
@@ -194,7 +266,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                                                   CancellationToken,
                                                                                   NTPServer).ConfigureAwait(false);
 
-            var remoteDescription  = remoteEndPoint?.ToString()
+            var remoteDescription  = OverSSH?.Description
+                                         ?? remoteEndPoint?.ToString()
                                          ?? NTPServer
                                          ?? NTPRemoteEndPointResolver.GetRemoteDescription(NTSKEResponse, HostText, NTP_Port);
 
@@ -266,12 +339,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             var requestSent = false;
 
             using var receiveBuffer = new ReceiveBuffer();
-            using var udpSocket     = new Socket(destination.AddressFamily, SocketType.Dgram, ProtocolType.Udp);
+            using var udpSocket     = OverSSH is not null ? null : new Socket(destination.AddressFamily, SocketType.Dgram, ProtocolType.Udp);
 
             try
             {
 
-                udpSocket.Bind(udpSocket.AddressFamily == AddressFamily.InterNetworkV6
+                udpSocket?.Bind(udpSocket.AddressFamily == AddressFamily.InterNetworkV6
                                    ? anyIPv6EndPoint
                                    : anyIPv4EndPoint);
 
@@ -279,7 +352,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                 var sendStopwatchTimestamp = Stopwatch.GetTimestamp();
 
-                await udpSocket.SendToAsync(request.Datagram, SocketFlags.None, destination, CancellationToken).ConfigureAwait(false);
+                if (OverSSH is not null)
+                {
+                    // Section 10.4: what came too late for an earlier request is no answer to this one.
+                    OverSSH.DiscardPending();
+                    await OverSSH.SendAsync(request.Datagram, CancellationToken).ConfigureAwait(false);
+                }
+                else
+                    await udpSocket!.SendToAsync(request.Datagram, SocketFlags.None, destination, CancellationToken).ConfigureAwait(false);
 
                 requestSent = true;
 
@@ -293,7 +373,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     var remaining = timeout - Stopwatch.GetElapsedTime(sendStopwatchTimestamp);
 
                     var received  = remaining > TimeSpan.Zero
-                                        ? await ReceiveUdpResponseAsync(udpSocket, receiveBuffer.Bytes, remaining, CancellationToken).ConfigureAwait(false)
+                                        ? await ReceiveResponseAsync(udpSocket, receiveBuffer.Bytes, remaining, OverSSH, CancellationToken).ConfigureAwait(false)
                                         : (Result: (UdpReceiveResult?) null, TimedOut: true);
 
                     if (received.TimedOut || received.Result is not UdpReceiveResult datagram)
@@ -427,18 +507,56 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <param name="Timeout">How long to wait for a valid response.</param>
         /// <param name="AccessState">The access state of the server.</param>
         /// <param name="CancellationToken">A cancellation token.</param>
-        public async Task<NTPNegotiatedQueryResult> QueryNegotiated(NTPv5VersionNegotiation  Negotiation,
-                                                                    TimeSpan?                Timeout             = null,
-                                                                    NTPServerAccessState?    AccessState         = null,
-                                                                    CancellationToken        CancellationToken   = default)
+        public Task<NTPNegotiatedQueryResult> QueryNegotiated(NTPv5VersionNegotiation  Negotiation,
+                                                              TimeSpan?                Timeout             = null,
+                                                              NTPServerAccessState?    AccessState         = null,
+                                                              CancellationToken        CancellationToken   = default)
+
+            => QueryNegotiatedCore(Negotiation, Timeout, AccessState, OverSSH: null, CancellationToken);
+
+
+        /// <summary>
+        /// One query over SSH in whichever version the § 12 negotiation chose, on a channel of NTP
+        /// over SSH (section 10 of the white paper "NTS Key Establishment over SSH"). Inside the
+        /// channel the offer and the echo are as well protected as the time: nobody on the way
+        /// can remove the offer and keep this client on NTPv4 (section 10.4).
+        /// </summary>
+        /// <param name="Channel">An open channel of NTP over SSH to the server.</param>
+        /// <param name="Negotiation">The negotiation with this client's server, which this query advances.</param>
+        /// <param name="Timeout">How long to wait for a valid response.</param>
+        /// <param name="AccessState">The access state of the server.</param>
+        /// <param name="CancellationToken">A cancellation token.</param>
+        public Task<NTPNegotiatedQueryResult> QueryNegotiatedOverSSH(NTPOverSSHChannel        Channel,
+                                                                     NTPv5VersionNegotiation  Negotiation,
+                                                                     TimeSpan?                Timeout             = null,
+                                                                     NTPServerAccessState?    AccessState         = null,
+                                                                     CancellationToken        CancellationToken   = default)
+
+            => QueryNegotiatedCore(Negotiation, Timeout, AccessState, Channel, CancellationToken);
+
+
+        private async Task<NTPNegotiatedQueryResult> QueryNegotiatedCore(NTPv5VersionNegotiation  Negotiation,
+                                                                         TimeSpan?                Timeout,
+                                                                         NTPServerAccessState?    AccessState,
+                                                                         NTPOverSSHChannel?       OverSSH,
+                                                                         CancellationToken        CancellationToken)
         {
 
             if (Negotiation.Version == NTPv5NegotiatedVersion.NTPv5)
             {
 
-                var v5 = await QueryNTPv5(Timeout:            Timeout,
-                                          AccessState:        AccessState,
-                                          CancellationToken:  CancellationToken).ConfigureAwait(false);
+                var v5 = await QueryNTPv5Core(Timeout:               Timeout,
+                                              NTSKEResponse:         null,
+                                              Timescale:             NTPv5Timescale.UTC,
+                                              AcceptUnsynchronized:  false,
+                                              RequestCorrection:     false,
+                                              ExtensionFields:       null,
+                                              AccessState:           AccessState,
+                                              Limits:                null,
+                                              CorrectionParameters:  null,
+                                              NTPServer:             null,
+                                              OverSSH:               OverSSH,
+                                              CancellationToken:     CancellationToken).ConfigureAwait(false);
 
                 // § 12: what counts is whether a valid response came. A canceled query says
                 // nothing about the server either way.
@@ -452,9 +570,14 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
             var advertise = Negotiation.Version == NTPv5NegotiatedVersion.NTPv4Advertising;
 
-            var v4 = await QueryTime(Timeout:            Timeout,
-                                     AdvertiseNTPv5:     advertise,
-                                     CancellationToken:  CancellationToken).ConfigureAwait(false);
+            var v4 = await QueryTimeCore(Timeout:              Timeout,
+                                         NTSKEResponse:        null,
+                                         SignedResponseMode:   SignedResponseMode.None,
+                                         SignedResponseKeyId:  NTSRequestSignedResponseExtension.AnyKey,
+                                         NTPServer:            null,
+                                         AdvertiseNTPv5:       advertise,
+                                         OverSSH:              OverSSH,
+                                         CancellationToken:    CancellationToken).ConfigureAwait(false);
 
             // The echo first, while the version is still the one the request went out in.
             if (advertise && v4.Success && v4.Response is not null)

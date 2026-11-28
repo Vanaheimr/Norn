@@ -216,6 +216,16 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         private                  Int64                                    ntpv5AuthenticatedResponsesSent;
         private                  Int64                                    ntpv5InterleavedResponsesSent;
         private                  Int64                                    ntpv5AuthenticationNAKsSent;
+        private                  Int64                                    ntpOverSSHChannelsOpened;
+        private                  Int64                                    ntpOverSSHChannelsRejected;
+        private                  Int64                                    ntpOverSSHRequestsReceived;
+        private                  Int64                                    ntpOverSSHProtocolErrors;
+
+        /// <summary>
+        /// The NTP channels open on each SSH connection, by its id: section 10.8 of the white paper
+        /// has a server limit them, as a channel holds state for as long as it is open.
+        /// </summary>
+        private readonly         ConcurrentDictionary<String, Int32>      ntpOverSSHChannelsPerConnection = new ();
 
         #endregion
 
@@ -276,6 +286,28 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// The host keys of the SSH listener, which clients pin. Empty when there is no listener.
         /// </summary>
         public IReadOnlyList<ISshHostKey>  SSHHostKeys   { get; }
+
+        /// <summary>
+        /// Whether the SSH listener offers NTP over SSH as well, the subsystem
+        /// <see cref="NTPOverSSH.SubsystemName"/> of section 10 of the white paper "NTS Key
+        /// Establishment over SSH", which carries NTPv4 and NTPv5 messages themselves.
+        /// </summary>
+        /// <remarks>
+        /// Without a listener of its own the server can still serve it on somebody else's, see
+        /// <see cref="ServeNTPOverSSHAsync"/>.
+        /// </remarks>
+        public Boolean                     NTPOverSSHEnabled                  { get; }
+
+        /// <summary>
+        /// How long an NTP channel may be idle before the server ends it: never less than
+        /// <see cref="NTPOverSSH.MinIdleTimeout"/> (section 10.5).
+        /// </summary>
+        public TimeSpan                    NTPOverSSHIdleTimeout              { get; }
+
+        /// <summary>
+        /// How many NTP channels one SSH connection may have open at a time (section 10.8).
+        /// </summary>
+        public Int32                       MaxNTPOverSSHChannelsPerConnection { get; }
 
         /// <summary>
         /// The size of the buffer used for receiving NTP packets.
@@ -581,7 +613,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                    NTPOverTLSHandshakeFailures:      System.Threading.Interlocked.Read(ref ntpOverTLSHandshakeFailures),
                    NTPOverTLSRequestsReceived:       System.Threading.Interlocked.Read(ref ntpOverTLSRequestsReceived),
                    NTPOverTLSRequestsInvalid:        System.Threading.Interlocked.Read(ref ntpOverTLSRequestsInvalid),
-                   NTPOverTLSResponsesSent:          System.Threading.Interlocked.Read(ref ntpOverTLSResponsesSent)
+                   NTPOverTLSResponsesSent:          System.Threading.Interlocked.Read(ref ntpOverTLSResponsesSent),
+                   NTPOverSSHChannelsOpened:         System.Threading.Interlocked.Read(ref ntpOverSSHChannelsOpened),
+                   NTPOverSSHChannelsRejected:       System.Threading.Interlocked.Read(ref ntpOverSSHChannelsRejected),
+                   NTPOverSSHRequestsReceived:       System.Threading.Interlocked.Read(ref ntpOverSSHRequestsReceived),
+                   NTPOverSSHProtocolErrors:         System.Threading.Interlocked.Read(ref ntpOverSSHProtocolErrors)
                );
 
         #endregion
@@ -625,6 +661,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <param name="NTPOverTLSPort">The TCP port of NTP over TLS after BSI TR-03109-5 § 7 (default: none).</param>
         /// <param name="NTPOverTLSClientCertificateValidator">Where given, an NTP-over-TLS client has to show a certificate, and this decides whether it is answered (default: no client certificate asked for).</param>
         /// <param name="NTPOverTLSIdleTimeout">How long an NTP-over-TLS connection may stay silent (default: 30 seconds).</param>
+        /// <param name="NTPOverSSH">Whether the SSH listener offers NTP over SSH as well, the subsystem <see cref="NTP.NTPOverSSH.SubsystemName"/> (default: no).</param>
+        /// <param name="NTPOverSSHIdleTimeout">How long an NTP channel may be idle (default and least: <see cref="NTP.NTPOverSSH.MinIdleTimeout"/>).</param>
+        /// <param name="MaxNTPOverSSHChannelsPerConnection">How many NTP channels one SSH connection may have open (default: 2).</param>
         public NTSServer(I18NString?        Description    = null,
                          IPPort?            NTSKEPort      = null,
                          IPPort?            NTSPort        = null,
@@ -667,7 +706,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                          NTPv5Support              NTPv5                  = NTPv5Support.Disabled,
                          IPPort?                   NTPOverTLSPort         = null,
                          RemoteTLSClientCertificateValidationHandler<NTSServer>? NTPOverTLSClientCertificateValidator = null,
-                         TimeSpan?                 NTPOverTLSIdleTimeout  = null)
+                         TimeSpan?                 NTPOverTLSIdleTimeout  = null,
+                         Boolean                   NTPOverSSH             = false,
+                         TimeSpan?                 NTPOverSSHIdleTimeout  = null,
+                         Int32?                    MaxNTPOverSSHChannelsPerConnection = null)
         {
 
             if (NTPOverTLSClientCertificateValidator is not null && !NTPOverTLSPort.HasValue)
@@ -713,6 +755,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                           : [ SshHostKey.GenerateEd25519() ]
                                                     : [];
             this.sshAuthenticator             = SSHAuthenticator;
+            this.NTPOverSSHEnabled            = NTPOverSSH;
+            this.NTPOverSSHIdleTimeout        = NTPOverSSHIdleTimeout is TimeSpan idleTimeout && idleTimeout > NTP.NTPOverSSH.MinIdleTimeout
+                                                    ? idleTimeout
+                                                    : NTP.NTPOverSSH.MinIdleTimeout;
+            this.MaxNTPOverSSHChannelsPerConnection = Math.Max(1, MaxNTPOverSSHChannelsPerConnection ?? 2);
 
             this.TimeProvider                 = TimeProvider                 ?? System.TimeProvider.System;
             this.Description                  = Description                  ?? I18NString.Empty;
@@ -1401,6 +1448,193 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             finally
             {
                 try { sshNtskeConnectionSemaphore.Release(); } catch (ObjectDisposedException) { }
+            }
+
+        }
+
+        #endregion
+
+        #region ServeNTPOverSSHAsync(Context, CancellationToken)
+
+        /// <summary>
+        /// Serve NTP over SSH on the channel of the subsystem <see cref="NTP.NTPOverSSH.SubsystemName"/>:
+        /// read one request after the other, each behind its two-octet length, and answer each
+        /// as this server answers a datagram (section 10 of the white paper "NTS Key Establishment
+        /// over SSH"), until the client ends the channel, it is idle for too long, or a length
+        /// breaks the stream.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Public, and shaped as the subsystem handler of Hermod's SSH server, as
+        /// <see cref="ServeSSHSubsystemAsync"/> is: it serves the SSH listener of this server, and
+        /// the shared listener of a charging infrastructure node that offers NTP next to OCPP.
+        /// Whoever serves it decides who may open it.
+        /// </para>
+        /// <para>
+        /// The requests of one channel are answered one after another, in the order they arrived
+        /// (section 10.4). T2 is read once the last octet of a request has been read, before it is
+        /// looked at, as for a datagram.
+        /// </para>
+        /// </remarks>
+        /// <param name="Context">The session and the channel of the subsystem.</param>
+        /// <param name="CancellationToken">Fires when the channel is closed or the SSH server stops.</param>
+        public async ValueTask ServeNTPOverSSHAsync(SshSubsystemContext  Context,
+                                                    CancellationToken    CancellationToken)
+        {
+
+            var connectionId    = Context.Session.ConnectionId;
+            var channels        = ntpOverSSHChannelsPerConnection.AddOrUpdate(connectionId, 1, (_, count) => count + 1);
+
+            try
+            {
+
+                if (channels > MaxNTPOverSSHChannelsPerConnection)
+                {
+                    System.Threading.Interlocked.Increment(ref ntpOverSSHChannelsRejected);
+                    DebugX.Log($"Closing NTP over SSH from {Context.Session.Peer}: {channels - 1} NTP channels are open on its connection already.");
+                    await SendExitStatusAsync(Context.Channel, 1, CancellationToken).ConfigureAwait(false);
+                    await SendEofAsync(Context.Channel, CancellationToken).ConfigureAwait(false);
+                    return;
+                }
+
+                System.Threading.Interlocked.Increment(ref ntpOverSSHChannelsOpened);
+
+                // The address of the SSH connection, as section 10.4 has it: the rate limiter and the
+                // interleaved mode know a client by it, as they know one on UDP by its datagrams'.
+                var peer            = Context.Session.Peer;
+                var remoteEndPoint  = peer is IPSocket peerSocket
+                                          ? new IPEndPoint(peerSocket.IPAddress.ToDotNet(), peerSocket.Port.ToUInt16())
+                                          : new IPEndPoint(System.Net.IPAddress.IPv6None, 0);
+
+                var maxLength       = (Int32) Math.Min(UInt16.MaxValue, Math.Max(BufferSize, NTP.NTPOverSSH.MinAcceptedMessageLength));
+                var exitStatus      = 0U;
+
+                // One writer at a time, and the length and the message in one write: Frame makes
+                // them one buffer, and the requests are answered one after another.
+                Task Send(Byte[] Datagram, CancellationToken SendToken)
+                    => Context.Channel.SendDataAsync(NTP.NTPOverSSH.Frame(Datagram), SendToken).AsTask();
+
+                while (true)
+                {
+
+                    NTPOverSSHReadStatus status;
+                    Byte[]?              message;
+
+                    using (var idleCTS = CancellationTokenSource.CreateLinkedTokenSource(CancellationToken))
+                    {
+
+                        idleCTS.CancelAfter(NTPOverSSHIdleTimeout);
+
+                        try
+                        {
+                            (status, message) = await NTP.NTPOverSSH.ReadMessageAsync(Context.Channel.Input,
+                                                                                      maxLength,
+                                                                                      idleCTS.Token).ConfigureAwait(false);
+                        }
+                        catch (OperationCanceledException) when (!CancellationToken.IsCancellationRequested)
+                        {
+                            // Section 10.5: idle for too long, which is no error of the client's.
+                            DebugX.Log($"Closing NTP over SSH from {Context.Session.Peer}: idle for {NTPOverSSHIdleTimeout.TotalSeconds} s.");
+                            break;
+                        }
+
+                    }
+
+                    // T2, as on UDP: read here and nowhere later.
+                    var receivedAtTime  = TimeProvider.GetUtcNow().UtcDateTime;
+                    var receivedAt      = NTPPacket.GetCurrentNTPTimestamp(receivedAtTime);
+                    var receivedAtTicks = TimeProvider.GetTimestamp();
+
+                    if (status == NTPOverSSHReadStatus.EndOfStream)
+                        break;
+
+                    if (status != NTPOverSSHReadStatus.Message || message is null)
+                    {
+                        // Section 10.5: a length that breaks the stream ends the channel, since
+                        // nothing after it can be told apart any more.
+                        System.Threading.Interlocked.Increment(ref ntpOverSSHProtocolErrors);
+                        DebugX.Log($"Closing NTP over SSH from {Context.Session.Peer}: {status}.");
+                        exitStatus = 1;
+                        break;
+                    }
+
+                    System.Threading.Interlocked.Increment(ref ntpRequestsReceived);
+                    System.Threading.Interlocked.Increment(ref ntpOverSSHRequestsReceived);
+
+                    // As on UDP: a client request alone is answered (RFC 5905 § 9.2), of NTPv4
+                    // and of NTPv5 alike; anything else is passed over, and the channel stays.
+                    if ((message[0] & 0x07) != 3)
+                    {
+                        System.Threading.Interlocked.Increment(ref ntpRequestsInvalid);
+                        continue;
+                    }
+
+                    if (RateLimiter is not null)
+                    {
+
+                        var decision = RateLimiter.Check(remoteEndPoint.Address);
+
+                        if (decision != RateLimitDecision.Answer)
+                        {
+
+                            System.Threading.Interlocked.Increment(ref ntpRequestsRateLimited);
+
+                            if (decision == RateLimitDecision.KissOfDeath &&
+                                TryBuildRateKiss(message, message.Length, out var kissOfDeath))
+                            {
+                                await Send(kissOfDeath, CancellationToken).ConfigureAwait(false);
+                                System.Threading.Interlocked.Increment(ref ntpKissesOfDeathSent);
+                            }
+
+                            continue;
+
+                        }
+
+                    }
+
+                    try
+                    {
+
+                        await AnswerNTPRequestAsync(message,
+                                                    receivedAt,
+                                                    receivedAtTime,
+                                                    receivedAtTicks,
+                                                    remoteEndPoint,
+                                                    Send,
+                                                    OverSSH: true,
+                                                    CancellationToken).ConfigureAwait(false);
+
+                    }
+                    catch (Exception e) when (e is not OperationCanceledException)
+                    {
+                        // One request that could not be answered, as on UDP; the next one may be.
+                        System.Threading.Interlocked.Increment(ref ntpRequestFailures);
+                        DebugX.Log($"Exception while answering an NTP request over SSH from {Context.Session.Peer}: {e}");
+                    }
+
+                }
+
+                // Section 10.5: exit-status, EOF, and then the SSH server closes the channel.
+                await SendExitStatusAsync(Context.Channel, exitStatus, CancellationToken).ConfigureAwait(false);
+                await SendEofAsync(Context.Channel, CancellationToken).ConfigureAwait(false);
+
+            }
+            catch (OperationCanceledException) when (CancellationToken.IsCancellationRequested)
+            {
+                // The client closed the channel, or the server stops: nobody to answer.
+            }
+            finally
+            {
+
+                // Removed only once it counts nothing, so a busy connection keeps its count.
+                while (ntpOverSSHChannelsPerConnection.TryGetValue(connectionId, out var count))
+                {
+                    if (count <= 1
+                            ? ntpOverSSHChannelsPerConnection.TryRemove(new KeyValuePair<String, Int32>(connectionId, count))
+                            : ntpOverSSHChannelsPerConnection.TryUpdate(connectionId, count - 1, count))
+                        break;
+                }
+
             }
 
         }
@@ -2183,152 +2417,20 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                 if (activeSocket is null)
                                     return;
 
-                                // NTPv5 has a header of its own: read by the NTPv4 code below,
-                                // its client cookie would pass for a reference timestamp.
-                                if (NTPv5 != NTPv5Support.Disabled &&
-                                    NTPv5Packet.IsNTPv5(datagram))
-                                {
+                                // The answers go where the request came from.
+                                var remoteEndPoint = udpPacketLocal.RemoteEndPoint;
 
-                                    await AnswerNTPv5Async(activeSocket,
-                                                           datagram,
-                                                           receivedAt,
-                                                           receivedAtTime,
-                                                           receivedAtTicks,
-                                                           udpPacketLocal.RemoteEndPoint,
-                                                           cts.Token).ConfigureAwait(false);
-
-                                    return;
-
-                                }
-
-                                if (NTPRequest.TryParse(datagram,
-                                                        out var requestPacket,
-                                                        out var errorResponse,
-                                                        MasterKeys: masterKeys))
-                                {
-
-                                    var isNtsRequest       = requestPacket.Extensions.Any(
-                                                                 extension => extension.Type is ExtensionTypes.UniqueIdentifier
-                                                                                             or ExtensionTypes.NTSCookie
-                                                                                             or ExtensionTypes.NTSCookiePlaceholder
-                                                                                             or ExtensionTypes.AuthenticatorAndEncrypted);
-
-                                    // A server of NTS alone says nothing to a client that does
-                                    // not even try it: no time, and no kiss either, which would
-                                    // be an unauthenticated answer of the request's size to an
-                                    // address nobody checked.
-                                    if (!PlainNTP && !isNtsRequest)
-                                    {
-                                        System.Threading.Interlocked.Increment(ref ntpPlainRequestsIgnored);
-                                        return;
-                                    }
-
-                                    var uniqueId           = requestPacket.UniqueIdentifier();
-
-                                    var isAuthenticatedNts = requestPacket.Extensions.Any(
-                                                                 extension => extension is AuthenticatorAndEncryptedExtension) &&
-                                                             requestPacket.Extensions.Count(
-                                                                 extension => extension.Type == ExtensionTypes.UniqueIdentifier &&
-                                                                              !extension.Encrypted) == 1 &&
-                                                             uniqueId is { Length: >= 32 } &&
-                                                             requestPacket.Extensions.Count(
-                                                                 extension => extension.Type == ExtensionTypes.NTSCookie &&
-                                                                              !extension.Encrypted) == 1 &&
-                                                             requestPacket.NTSCookieExtension()?.Cookie is not null;
-
-                                    // Only a request the authenticator covers may ask for a
-                                    // second, signed datagram: honouring the extension outside
-                                    // of it would let anyone double the traffic sent to an
-                                    // address of their choosing.
-                                    //
-                                    // And only a server that has a key to sign with says yes.
-                                    // The announcement goes into the first response; made
-                                    // without a key, it had the client wait out its timeout
-                                    // for a second response that was never sent.
-                                    //
-                                    // And only with the key that was asked for, while it is
-                                    // valid. Signed with another, or with one that is past its
-                                    // last day, the response would carry a signature the client
-                                    // has to refuse; better none, which it can see at once.
-                                    var signingKeyPair   = isAuthenticatedNts &&
-                                                           requestPacket.NTSRequestSignedResponse() is { Authenticated: true } signatureRequest
-                                                               ? SigningKeyFor(signatureRequest.KeyId)
-                                                               : null;
-
-                                    var toBeSigned       = signingKeyPair is not null;
-
-                                    // RFC 9769 § 2 decides here which of this server's earlier
-                                    // timestamps the answer carries, before anything is built:
-                                    // the header has to be final before the NTS authenticator
-                                    // is computed over it. A failed NTS request that will draw
-                                    // an NTS NAK (RFC 8915 § 5.7) must neither pollute the
-                                    // interleaved store nor receive an interleaved-mode NAK.
-                                    var isNtsFailure     = isNtsRequest && !isAuthenticatedNts;
-
-                                    var exchange         = !isNtsFailure &&
-                                                           InterleavedTimestamps is not null &&
-                                                           udpPacketLocal.RemoteEndPoint is IPEndPoint remoteIPEndPoint
-
-                                                               ? InterleavedTimestamps.BeginExchange(
-                                                                     remoteIPEndPoint.Address,
-                                                                     receivedAt,
-                                                                     requestPacket,
-                                                                     TimeProvider,
-                                                                     Authenticated: isAuthenticatedNts
-                                                                 )
-
-                                                               : InterleavedExchange.Basic(
-                                                                     requestPacket,
-                                                                     receivedAt,
-                                                                     TimeProvider
-                                                                 );
-
-                                    var responsePacket1  = BuildResponse(
-                                                               requestPacket,
-                                                               exchange,
-                                                               toBeSigned
-                                                           );
-
-                                    await activeSocket.SendToAsync(
-                                               new ArraySegment<Byte>(responsePacket1.ToByteArray()),
-                                               SocketFlags.None,
-                                               udpPacketLocal.RemoteEndPoint,
-                                               cts.Token
-                                           );
-
-                                    // The whole point of RFC 9769: the transmit timestamp worth
-                                    // reporting is the one taken once the packet has actually
-                                    // gone, after building, encrypting and writing it. It cannot
-                                    // travel in this response, so it travels in the next one.
-                                    if (!isNtsFailure)
-                                        exchange.RecordTransmission(NTPPacket.GetCurrentNTPTimestamp(TimeProvider));
-
-                                    System.Threading.Interlocked.Increment(ref ntpResponsesSent);
-
-                                    if (toBeSigned && signingKeyPair is not null)
-                                    {
-
-                                        // The unsigned response is intentionally sent first so clients can
-                                        // measure RTT with minimal signing latency. The signed response follows
-                                        // as a scheduled security confirmation once the digital signature is ready.
-                                        var responsePacket2 = SignResponse(responsePacket1, signingKeyPair);
-
-                                        await activeSocket.SendToAsync(
-                                                  new ArraySegment<Byte>(responsePacket2.ToByteArray()),
-                                                  SocketFlags.None,
-                                                  udpPacketLocal.RemoteEndPoint,
-                                                  cts.Token
-                                              );
-                                        System.Threading.Interlocked.Increment(ref ntpSignedResponsesSent);
-
-                                    }
-
-                                }
-                                else
-                                {
-                                    System.Threading.Interlocked.Increment(ref ntpRequestsInvalid);
-                                    DebugX.Log($"Invalid NTP request from {udpPacketLocal.RemoteEndPoint}: {errorResponse}");
-                                }
+                                await AnswerNTPRequestAsync(datagram,
+                                                            receivedAt,
+                                                            receivedAtTime,
+                                                            receivedAtTicks,
+                                                            remoteEndPoint,
+                                                            (response, ct) => activeSocket.SendToAsync(new ArraySegment<Byte>(response),
+                                                                                                       SocketFlags.None,
+                                                                                                       remoteEndPoint,
+                                                                                                       ct).AsTask(),
+                                                            OverSSH: false,
+                                                            cts.Token).ConfigureAwait(false);
                             }
                             catch (Exception e)
                             {
@@ -2625,8 +2727,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                 new SshServerOptions {
                                     HostKeys             = SSHHostKeys,
                                     Authenticator        = sshAuthenticator!,
+                                    // A connection whose NTP channel waits for the next poll is
+                                    // not idle to the channel's client: it outlasts the channel.
                                     Limits               = new SshServerLimits {
-                                                               IdleTimeout = TimeSpan.FromMinutes(15)
+                                                               IdleTimeout = NTPOverSSHEnabled && NTPOverSSHIdleTimeout + TimeSpan.FromMinutes(1) > TimeSpan.FromMinutes(15)
+                                                                                 ? NTPOverSSHIdleTimeout + TimeSpan.FromMinutes(1)
+                                                                                 : TimeSpan.FromMinutes(15)
                                                            },
 
                                     // RFC 8633 § 5.1, as soon as the connection is accepted: a denied
@@ -2647,7 +2753,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                     Subsystems           = (session, name, ct) => ValueTask.FromResult<SshSubsystemHandler?>(
                                                                                       name == NTSKE_SSH.SubsystemName
                                                                                           ? ServeSSHSubsystemAsync
-                                                                                          : null
+                                                                                          : name == NTP.NTPOverSSH.SubsystemName && NTPOverSSHEnabled
+                                                                                                ? ServeNTPOverSSHAsync
+                                                                                                : null
                                                                                   )
                                 }
                             );
@@ -2814,18 +2922,200 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         #endregion
 
 
-        #region (private) AnswerNTPv5Async(Socket, Datagram, ReceivedAt, ReceivedAtTime, ReceivedAtTicks, RemoteEndPoint, CancellationToken)
+        #region (private) AnswerNTPRequestAsync(Datagram, ReceivedAt, ReceivedAtTime, ReceivedAtTicks, RemoteEndPoint, Send, OverSSH, CancellationToken)
+
+        /// <summary>
+        /// Answer one NTP request, of NTPv4 or NTPv5, with whatever it is to be answered with:
+        /// nothing, one response, or a response and its signed second one, each handed to
+        /// <paramref name="Send"/> as one datagram.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The datagram of the UDP listener and the message of NTP over SSH alike: section 10.4
+        /// of the white paper "NTS Key Establishment over SSH" has the server treat every message
+        /// of its channel as a datagram from the address of the SSH connection, and answer it
+        /// with what it would send back on UDP. So both come here, after the checks of their own
+        /// transport: the access list, the mode, the rate limiter.
+        /// </para>
+        /// <para>
+        /// One difference: over SSH a server of NTS alone answers plain requests as well, since
+        /// the channel authenticates and protects them as NTS would.
+        /// </para>
+        /// </remarks>
+        /// <param name="Datagram">The request, as it arrived.</param>
+        /// <param name="ReceivedAt">T2, read as it arrived.</param>
+        /// <param name="ReceivedAtTime">T2 as a date, which NTPv5 resolves its era against.</param>
+        /// <param name="ReceivedAtTicks">The monotonic clock as it arrived.</param>
+        /// <param name="RemoteEndPoint">Where it came from: the client's address, or that of its SSH connection.</param>
+        /// <param name="Send">Sends one datagram of the answer.</param>
+        /// <param name="OverSSH">Whether it came over SSH.</param>
+        /// <param name="CancellationToken">A cancellation token.</param>
+        private async Task AnswerNTPRequestAsync(Byte[]                                 Datagram,
+                                                 UInt64                                 ReceivedAt,
+                                                 DateTime                               ReceivedAtTime,
+                                                 Int64                                  ReceivedAtTicks,
+                                                 EndPoint                               RemoteEndPoint,
+                                                 Func<Byte[], CancellationToken, Task>  Send,
+                                                 Boolean                                OverSSH,
+                                                 CancellationToken                      CancellationToken)
+        {
+
+            // NTPv5 has a header of its own: read by the NTPv4 code below,
+            // its client cookie would pass for a reference timestamp.
+            if (NTPv5 != NTPv5Support.Disabled &&
+                NTPv5Packet.IsNTPv5(Datagram))
+            {
+
+                await AnswerNTPv5Async(Send,
+                                   Datagram,
+                                   ReceivedAt,
+                                   ReceivedAtTime,
+                                   ReceivedAtTicks,
+                                   RemoteEndPoint,
+                                   OverSSH,
+                                   CancellationToken).ConfigureAwait(false);
+
+                return;
+
+            }
+
+            if (NTPRequest.TryParse(Datagram,
+                                    out var requestPacket,
+                                    out var errorResponse,
+                                    MasterKeys: masterKeys))
+            {
+
+                var isNtsRequest       = requestPacket.Extensions.Any(
+                                             extension => extension.Type is ExtensionTypes.UniqueIdentifier
+                                                                         or ExtensionTypes.NTSCookie
+                                                                         or ExtensionTypes.NTSCookiePlaceholder
+                                                                         or ExtensionTypes.AuthenticatorAndEncrypted);
+
+                // A server of NTS alone says nothing to a client that does
+                // not even try it: no time, and no kiss either, which would
+                // be an unauthenticated answer of the request's size to an
+                // address nobody checked.
+                if (!PlainNTP && !isNtsRequest && !OverSSH)
+                {
+                    System.Threading.Interlocked.Increment(ref ntpPlainRequestsIgnored);
+                    return;
+                }
+
+                var uniqueId           = requestPacket.UniqueIdentifier();
+
+                var isAuthenticatedNts = requestPacket.Extensions.Any(
+                                             extension => extension is AuthenticatorAndEncryptedExtension) &&
+                                         requestPacket.Extensions.Count(
+                                             extension => extension.Type == ExtensionTypes.UniqueIdentifier &&
+                                                          !extension.Encrypted) == 1 &&
+                                         uniqueId is { Length: >= 32 } &&
+                                         requestPacket.Extensions.Count(
+                                             extension => extension.Type == ExtensionTypes.NTSCookie &&
+                                                          !extension.Encrypted) == 1 &&
+                                         requestPacket.NTSCookieExtension()?.Cookie is not null;
+
+                // Only a request the authenticator covers may ask for a
+                // second, signed Datagram: honouring the extension outside
+                // of it would let anyone double the traffic sent to an
+                // address of their choosing.
+                //
+                // And only a server that has a key to sign with says yes.
+                // The announcement goes into the first response; made
+                // without a key, it had the client wait out its timeout
+                // for a second response that was never sent.
+                //
+                // And only with the key that was asked for, while it is
+                // valid. Signed with another, or with one that is past its
+                // last day, the response would carry a signature the client
+                // has to refuse; better none, which it can see at once.
+                var signingKeyPair   = isAuthenticatedNts &&
+                                       requestPacket.NTSRequestSignedResponse() is { Authenticated: true } signatureRequest
+                                           ? SigningKeyFor(signatureRequest.KeyId)
+                                           : null;
+
+                var toBeSigned       = signingKeyPair is not null;
+
+                // RFC 9769 § 2 decides here which of this server's earlier
+                // timestamps the answer carries, before anything is built:
+                // the header has to be final before the NTS authenticator
+                // is computed over it. A failed NTS request that will draw
+                // an NTS NAK (RFC 8915 § 5.7) must neither pollute the
+                // interleaved store nor receive an interleaved-mode NAK.
+                var isNtsFailure     = isNtsRequest && !isAuthenticatedNts;
+
+                var exchange         = !isNtsFailure &&
+                                       InterleavedTimestamps is not null &&
+                                       RemoteEndPoint is IPEndPoint remoteIPEndPoint
+
+                                           ? InterleavedTimestamps.BeginExchange(
+                                                 remoteIPEndPoint.Address,
+                                                 ReceivedAt,
+                                                 requestPacket,
+                                                 TimeProvider,
+                                                 Authenticated: isAuthenticatedNts
+                                             )
+
+                                           : InterleavedExchange.Basic(
+                                                 requestPacket,
+                                                 ReceivedAt,
+                                                 TimeProvider
+                                             );
+
+                var responsePacket1  = BuildResponse(
+                                           requestPacket,
+                                           exchange,
+                                           toBeSigned,
+                                           OverSSH
+                                       );
+
+                await Send(responsePacket1.ToByteArray(), CancellationToken).ConfigureAwait(false);
+
+                // The whole point of RFC 9769: the transmit timestamp worth
+                // reporting is the one taken once the packet has actually
+                // gone, after building, encrypting and writing it. It cannot
+                // travel in this response, so it travels in the next one.
+                if (!isNtsFailure)
+                    exchange.RecordTransmission(NTPPacket.GetCurrentNTPTimestamp(TimeProvider));
+
+                System.Threading.Interlocked.Increment(ref ntpResponsesSent);
+
+                if (toBeSigned && signingKeyPair is not null)
+                {
+
+                    // The unsigned response is intentionally sent first so clients can
+                    // measure RTT with minimal signing latency. The signed response follows
+                    // as a scheduled security confirmation once the digital signature is ready.
+                    var responsePacket2 = SignResponse(responsePacket1, signingKeyPair);
+
+                    await Send(responsePacket2.ToByteArray(), CancellationToken).ConfigureAwait(false);
+                    System.Threading.Interlocked.Increment(ref ntpSignedResponsesSent);
+
+                }
+
+            }
+            else
+            {
+                System.Threading.Interlocked.Increment(ref ntpRequestsInvalid);
+                DebugX.Log($"Invalid NTP request from {RemoteEndPoint}: {errorResponse}");
+            }
+
+        }
+
+        #endregion
+
+        #region (private) AnswerNTPv5Async(Send, Datagram, ReceivedAt, ReceivedAtTime, ReceivedAtTicks, RemoteEndPoint, OverSSH, CancellationToken)
 
         /// <summary>
         /// Answer an NTPv5 request as <see cref="NTPv5Responder"/> has it, or not at all.
         /// </summary>
-        private async Task AnswerNTPv5Async(Socket             Socket,
-                                            Byte[]             Datagram,
-                                            UInt64             ReceivedAt,
-                                            DateTime           ReceivedAtTime,
-                                            Int64              ReceivedAtTicks,
-                                            EndPoint           RemoteEndPoint,
-                                            CancellationToken  CancellationToken)
+        private async Task AnswerNTPv5Async(Func<Byte[], CancellationToken, Task>  Send,
+                                            Byte[]                                 Datagram,
+                                            UInt64                                 ReceivedAt,
+                                            DateTime                               ReceivedAtTime,
+                                            Int64                                  ReceivedAtTicks,
+                                            EndPoint                               RemoteEndPoint,
+                                            Boolean                                OverSSH,
+                                            CancellationToken                      CancellationToken)
         {
 
             // Read once, as for NTPv4: a Redescribe in between must not mix two descriptions.
@@ -2870,7 +3160,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                         SecondaryTimescales  = described.NTPv5Timescales,
                                         ReferenceTimestamp   = NTPPacket.GetCurrentNTPTimestamp(ClockLastSynchronized.UtcDateTime),
                                         MonotonicEpochId     = NTPv5MonotonicEpochId,
-                                        AnswersPlain         = PlainNTP
+                                        AnswersPlain         = PlainNTP || OverSSH
                                     },
                                     new NTPv5NTSService(masterKeys,
                                                         GetCurrentMasterKey,
@@ -2935,10 +3225,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             if (outcome is NTPv5RequestOutcome.AuthenticationNAK)
                 DebugX.Log($"NTPv5 request from {RemoteEndPoint} answered with an Authentication NAK: {errorResponse}");
 
-            await Socket.SendToAsync(new ArraySegment<Byte>(response),
-                                     SocketFlags.None,
-                                     RemoteEndPoint,
-                                     CancellationToken).ConfigureAwait(false);
+            await Send(response, CancellationToken).ConfigureAwait(false);
 
             // What the next interleaved response to this client will carry: when this one left,
             // read once it has.
@@ -2980,22 +3267,24 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #endregion
 
-        #region (private) AdvertisesNTPv5To(RequestPacket)
+        #region (private) AdvertisesNTPv5To(RequestPacket, OverSSH)
 
         /// <summary>
         /// draft-ietf-ntp-ntpv5-10 § 12: whether the response to this NTPv4 request echoes the
         /// reference timestamp that asks whether the server speaks NTPv5 - a plain client
-        /// request carrying the draft's magic, to a server that answers NTPv5 in plain.
+        /// request carrying the draft's magic, to a server that answers NTPv5 in plain: on UDP
+        /// where it answers plain requests at all, and over SSH always, where it does.
         /// </summary>
         /// <remarks>
         /// Not to a request of NTS: § 12 has the magic used only where no other negotiation is,
         /// and for NTS the key exchange is it. Nor to one of the final magic, which asks for the
         /// RFC this draft is not.
         /// </remarks>
-        private Boolean AdvertisesNTPv5To(NTPPacket RequestPacket)
+        private Boolean AdvertisesNTPv5To(NTPPacket  RequestPacket,
+                                          Boolean    OverSSH)
 
             => NTPv5 != NTPv5Support.Disabled &&
-               PlainNTP &&
+               (PlainNTP || OverSSH) &&
                RequestPacket.VN                 == 4 &&
                RequestPacket.Mode               == 3 &&
                RequestPacket.ReferenceTimestamp == NTPv5Draft.NegotiationMagic &&
@@ -3015,7 +3304,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </summary>
         private NTPPacket BuildResponseHeader(NTPPacket                  RequestPacket,
                                               IEnumerable<NTPExtension>  Extensions,
-                                              InterleavedExchange        Exchange)
+                                              InterleavedExchange        Exchange,
+                                              Boolean                    OverSSH   = false)
         {
 
             // Read once: a Redescribe in between must not leave this response with the stratum
@@ -3046,7 +3336,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                    // When the clock was last set, per § 7.3 — not the moment of this reply,
                    // which said nothing about synchronization at all. Except where the client
                    // asked in it whether NTPv5 is spoken here, and the echo is the answer.
-                   ReferenceTimestamp:   AdvertisesNTPv5To(RequestPacket)
+                   ReferenceTimestamp:   AdvertisesNTPv5To(RequestPacket, OverSSH)
                                              ? NTPv5Draft.NegotiationMagic
                                              : NTPPacket.GetCurrentNTPTimestamp(ClockLastSynchronized.UtcDateTime),
 
@@ -3621,7 +3911,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         private NTPPacket BuildResponse(NTPPacket            RequestPacket,
                                         InterleavedExchange  Exchange,
-                                        Boolean              SignedResponseRequested = false)
+                                        Boolean              SignedResponseRequested = false,
+                                        Boolean              OverSSH                 = false)
         {
 
             // Single pass over the request extensions instead of repeated LINQ traversals.
@@ -3667,7 +3958,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             // NTS tells it this server is unusable, and a plain NTP client — chronyd without
             // the "nts" option, for one — will drop the server entirely.
             if (!hasNtsExtension)
-                return BuildResponseHeader(RequestPacket, [], Exchange);
+                return BuildResponseHeader(RequestPacket, [], Exchange, OverSSH);
 
             // RFC 8915 § 5.3 / § 5.7: every NTS-protected request MUST carry a Unique Identifier
             // extension field of at least 32 octets in the clear.
@@ -3755,7 +4046,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                               TimeProvider:     TimeProvider
                                           );
 
-            var response1 = BuildResponseHeader(RequestPacket, extensions, Exchange);
+            var response1 = BuildResponseHeader(RequestPacket, extensions, Exchange, OverSSH);
 
             var adLength  = 48;
             for (var i = 0; i < extensions.Count; i++)

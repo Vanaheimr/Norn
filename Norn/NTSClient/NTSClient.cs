@@ -1610,6 +1610,26 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
         #endregion
 
+        #region (private static) ReceiveResponseAsync(UDPSocket, Buffer, Timeout, OverSSH, CancellationToken)
+
+        /// <summary>
+        /// The next response: from the channel of NTP over SSH where there is one, and otherwise
+        /// from the socket.
+        /// </summary>
+        private static Task<(UdpReceiveResult? Result, Boolean TimedOut)>
+
+            ReceiveResponseAsync(Socket?             UDPSocket,
+                                 Byte[]              Buffer,
+                                 TimeSpan            Timeout,
+                                 NTPOverSSHChannel?  OverSSH,
+                                 CancellationToken   CancellationToken)
+
+            => OverSSH is not null
+                   ? OverSSH.ReceiveAsync(Timeout, CancellationToken)
+                   : ReceiveUdpResponseAsync(UDPSocket!, Buffer, Timeout, CancellationToken);
+
+        #endregion
+
         #region (private static) ReceiveUdpResponseAsync(UDPSocket, Buffer, Timeout, CancellationToken)
 
         private static readonly System.Net.IPEndPoint anyIPv4EndPoint = new (System.Net.IPAddress.Any,     0);
@@ -1871,13 +1891,74 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// <see cref="NTSQueryResult.ServerAdvertisesNTPv5"/>. Ignored under NTS, where the key
         /// exchange negotiates the version.
         /// </param>
-        public async Task<NTSQueryResult> QueryTime(TimeSpan?           Timeout               = null,
-                                                    NTSKE_Response?     NTSKEResponse         = null,
-                                                    SignedResponseMode  SignedResponseMode    = SignedResponseMode.None,
-                                                    UInt16              SignedResponseKeyId   = NTSRequestSignedResponseExtension.AnyKey,
-                                                    String?             NTPServer             = null,
-                                                    Boolean             AdvertiseNTPv5        = false,
-                                                    CancellationToken   CancellationToken     = default)
+        public Task<NTSQueryResult> QueryTime(TimeSpan?           Timeout               = null,
+                                              NTSKE_Response?     NTSKEResponse         = null,
+                                              SignedResponseMode  SignedResponseMode    = SignedResponseMode.None,
+                                              UInt16              SignedResponseKeyId   = NTSRequestSignedResponseExtension.AnyKey,
+                                              String?             NTPServer             = null,
+                                              Boolean             AdvertiseNTPv5        = false,
+                                              CancellationToken   CancellationToken     = default)
+
+            => QueryTimeCore(Timeout,
+                             NTSKEResponse,
+                             SignedResponseMode,
+                             SignedResponseKeyId,
+                             NTPServer,
+                             AdvertiseNTPv5,
+                             OverSSH: null,
+                             CancellationToken);
+
+
+        /// <summary>
+        /// Sends a single NTPv4 request over SSH instead of UDP, on a channel of NTP over SSH
+        /// (section 10 of the white paper "NTS Key Establishment over SSH"), and returns what
+        /// came of it, exactly as <see cref="QueryTime"/> does on UDP.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// No NTS: the channel authenticates the server by its host key and protects every
+        /// message, as NTS would. A response is matched to its request by its origin timestamp,
+        /// as on UDP, and one for an earlier request is passed over (section 10.4).
+        /// </para>
+        /// <para>
+        /// The channel stays open for the next query. One that has ended fails the query, and
+        /// nothing is sent over UDP in its place (section 10.7).
+        /// </para>
+        /// </remarks>
+        /// <param name="Channel">An open channel of NTP over SSH to the server.</param>
+        /// <param name="Timeout">How long to wait for a valid response.</param>
+        /// <param name="AdvertiseNTPv5">
+        /// Put the negotiation magic of draft-ietf-ntp-ntpv5-10 § 12 in the reference timestamp,
+        /// so that a server supporting NTPv5 echoes it; inside the channel nobody on the way can
+        /// remove it (section 10.4).
+        /// </param>
+        /// <param name="CancellationToken">A cancellation token.</param>
+        public Task<NTSQueryResult> QueryTimeOverSSH(NTPOverSSHChannel  Channel,
+                                                     TimeSpan?          Timeout             = null,
+                                                     Boolean            AdvertiseNTPv5      = false,
+                                                     CancellationToken  CancellationToken   = default)
+
+            => QueryTimeCore(Timeout,
+                             NTSKEResponse:        null,
+                             SignedResponseMode:   SignedResponseMode.None,
+                             SignedResponseKeyId:  NTSRequestSignedResponseExtension.AnyKey,
+                             NTPServer:            null,
+                             AdvertiseNTPv5:       AdvertiseNTPv5,
+                             OverSSH:              Channel,
+                             CancellationToken);
+
+
+        /// <summary>
+        /// The query of <see cref="QueryTime"/>, on UDP, or over SSH where a channel is given.
+        /// </summary>
+        private async Task<NTSQueryResult> QueryTimeCore(TimeSpan?           Timeout,
+                                                         NTSKE_Response?     NTSKEResponse,
+                                                         SignedResponseMode  SignedResponseMode,
+                                                         UInt16              SignedResponseKeyId,
+                                                         String?             NTPServer,
+                                                         Boolean             AdvertiseNTPv5,
+                                                         NTPOverSSHChannel?  OverSSH,
+                                                         CancellationToken   CancellationToken)
         {
 
             if (NTSKEResponse?.ErrorMessage is not null)
@@ -1959,7 +2040,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             if (NTSKEResponse is not null)
                 cookiePlaceholderCount = CalculateCookiePlaceholderCount();
 
-            var remoteEndPoint     = await NTPRemoteEndPointResolver.ResolveAsync(
+            // Over SSH the channel is the server: there is nothing to resolve.
+            var remoteEndPoint     = OverSSH is not null ? OverSSH.RemoteEndPoint : await NTPRemoteEndPointResolver.ResolveAsync(
                                                NTSKEResponse,
                                                HostText,
                                                NTP_Port,
@@ -1970,7 +2052,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                                NTPServer
                                            ).ConfigureAwait(false);
 
-            var remoteDescription  = remoteEndPoint is not null
+            var remoteDescription  = OverSSH is not null ? OverSSH.Description : remoteEndPoint is not null
                                          ? remoteEndPoint.ToString()
                                          : NTPServer ?? NTPRemoteEndPointResolver.GetRemoteDescription(
                                                NTSKEResponse,
@@ -2092,7 +2174,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
             // (RFC 9109). The socket and not a UdpClient around it, which is the same socket
             // and 64 kilobytes to receive into, made anew every time.
             using (var receiveBuffer = new ReceiveBuffer())
-            using (var udpSocket     = new Socket(
+            using (var udpSocket     = OverSSH is not null ? null : new Socket(
                                            destination.AddressFamily,
                                            SocketType.Dgram,
                                            ProtocolType.Udp
@@ -2107,7 +2189,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                     // itself in its first send, and on Windows that is well over a hundred
                     // microseconds between a transmit timestamp and the datagram it is in.
                     // They were charged to the way there, and half of them to the offset.
-                    udpSocket.Bind(
+                    udpSocket?.Bind(
                         udpSocket.AddressFamily == AddressFamily.InterNetworkV6
                             ? anyIPv6EndPoint
                             : anyIPv4EndPoint
@@ -2139,12 +2221,26 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
 
                     var sendStopwatchTimestamp = Stopwatch.GetTimestamp();
 
-                    await udpSocket.SendToAsync(
-                              requestData,
-                              SocketFlags.None,
-                              destination,
-                              CancellationToken
-                          );
+                    if (OverSSH is not null)
+                    {
+
+                        // Section 10.4: what came too late for an earlier request is no answer
+                        // to this one, and the length and the request go in one write.
+                        OverSSH.DiscardPending();
+
+                        await OverSSH.SendAsync(
+                                  requestData,
+                                  CancellationToken
+                              ).ConfigureAwait(false);
+
+                    }
+                    else
+                        await udpSocket!.SendToAsync(
+                                  requestData,
+                                  SocketFlags.None,
+                                  destination,
+                                  CancellationToken
+                              );
 
                     requestSent = true;
 
@@ -2168,12 +2264,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                         var remainingTime               = timeout - Stopwatch.GetElapsedTime(sendStopwatchTimestamp);
 
                         (UdpReceiveResult? Result, Boolean TimedOut) receiveResult1WithTimeout = remainingTime > TimeSpan.Zero
-                                                              ? await ReceiveUdpResponseAsync(
-                                                                          udpSocket,
-                                                                          receiveBuffer.Bytes,
-                                                                          remainingTime,
-                                                                          CancellationToken
-                                                                      ).ConfigureAwait(false)
+                                                              ? await ReceiveResponseAsync(udpSocket, receiveBuffer.Bytes, remainingTime, OverSSH, CancellationToken).ConfigureAwait(false)
                                                               : (Result: (UdpReceiveResult?) null, TimedOut: true);
 
                         if (interleaved is not null &&
@@ -2345,12 +2436,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
                                     var remainingTime2 = timeout - Stopwatch.GetElapsedTime(sendStopwatchTimestamp);
 
                                     receiveResult2WithTimeout = remainingTime2 > TimeSpan.Zero
-                                                                    ? await ReceiveUdpResponseAsync(
-                                                                                udpSocket,
-                                                                                receiveBuffer.Bytes,
-                                                                                remainingTime2,
-                                                                                CancellationToken
-                                                                            ).ConfigureAwait(false)
+                                                                    ? await ReceiveResponseAsync(udpSocket, receiveBuffer.Bytes, remainingTime2, OverSSH, CancellationToken).ConfigureAwait(false)
                                                                     : (Result: (UdpReceiveResult?) null, TimedOut: true);
 
                                     if (receiveResult2WithTimeout.Result is not UdpReceiveResult candidate2)
