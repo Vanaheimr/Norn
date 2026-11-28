@@ -30,6 +30,7 @@ using org.GraphDefined.Vanaheimr.Hermod.SSH;
 using org.GraphDefined.Vanaheimr.Hermod.SSH.Client;
 using org.GraphDefined.Vanaheimr.Norn.NTS;
 using org.GraphDefined.Vanaheimr.Norn.NTS.NTSKERecords;
+using org.GraphDefined.Vanaheimr.Norn.NTPv5;
 
 #endregion
 
@@ -126,6 +127,47 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
 
         }
 
+        // Appendix A.4 of the specification: the inputs of A.2 under the context of NTPv5 in
+        // drafts, 0x8001 - RFC 8915 § 5.1 puts the Protocol ID of the agreed next protocol in
+        // front. Computed with Python's hmac as well.
+        private static readonly Object[] testVectorsForNTPv5 = [
+            new Object[] { AEADAlgorithms.AES_SIV_CMAC_256, "764c1248ad0bc5b9b166ca1503a3819851b32ead61f5d024ad27648ccec8ff2b",
+                                                            "d4194d2b81e7f47b505df60147ca271cdc8b709523accab3bb4c4be1674cea54" },
+            new Object[] { AEADAlgorithms.AES_128_GCM_SIV,  "f5268d5c1ce1eefd50db2c93735b9559",
+                                                            "f3493b68b3619827f91436f2cd253552" },
+            new Object[] { AEADAlgorithms.AES_256_GCM_SIV,  "665de0df5b17c3cb5f06856ff803a0c9fde7557138d9ebd2e52dc6ac619a616e",
+                                                            "0d4f6f61b16ed755a29786b96cbb90a6ec51c3a95332e221a2f71800e67ade32" }
+        ];
+
+        [TestCaseSource(nameof(testVectorsForNTPv5))]
+        public void TransportedSecret_ForNTPv5_MatchesTheTestVectors(AEADAlgorithms  Algorithm,
+                                                                     String          ExpectedC2SKey,
+                                                                     String          ExpectedS2CKey)
+        {
+
+            var (c2sKey, s2cKey) = NTSKE_ExportedKeys.ExportAll(NTSKE_ExportedKeys.TransportedSecretExporter(testSecret)).
+                                                      For(Algorithm, CompliantExporterContext: true, NextProtocol: NTPv5Draft.NTSNextProtocolId);
+
+            Assert.That(c2sKey.ToHexString(), Is.EqualTo(ExpectedC2SKey));
+            Assert.That(s2cKey.ToHexString(), Is.EqualTo(ExpectedS2CKey));
+
+        }
+
+        [Test]
+        public void ExporterInfo_ForNTPv5_BeginsTheContextWith0x8001()
+        {
+
+            var info = NTSKE_ExportedKeys.ExporterInfo(
+                           NTSKE_ExportedKeys.ExporterLabel,
+                           NTSKE_ExportedKeys.Context(AEADAlgorithms.AES_SIV_CMAC_256, ServerToClient: false, NTPv5Draft.NTSNextProtocolId)
+                       );
+
+            Assert.That(info.ToHexString(),
+                        Is.EqualTo("0000001e" + "4558504f525445522d6e6574776f726b2d74696d652d7365637572697479" +
+                                   "00000005" + "8001000f00"));
+
+        }
+
         [Test]
         public void ExporterInfo_IsTwoSSHStrings()
         {
@@ -162,6 +204,30 @@ namespace org.GraphDefined.Vanaheimr.Norn.Tests.NTS
             new Object[] { AEADAlgorithms.AES_256_GCM_SIV,  "05d23579f0905080af0243173053808adad6d276ed0560a9fe64ef714b690554",
                                                             "d72234762b25d744d00016818b8f23ad65d1ac5c85009d1ada6215046c73ebcc" }
         ];
+
+        // And A.4: the same under the context of NTPv5.
+        private static readonly Object[] testVectorsFromTheExporterSecretForNTPv5 = [
+            new Object[] { AEADAlgorithms.AES_SIV_CMAC_256, "20ce9d781187cadb3131fb54e611d5720361c6568c465f9a7836070052a4fca6",
+                                                            "34168036ba9d89f00e76ae45fe452299133fbe22cdba3b7da27b0d30ee589335" },
+            new Object[] { AEADAlgorithms.AES_128_GCM_SIV,  "79b0a7e1b3652d742ee0815aa0ce4243",
+                                                            "a1a5dd3bcfa6967be84be3a642c2fc6f" },
+            new Object[] { AEADAlgorithms.AES_256_GCM_SIV,  "e4a61c99232b67a6bf99f460332e24a6220b8ad37e4d149fc9bbf5c70007dc40",
+                                                            "ca73a3f8c6a8de86996751e60b75a8ec0fd5b969adaa9517957ca589e10e36ec" }
+        ];
+
+        [TestCaseSource(nameof(testVectorsFromTheExporterSecretForNTPv5))]
+        public void SSHExporter_FromTheExporterSecret_ForNTPv5_MatchesTheTestVectors(AEADAlgorithms  Algorithm,
+                                                                                     String          ExpectedC2SKey,
+                                                                                     String          ExpectedS2CKey)
+        {
+
+            var (c2sKey, s2cKey) = NTSKE_ExportedKeys.ExportAll(NTSKE_ExportedKeys.SSHExporter(testSecret, testExporterNonce, System.Security.Cryptography.HashAlgorithmName.SHA256)).
+                                                      For(Algorithm, CompliantExporterContext: true, NextProtocol: NTPv5Draft.NTSNextProtocolId);
+
+            Assert.That(c2sKey.ToHexString(), Is.EqualTo(ExpectedC2SKey));
+            Assert.That(s2cKey.ToHexString(), Is.EqualTo(ExpectedS2CKey));
+
+        }
 
         [TestCaseSource(nameof(testVectorsFromTheExporterSecret))]
         public void SSHExporter_FromTheExporterSecret_MatchesTheTestVectors(AEADAlgorithms  Algorithm,
