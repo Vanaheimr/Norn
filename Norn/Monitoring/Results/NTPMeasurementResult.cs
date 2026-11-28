@@ -51,6 +51,19 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         /// </summary>
         public Boolean                  UniqueIdMatched               { get; init; }
 
+        /// <summary>
+        /// The version of NTP the server was asked in: 4, or 5 for NTPv5 of
+        /// draft-ietf-ntp-ntpv5-10. In NTPv5 the timestamps are those of § 8, the offset and
+        /// delay the corrected ones where the network corrected them, and there is no leap
+        /// indicator, reference ID or reference timestamp.
+        /// </summary>
+        public Byte                     NTPVersion                    { get; init; } = 4;
+
+        /// <summary>
+        /// In NTPv5, whether T3 came in the interleaved mode (§ 8), one response late.
+        /// </summary>
+        public Boolean                  Interleaved                   { get; init; }
+
 
         // ──────────── NTP Timestamps (RFC 5905) ──────────────
 

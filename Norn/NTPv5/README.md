@@ -116,6 +116,7 @@ implementation, which is what chrony and ntpd-rs do anyway.
 | § 11 | NTS for NTPv5 | [`NTPv5NTS.cs`](NTPv5NTS.cs) |
 | § 12 | Version negotiation from NTPv4 | [`NTPv5VersionNegotiation.cs`](NTPv5VersionNegotiation.cs) |
 | § 7.6, § 11, § 12 | Monitoring: an optional, hourly probe of what a server supports | [`MeasurementEngine.NTPv5.cs`](../Monitoring/MeasurementEngine.NTPv5.cs), [`NTPv5CapabilityResult.cs`](../Monitoring/Results/NTPv5CapabilityResult.cs) |
+| § 8, § 11 | Monitoring: measuring a server in NTPv5 under NTS, where its endpoint names NTPv5 among its `NTPVersions` and the key exchange agreed to it first | [`MeasurementEngine.NTPv5.cs`](../Monitoring/MeasurementEngine.NTPv5.cs), [`NTSServerEndpoint.cs`](../Monitoring/NTSServerEndpoint.cs), `NTSClient.OfferedNextProtocols` |
 | § 7.5 | Time Sources, answered only where the server was given its sources | [`NTPv5TimeSources.cs`](NTPv5TimeSources.cs) |
 | § 7.10 | Secondary Receive Timestamp, in UTC and in the timescales the server was given an offset for | [`NTPv5ExtensionField.Timestamps.cs`](NTPv5ExtensionField.Timestamps.cs), [`NTPv5Responder.cs`](NTPv5Responder.cs) |
 | § 7.3 | MAC (AES-CMAC after RFC 8573, 32-bit key ID) | ToDo, some time in the future: of little use beside NTS, and Norn has no symmetric keys to take it from |

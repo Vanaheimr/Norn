@@ -223,6 +223,33 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         /// </summary>
         public NTPv5Support NTPv5 { get; init; } = NTPv5Support.Disabled;
 
+        /// <summary>
+        /// The next protocols the key exchange offers, in this order - or null for those of
+        /// <see cref="NTPv5"/>: NTPv5 before NTPv4 where it is offered, NTPv4 alone otherwise.
+        /// </summary>
+        /// <remarks>
+        /// For a client that is to prefer NTPv4 and still be given NTPv5, or to be given NTPv5
+        /// alone: [ 0, 0x8001 ] or [ 0x8001 ]. NTPv5 (0x8001) is offered only where
+        /// <see cref="NTPv5"/> is not disabled, as only then are the draft record of § 11 sent
+        /// and an answer agreeing to it accepted; a list without any protocol left is NTPv4.
+        /// </remarks>
+        public IReadOnlyList<UInt16>? OfferedNextProtocols { get; init; }
+
+        /// <summary>
+        /// The next protocols the key exchange offers, in the order it offers them.
+        /// </summary>
+        private UInt16[] NextProtocolsToOffer()
+        {
+
+            var offered = (OfferedNextProtocols ?? (NTPv5 != NTPv5Support.Disabled ? [ NTPv5Draft.NTSNextProtocolId, 0 ] : [ 0 ])).
+                              Where(protocol => protocol == 0 || protocol == NTPv5Draft.NTSNextProtocolId && NTPv5 != NTPv5Support.Disabled).
+                              Distinct().
+                              ToArray();
+
+            return offered.Length > 0 ? offered : [ 0 ];
+
+        }
+
         #endregion
 
         #region Constructor(s)
@@ -352,10 +379,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.NTS
         {
 
             var records = new List<NTSKE_Record>() {
-                              // NTPv5 first where it is offered, NTPv4 to fall back on.
-                              NTPv5 != NTPv5Support.Disabled
-                                  ? NTSKE_Record.NextProtocolNegotiation(NTPv5Draft.NTSNextProtocolId, 0)
-                                  : NTSKE_Record.NTSNextProtocolNegotiation,
+                              // NTPv5 first where it is offered, NTPv4 to fall back on - or
+                              // the next protocols asked for, in their order.
+                              NTSKE_Record.NextProtocolNegotiation(NextProtocolsToOffer()),
                               // Everything this client can perform, in preference order.
                               // RFC 8915 § 4.1.5 leaves the choice to the server but has it
                               // choose from this list, so offering only the mandatory algorithm

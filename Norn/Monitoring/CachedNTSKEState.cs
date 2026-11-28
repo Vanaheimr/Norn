@@ -47,6 +47,37 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         public String?          SSHHostKey         { get; set; }
 
         /// <summary>
+        /// The next protocols the key exchange offered, in its order: those of the versions
+        /// the server was asked in then - see NTSServerEndpoint.NextProtocolsOffered.
+        /// </summary>
+        public IReadOnlyList<UInt16>?  OfferedNextProtocols  { get; set; }
+
+        /// <summary>
+        /// The version of NTP the server is asked in after this key exchange: the first of the
+        /// next protocols it offered that it agreed to - 5 for NTPv5 (0x8001), else 4.
+        /// </summary>
+        /// <remarks>
+        /// From what this key exchange offered, not from what an endpoint says now: a changed
+        /// endpoint gets a new key exchange, and until then the cookies are those of what was
+        /// offered here. One the client renewed by itself offered the same.
+        /// </remarks>
+        public Byte                    NTPVersion
+        {
+            get
+            {
+
+                var agreed = NTSKEResponse?.NextProtocols ?? [];
+
+                foreach (var protocol in OfferedNextProtocols ?? [ 0 ])
+                    if (agreed.Contains(protocol))
+                        return protocol == NTPv5.NTPv5Draft.NTSNextProtocolId ? (Byte) 5 : (Byte) 4;
+
+                return 4;
+
+            }
+        }
+
+        /// <summary>
         /// When the next key exchange is due, or none to age this entry by the
         /// MaxAge it is asked with.
         /// </summary>

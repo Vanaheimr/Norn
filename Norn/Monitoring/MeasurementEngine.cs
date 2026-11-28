@@ -31,6 +31,7 @@ using org.GraphDefined.Vanaheimr.Hermod.SSH.Client;
 
 using org.GraphDefined.Vanaheimr.Norn.NTP;
 using org.GraphDefined.Vanaheimr.Norn.NTS;
+using org.GraphDefined.Vanaheimr.Norn.NTPv5;
 using IPAddress = org.GraphDefined.Vanaheimr.Hermod.IPAddress;
 
 #endregion
@@ -573,7 +574,11 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                                 DNSClient:                   DNSClient,
                                 TimeProvider:                timeProvider,
                                 RequestedNTPServer:          Server.NTSKEHost is not null ? Server.Hostname : null
-                            );
+                            ) {
+                                // The versions the server is asked in, as its next protocols.
+                                NTPv5                 = Server.OffersNTPv5 ? NTPv5Support.Draft : NTPv5Support.Disabled,
+                                OfferedNextProtocols  = Server.NextProtocolsOffered
+                            };
 
             var sw = Stopwatch.StartNew();
 
@@ -599,13 +604,23 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
             var connectedIP     = timingInfo?.ConnectedIPAddress?.ToString();
             var tlsCompliance   = EvaluateTLSCompliance(certificateInfo, tlsInfo);
 
+            // A key exchange that agreed to none of the versions the server is asked in has
+            // keys and cookies for nothing this engine would send.
+            var noVersion = ntskeResult.Success && ntskeResponse is not null && ntskeResponse.ErrorMessage is null &&
+                            Server.NTPVersionAfter(ntskeResponse.NextProtocols) is null;
+
             if (!ntskeResult.Success ||
                 ntskeResponse?.ErrorMessage is not null ||
-                ntskeResponse is null)
+                ntskeResponse is null ||
+                noVersion)
             {
 
-                var errorMessage  = ntskeResult.ErrorMessage ?? ntskeResponse?.ErrorMessage ?? "NTS-KE failed.";
-                var errorCategory = MapNTSKEErrorCategory(ntskeResult.ErrorCategory);
+                var errorMessage  = noVersion
+                                        ? NoVersionAgreed(Server, ntskeResponse!)
+                                        : ntskeResult.ErrorMessage ?? ntskeResponse?.ErrorMessage ?? "NTS-KE failed.";
+                var errorCategory = noVersion
+                                        ? MonitoringErrorCategory.NTSKEProtocol
+                                        : MapNTSKEErrorCategory(ntskeResult.ErrorCategory);
 
                 ntskeResult.Dispose();
                 ntsClient.  Dispose();
@@ -639,7 +654,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                                 NTSClient         = ntsClient,
                                 LastRefreshed     = refreshed,
                                 RefreshAt         = refreshed + RefreshDelay(Server),
-                                RemainingCookies  = ToByteCookieCount(cookiePoolDiagnostics.AvailableCookieCount)
+                                RemainingCookies  = ToByteCookieCount(cookiePoolDiagnostics.AvailableCookieCount),
+                                OfferedNextProtocols = Server.NextProtocolsOffered
                             };
 
             ntskeCache.TryGetValue(Server.Hostname, out var previousState);
@@ -675,7 +691,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                        TLSCipherSuite          = tlsInfo?.NegotiatedCipherSuite,
                        TLSVersion              = tlsInfo?.NegotiatedTLSVersion,
                        TLSApplicationProtocol  = tlsInfo?.NegotiatedApplicationProtocol,
-                       TLSCompliance           = tlsCompliance
+                       TLSCompliance           = tlsCompliance,
+                       NTPVersion              = Server.NTPVersionAfter(ntskeResponse.NextProtocols)
                    };
 
         }
@@ -711,7 +728,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                                 DNSClient:                   DNSClient,
                                 TimeProvider:                timeProvider,
                                 CookiePoolPolicy:            new NTSCookiePoolPolicy { RenegotiateWhenExhausted = false }
-                            );
+                            ) {
+                                NTPv5                 = Server.OffersNTPv5 ? NTPv5Support.Draft : NTPv5Support.Disabled,
+                                OfferedNextProtocols  = Server.NextProtocolsOffered
+                            };
 
             var       sw          = Stopwatch.StartNew();
             String?   hostKey     = null;
@@ -774,16 +794,24 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
             var totalDuration   = timingInfo?.TotalDuration          ?? sw.Elapsed;
             var ntskeDuration   = timingInfo?.NTSKEProtocolDuration  ?? TimeSpan.Zero;
 
+            var noVersion = result is { Success: true } && ntskeResponse is not null && ntskeResponse.ErrorMessage is null &&
+                            Server.NTPVersionAfter(ntskeResponse.NextProtocols) is null;
+
             if (result is null         ||
                 !result.Success        ||
                 ntskeResponse is null  ||
-                ntskeResponse.ErrorMessage is not null)
+                ntskeResponse.ErrorMessage is not null ||
+                noVersion)
             {
 
-                var errorMessage  = result?.ErrorMessage ?? ntskeResponse?.ErrorMessage ?? "NTS-KE over SSH failed.";
-                var errorCategory = result?.ErrorCategory == NTSKEErrorCategory.SSHSubsystem
-                                        ? MonitoringErrorCategory.SSH
-                                        : MapNTSKEErrorCategory(result?.ErrorCategory ?? NTSKEErrorCategory.Unknown);
+                var errorMessage  = noVersion
+                                        ? NoVersionAgreed(Server, ntskeResponse!)
+                                        : result?.ErrorMessage ?? ntskeResponse?.ErrorMessage ?? "NTS-KE over SSH failed.";
+                var errorCategory = noVersion
+                                        ? MonitoringErrorCategory.NTSKEProtocol
+                                        : result?.ErrorCategory == NTSKEErrorCategory.SSHSubsystem
+                                              ? MonitoringErrorCategory.SSH
+                                              : MapNTSKEErrorCategory(result?.ErrorCategory ?? NTSKEErrorCategory.Unknown);
 
                 result?.  Dispose();
                 ntsClient.Dispose();
@@ -809,6 +837,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                                 LastRefreshed     = refreshed,
                                 RefreshAt         = refreshed + RefreshDelay(Server),
                                 RemainingCookies  = ToByteCookieCount(cookiePoolDiagnostics.AvailableCookieCount),
+                                OfferedNextProtocols = Server.NextProtocolsOffered,
                                 SSHHostKey        = hostKey
                             };
 
@@ -837,7 +866,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                        DroppedCookieCount      = cookiePoolDiagnostics.DroppedCookieCount,
                        CookiePoolLow           = cookiePoolDiagnostics.IsLow,
                        CookiePoolEmpty         = cookiePoolDiagnostics.IsEmpty,
-                       SSHHostKey              = hostKey
+                       SSHHostKey              = hostKey,
+                       NTPVersion              = Server.NTPVersionAfter(ntskeResponse.NextProtocols)
                    };
 
         }
@@ -992,6 +1022,10 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                                                             CachedNTSKEState  CachedState,
                                                             CancellationToken CancellationToken = default)
         {
+
+            // A key exchange that agreed to NTPv5 for a server asked in it first.
+            if (NTPVersionOf(CachedState) == 5)
+                return await MeasureNTPv5(Server, CachedState, CancellationToken).ConfigureAwait(false);
 
             var sw = Stopwatch.StartNew();
 
@@ -1283,6 +1317,9 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                 !cached.NeedsRefresh(config.NTSKERefreshInterval, timeProvider) &&
                 // Not one without the public keys signed responses are checked against.
                 (!Server.SignedResponses || cached.NTSKEResponse?.PublicKeys.Any() == true) &&
+                // Not one that offered other versions than the server is asked in now: changed
+                // to offer NTPv5, a server is asked at once, not after the next refresh.
+                (cached.OfferedNextProtocols ?? [ 0 ]).SequenceEqual(Server.NextProtocolsOffered) &&
                 (Server.OfferedAEADAlgorithms is not { } offered ||
                  cached.NTSKEResponse is not { } response        ||
                  offered.Contains(response.AEADAlgorithm)))
@@ -1401,6 +1438,12 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
             try
             {
+
+                if (NTPVersionOf(CachedState) == 5)
+                {
+                    await SendPreflightNTPv5(ntsClient, CachedState, CancellationToken).ConfigureAwait(false);
+                    return true;
+                }
 
                 var answer = await ntsClient.QueryTime(
                                        Timeout:            config.NTPTimeout,

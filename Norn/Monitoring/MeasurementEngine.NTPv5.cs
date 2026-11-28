@@ -17,12 +17,17 @@
 
 #region Usings
 
+using System.Diagnostics;
 using System.Collections.Concurrent;
+
+using org.GraphDefined.Vanaheimr.Illias;
+using org.GraphDefined.Vanaheimr.Hermod;
 
 using org.GraphDefined.Vanaheimr.Hermod.DNS;
 
 using org.GraphDefined.Vanaheimr.Norn.NTS;
 using org.GraphDefined.Vanaheimr.Norn.NTPv5;
+using IPAddress = org.GraphDefined.Vanaheimr.Hermod.IPAddress;
 
 #endregion
 
@@ -52,6 +57,244 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
 
         #endregion
 
+
+        #region (private static) NTPVersionOf(CachedState)
+
+        /// <summary>
+        /// The version of NTP a server is asked in after the given key exchange - see
+        /// <see cref="CachedNTSKEState.NTPVersion"/>.
+        /// </summary>
+        private static Byte NTPVersionOf(CachedNTSKEState CachedState)
+
+            => CachedState.NTPVersion;
+
+        #endregion
+
+        #region (private static) NoVersionAgreed(Server, Response)
+
+        /// <summary>
+        /// Why a key exchange that agreed to none of the versions the server is asked in failed.
+        /// </summary>
+        private static String NoVersionAgreed(NTSServerEndpoint  Server,
+                                              NTSKE_Response     Response)
+
+            => $"The key exchange agreed to next protocol {(Response.NextProtocols.Count > 0 ? String.Join(", ", Response.NextProtocols.Select(protocol => $"0x{protocol:X4}")) : "none")}, " +
+               $"and {Server.Hostname} is asked in {String.Join(" or ", Server.EffectiveNTPVersions.Select(version => $"NTPv{version}"))} alone.";
+
+        #endregion
+
+        #region (private) MeasureNTPv5(Server, CachedState, CancellationToken)
+
+        /// <summary>
+        /// One measurement in NTPv5 under NTS, with the cookies of a key exchange that agreed
+        /// to it: the NTPv5 counterpart of MeasureNTP.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The timestamps, the offset and the delay are those of § 8: the corrected offset
+        /// and delay where the network delivered corrections that pass their checks, else the
+        /// plain ones. The poll field of the response is applied to the server's access state
+        /// as NTPv5 has it (§ 6: 127 is "go away"), where kisses are respected.
+        /// </para>
+        /// <para>
+        /// NTPv5 has no leap indicator. An unsynchronized server (§ 9.5) is reported as NTPv4
+        /// would report it, with the leap indicator 3 of an alarm, and its time is measured, as
+        /// that of an unsynchronized NTPv4 server is: whoever uses it decides. What § 9.5
+        /// rules out beyond that - timestamps missing, another timescale - or a loop (§ 7.4)
+        /// is a failed measurement.
+        /// </para>
+        /// </remarks>
+        private async Task<NTPMeasurementResult> MeasureNTPv5(NTSServerEndpoint  Server,
+                                                              CachedNTSKEState   CachedState,
+                                                              CancellationToken  CancellationToken)
+        {
+
+            var sw          = Stopwatch.StartNew();
+            var ntsClient   = CachedState.NTSClient;
+            var remoteInfo  = GetNTPRemoteInfo(Server, CachedState);
+
+            if (ntsClient is null)
+                return new NTPMeasurementResult {
+                           Success        = false,
+                           NTPVersion     = 5,
+                           ErrorMessage   = Error.Create("NTS client not available from cache"),
+                           ErrorCategory  = MonitoringErrorCategory.Cache,
+                           RemoteHost     = remoteInfo.Host,
+                           RemoteAddress  = remoteInfo.Address,
+                           RemotePort     = remoteInfo.Port
+                       };
+
+            try
+            {
+
+                var access = config.RespectKissOfDeath ? AccessStateFor(Server.Hostname) : null;
+
+                access?.RecordQuery(timeProvider.GetUtcNow());
+
+                var query = await ntsClient.QueryNTPv5(Timeout:            config.NTPTimeout,
+                                                       NTSKEResponse:      CachedState.NTSKEResponse,
+                                                       AccessState:        access,
+                                                       CancellationToken:  CancellationToken).ConfigureAwait(false);
+
+                sw.Stop();
+
+                var roundTrip      = query.RoundTripTime ?? sw.Elapsed;
+                var remoteAddress  = query.RemoteEndPoint is not null ? IPAddress.FromDotNet(query.RemoteEndPoint.Address) : remoteInfo.Address;
+                var remotePort     = query.RemoteEndPoint is not null ? IPPort.Parse(query.RemoteEndPoint.Port)            : remoteInfo.Port;
+                var diagnostics    = ntsClient.CookiePoolDiagnostics;
+
+                CachedState.RemainingCookies = ToByteCookieCount(query.RemainingCookies);
+
+                // A key exchange the client made itself, its cookies having run out: new keys
+                // with new cookies, as in MeasureNTP.
+                if (ntsClient.LastNTSKEResponse is not null &&
+                    !ReferenceEquals(ntsClient.LastNTSKEResponse, CachedState.NTSKEResponse))
+                {
+                    CachedState.NTSKEResponse  = ntsClient.LastNTSKEResponse;
+                    CachedState.LastRefreshed  = timeProvider.GetUtcNow();
+                    CachedState.RefreshAt      = CachedState.LastRefreshed + RefreshDelay(Server);
+                }
+
+                NTPMeasurementResult Failed(String Message, MonitoringErrorCategory Category, Boolean Kiss = false)
+
+                    => new () {
+                           Success                     = false,
+                           NTPVersion                  = 5,
+                           StopwatchRTT                = roundTrip,
+                           ErrorMessage                = Error.Create(Message),
+                           ErrorCategory               = Category,
+                           KissOfDeath                 = Kiss,
+                           KissOfDeathCode             = Kiss ? "NTPv5 poll 127" : null,
+                           RemoteHost                  = remoteInfo.Host,
+                           RemoteAddress               = remoteAddress,
+                           RemotePort                  = remotePort,
+                           RemainingCookiesAfterQuery  = CachedState.RemainingCookies,
+                           CookiePoolSize              = diagnostics.AvailableCookieCount,
+                           CookiePoolMaxSize           = diagnostics.MaxCookiePoolSize,
+                           CookiePoolLowWatermark      = diagnostics.LowWatermark,
+                           CookiePoolLow               = diagnostics.IsLow,
+                           CookiePoolEmpty             = diagnostics.IsEmpty
+                       };
+
+                if (!query.Success)
+                    return Failed(query.ErrorMessage ?? "NTPv5 query failed!",
+                                  query.ErrorCategory == NTSQueryErrorCategory.KissOfDeath
+                                      ? MonitoringErrorCategory.KissOfDeath
+                                      : MapNTSQueryErrorCategory(query.ErrorCategory),
+                                  query.ErrorCategory == NTSQueryErrorCategory.KissOfDeath);
+
+                if (query.Response is not NTPv5Packet response ||
+                    query.Measurement is not NTPv5Measurement measurement)
+                    return Failed($"The NTPv5 response cannot be measured with: {query.Unusable}.", MonitoringErrorCategory.Unknown);
+
+                if (query.IsLoop)
+                    return Failed("The server's reference IDs contain this client's own: a loop (§ 7.4).", MonitoringErrorCategory.Unknown);
+
+                if (query.Unusable is NTPv5Unusable.MissingTimestamps or NTPv5Unusable.Timescale)
+                    return Failed($"The NTPv5 response is not usable: {query.Unusable} (§ 9.5).", MonitoringErrorCategory.Unknown);
+
+                // A response, its poll field applied above: one step back towards the usual
+                // rate, as after an NTPv4 answer.
+                if (config.RespectKissOfDeath && !response.Poll.Equals((SByte) 127))
+                    AccessStateFor(Server.Hostname).RecordAnswer();
+
+                var offset      = measurement.BestOffset;
+                var delay       = measurement.BestDelay;
+                var correction  = OffsetCorrection(Server.DelayAsymmetry,
+                                                   Server.DelayVarAsymmetry,
+                                                   delay,
+                                                   ShortestRecentDelay(Server.Hostname, delay));
+
+                return new NTPMeasurementResult {
+
+                           Success                     = true,
+                           NTPVersion                  = 5,
+                           Interleaved                 = measurement.Interleaved,
+                           NTSAuthenticationValid      = query.IsAuthenticated,
+                           UniqueIdMatched             = query.IsAuthenticated,
+
+                           T1_ClientSend               = measurement.T1,
+                           T2_ServerReceive            = measurement.T2,
+                           T3_ServerTransmit           = measurement.T3,
+                           T4_ClientReceive            = measurement.T4,
+
+                           Offset                      = offset + correction,
+                           MeasuredOffset              = offset,
+                           OffsetCorrection            = correction,
+                           RoundTripDelay              = delay,
+                           StopwatchRTT                = roundTrip,
+                           RemoteHost                  = remoteInfo.Host,
+                           RemoteAddress               = remoteAddress,
+                           RemotePort                  = remotePort,
+
+                           LeapIndicator               = (Byte) (response.Flags.HasFlag(NTPv5Flags.Unsynchronized) ? 3 : 0),
+                           Stratum                     = response.Stratum,
+                           Poll                        = (Byte) Math.Max((SByte) 0, response.Poll),
+                           Precision                   = response.Precision,
+                           RootDelaySeconds            = response.RootDelayTime?.TotalSeconds      ?? Double.PositiveInfinity,
+                           RootDispersionSeconds       = response.RootDispersionTime?.TotalSeconds ?? Double.PositiveInfinity,
+
+                           NewCookieReceived           = query.NewCookies > 0,
+                           RemainingCookiesAfterQuery  = CachedState.RemainingCookies,
+                           CookiePoolSize              = diagnostics.AvailableCookieCount,
+                           CookiePoolMaxSize           = diagnostics.MaxCookiePoolSize,
+                           CookiePoolLowWatermark      = diagnostics.LowWatermark,
+                           SeededCookieCount           = diagnostics.SeededCookieCount,
+                           CookiesReceived             = diagnostics.CookiesReceived,
+                           CookiesConsumed             = diagnostics.CookiesConsumed,
+                           DroppedCookieCount          = diagnostics.DroppedCookieCount,
+                           CookiePoolLow               = diagnostics.IsLow,
+                           CookiePoolEmpty             = diagnostics.IsEmpty,
+                           KissOfDeath                 = false
+
+                       };
+
+            }
+            catch (Exception e)
+            {
+
+                sw.Stop();
+
+                return new NTPMeasurementResult {
+                           Success        = false,
+                           NTPVersion     = 5,
+                           ErrorMessage   = Error.Create($"NTPv5 exception: {e.Message}"),
+                           ErrorCategory  = MonitoringErrorCategory.Exception,
+                           StopwatchRTT   = sw.Elapsed
+                       };
+
+            }
+
+        }
+
+        #endregion
+
+        #region (private) SendPreflightNTPv5(NTSClient, CachedState, CancellationToken)
+
+        /// <summary>
+        /// The preflight of a server asked in NTPv5: one NTPv5 query whose answer is ignored.
+        /// </summary>
+        private async Task SendPreflightNTPv5(NTSClient          NTSClient,
+                                              CachedNTSKEState   CachedState,
+                                              CancellationToken  CancellationToken)
+        {
+
+            var answer = await NTSClient.QueryNTPv5(Timeout:            config.NTPTimeout,
+                                                    NTSKEResponse:      CachedState.NTSKEResponse,
+                                                    CancellationToken:  CancellationToken).ConfigureAwait(false);
+
+            if (NTSClient.LastNTSKEResponse is NTSKE_Response currentKE &&
+                !ReferenceEquals(CachedState.NTSKEResponse, currentKE))
+            {
+                CachedState.NTSKEResponse = currentKE;
+                CachedState.LastRefreshed = timeProvider.GetUtcNow();
+            }
+
+            CachedState.RemainingCookies = ToByteCookieCount(answer.RemainingCookies);
+
+        }
+
+        #endregion
 
         #region (private) NTPv5CapabilityOf(Server, DNSClient, CancellationToken)
 

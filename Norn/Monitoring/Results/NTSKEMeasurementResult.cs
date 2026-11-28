@@ -72,6 +72,13 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         public String?                  AEADAlgorithm             { get; init; }
 
         /// <summary>
+        /// The version of NTP the server is asked in after this key exchange: the first of the
+        /// versions it is asked in that the key exchange agreed to - 4 or 5 - or null after one
+        /// that failed.
+        /// </summary>
+        public Byte?                    NTPVersion                { get; init; }
+
+        /// <summary>
         /// The NTP server hostname negotiated (if different from NTS-KE server).
         /// </summary>
         public DomainName?              NTPServerNegotiated       { get; init; }

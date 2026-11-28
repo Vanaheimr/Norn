@@ -178,6 +178,88 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
         public Boolean                         ProbeNTPv5             { get; set; }
 
         /// <summary>
+        /// The versions of NTP the server is asked in, the preferred one first: 4 for NTPv4, 5
+        /// for NTPv5 of draft-ietf-ntp-ntpv5-10 - [ 4 ] unless set otherwise.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The Versions of an NTP client in the Secure Time Synchronization white paper (section
+        /// 3.2.4). The key exchange offers them as its next protocols in this order, 0x8001 for
+        /// NTPv5 and 0 for NTPv4, and the server is then asked in the first of them it agreed
+        /// to. A key exchange that agreed to none of them is one that failed. Unlike
+        /// <see cref="ProbeNTPv5"/>, which only finds out what a server can, this is what the
+        /// server is measured with.
+        /// </para>
+        /// <para>
+        /// A server asked for signed responses is asked in NTPv4 alone, whatever this says: the
+        /// signed second response is an extension of NTPv4 - see
+        /// <see cref="EffectiveNTPVersions"/>.
+        /// </para>
+        /// </remarks>
+        public IReadOnlyList<Byte>             NTPVersions            { get; set; }
+
+        /// <summary>
+        /// The versions of NTP the server is actually asked in: <see cref="NTPVersions"/>, but
+        /// NTPv4 alone where signed responses are asked for, or where it names no version this
+        /// engine speaks.
+        /// </summary>
+        [JsonIgnore]
+        public IReadOnlyList<Byte>             EffectiveNTPVersions
+        {
+            get
+            {
+
+                if (SignedResponses)
+                    return [ 4 ];
+
+                var versions = NTPVersions.Where(version => version is 4 or 5).Distinct().ToArray();
+
+                return versions.Length > 0 ? versions : [ 4 ];
+
+            }
+        }
+
+        /// <summary>
+        /// The next protocols the key exchange offers, in the order of
+        /// <see cref="EffectiveNTPVersions"/>: 0x8001 for NTPv5, 0 for NTPv4.
+        /// </summary>
+        [JsonIgnore]
+        public IReadOnlyList<UInt16>           NextProtocolsOffered
+            => [.. EffectiveNTPVersions.Select(NextProtocolOf)];
+
+        /// <summary>
+        /// Whether the key exchange offers NTPv5.
+        /// </summary>
+        [JsonIgnore]
+        public Boolean                         OffersNTPv5
+            => EffectiveNTPVersions.Contains((Byte) 5);
+
+        /// <summary>
+        /// The version of NTP to ask the server in after a key exchange that agreed to the
+        /// given next protocols: the first of <see cref="EffectiveNTPVersions"/> among them, or
+        /// null where it agreed to none of them.
+        /// </summary>
+        /// <param name="AgreedNextProtocols">The next protocols the key exchange agreed to.</param>
+        public Byte? NTPVersionAfter(IEnumerable<UInt16> AgreedNextProtocols)
+        {
+
+            var agreed = AgreedNextProtocols.ToHashSet();
+
+            foreach (var version in EffectiveNTPVersions)
+                if (agreed.Contains(NextProtocolOf(version)))
+                    return version;
+
+            return null;
+
+        }
+
+        private static UInt16 NextProtocolOf(Byte Version)
+
+            => Version == 5
+                   ? NTPv5.NTPv5Draft.NTSNextProtocolId
+                   : (UInt16) 0;
+
+        /// <summary>
         /// What decides whether this server's NTS-KE certificate is believed, or
         /// none for the usual rule: a chain to whatever the machine trusts, issued
         /// for this host.
@@ -244,7 +326,8 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
                                  Double?                                                        DelayVarAsymmetry            = null,
                                  DomainName?                                                    NTSKEHost                    = null,
                                  Boolean                                                        SignedResponses              = false,
-                                 Boolean                                                        ProbeNTPv5                   = false)
+                                 Boolean                                                        ProbeNTPv5                   = false,
+                                 IEnumerable<Byte>?                                             NTPVersions                  = null)
         {
 
             this.Hostname                    = Hostname;
@@ -262,6 +345,7 @@ namespace org.GraphDefined.Vanaheimr.Norn.Monitoring
             this.NTSKEHost                   = NTSKEHost;
             this.SignedResponses             = SignedResponses;
             this.ProbeNTPv5                  = ProbeNTPv5;
+            this.NTPVersions                 = NTPVersions?.ToArray() ?? [ 4 ];
 
         }
 
